@@ -1,5 +1,5 @@
 [workspace]
-members = ["noa", "noa-macros"]
+members = ["noa-builder", "noa-macros"]
 resolver = "2"
 
 [profile.release]
