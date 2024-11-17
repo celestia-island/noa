@@ -8,11 +8,8 @@ description = "A helper library to generate complex and nested structures by a s
 license = "Apache-2.0"
 repository = "https://github.com/celestia-island/noa"
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [dependencies]
-_macros = { path = "../noa-macros", package = "noa-macros", version = "0.1.0" }
+parser = { path = "../parser", package = "noa-parser" }
 
 anyhow = { workspace = true }
 async-trait = { workspace = true }
@@ -20,6 +17,3 @@ derive_more = { workspace = true }
 
 serde = { workspace = true }
 strum = { workspace = true }
-
-[dev-dependencies]
-serde_json = { workspace = true }
