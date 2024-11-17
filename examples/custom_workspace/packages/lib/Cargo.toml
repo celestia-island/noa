@@ -1,0 +1,8 @@
+[package]
+name = "lib"
+version.workspace = true
+edition.workspace = true
+
+publish = false
+
+[dependencies]

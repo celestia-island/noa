@@ -1,0 +1,13 @@
+[package]
+name = "custom_crate"
+version.workspace = true
+edition.workspace = true
+
+publish = false
+
+[package.metadata.noa]
+cache-dir = "cache"
+output-markdown-dir = "docs"
+output-website-dir = "website"
+
+[dependencies]
