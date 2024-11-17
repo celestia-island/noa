@@ -1,5 +1,5 @@
 [package]
-name = "noa-macros"
+name = "noa-parser"
 version.workspace = true
 edition.workspace = true
 
@@ -9,7 +9,7 @@ license = "Apache-2.0"
 repository = "https://github.com/celestia-island/noa"
 
 [lib]
-proc-macro = true
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 anyhow = { workspace = true }
