@@ -1,0 +1,13 @@
+[workspace]
+members = ["packages/app", "packages/lib"]
+
+[workspace.package]
+authors = ["langyo <langyo.china@gmail.com>"]
+
+version = "0.1.0"
+edition = "2021"
+
+[workspace.metadata.noa]
+cache-dir = "cache"
+output-markdown-dir = "docs"
+output-website-dir = "website"
