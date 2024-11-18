@@ -1,20 +1,19 @@
-[workspace]
-members = ["packages/parser", "packages/builder"]
-resolver = "2"
-
-[profile.release]
-lto = true
-opt-level = 'z'
-codegen-units = 1
-panic = "abort"
-
-[workspace.package]
-authors = ["langyo <langyo.china@gmail.com>"]
-
+[package]
+name = "noa"
 version = "0.1.0"
 edition = "2021"
 
-[workspace.dependencies]
+publish = true
+authors = ["langyo <langyo.china@gmail.com>"]
+description = "Next document generator for Rust crates"
+license = "Apache-2.0"
+repository = "https://github.com/celestia-island/noa"
+
+[[bin]]
+name = "noa"
+path = "bin/main.rs"
+
+[dependencies]
 anyhow = "^1"
 async-trait = "^0.1"
 derive_more = { version = "^1", features = ["full"] }
@@ -26,3 +25,7 @@ ron = "^0.8"
 yuuka = "^0.5"
 
 clap = "^4"
+
+syn = { version = "^2", features = ["full"] }
+proc-macro2 = { version = "^1", features = ["span-locations"] }
+quote = "^1"
