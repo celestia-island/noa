@@ -13,6 +13,9 @@ repository = "https://github.com/celestia-island/noa"
 name = "noa"
 path = "bin/main.rs"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 anyhow = "^1"
 async-trait = "^0.1"
