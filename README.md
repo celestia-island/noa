@@ -1,4 +1,4 @@
-<img src="splash.png" alt="noa" />
+<p align="center"><img src="docs/logo.webp" alt="Noa" width="240" /></p>
 
 ![Crates.io License](https://img.shields.io/crates/l/noa-builder)
 [![Crates.io Version](https://img.shields.io/crates/v/noa-builder)](https://docs.rs/noa-builder)
