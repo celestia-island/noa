@@ -222,7 +222,6 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
 
     crate::git::import::import_git_to_noa(&target, std::sync::Arc::clone(&db)).await?;
 
-    let _snap_store = crate::snapshot::RedbSnapshotStore::new(std::sync::Arc::clone(&db))?;
     let ref_store = crate::refs::RedbRefStore::new(std::sync::Arc::clone(&db))?;
     let head_ref = crate::refs::RefStore::get(&ref_store, "HEAD")
         .await

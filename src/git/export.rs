@@ -183,7 +183,6 @@ pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
 
     super::import::import_git_to_noa(target, Arc::clone(&db)).await?;
 
-    let _snap_store = crate::snapshot::RedbSnapshotStore::new(Arc::clone(&db))?;
     let ref_store = crate::refs::RedbRefStore::new(Arc::clone(&db))?;
     let head_ref = ref_store.get("HEAD").await.ok().flatten();
     let head_snap_id =

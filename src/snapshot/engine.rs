@@ -1,7 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    path::PathBuf,
-};
+use std::{collections::BTreeMap, path::PathBuf};
 
 use crate::{
     error::Result,

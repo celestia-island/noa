@@ -33,7 +33,7 @@ fn make_request(method: Method, uri: &str, body: Option<String>) -> Request<Body
 #[tokio::test]
 async fn test_list_refs_empty() {
     let (_tmp, app) = make_app().await;
-    let req = make_request(Method::GET, "/api/v1/repo/test/refs", None);
+    let req = make_request(Method::GET, "/api/v1/refs", None);
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
@@ -42,7 +42,7 @@ async fn test_list_refs_empty() {
 async fn test_push_ref() {
     let (_tmp, app) = make_app().await;
     let body = r#"{"name": "main", "id": "noa_test123"}"#.to_string();
-    let req = make_request(Method::POST, "/api/v1/repo/test/refs", Some(body));
+    let req = make_request(Method::POST, "/api/v1/refs", Some(body));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 }
@@ -54,7 +54,7 @@ async fn test_upload_blob_and_get() {
     use base64::Engine;
     let content = base64::engine::general_purpose::STANDARD.encode(b"hello noa server");
     let upload_body = format!(r#"{{"blobs": [{{"content": "{}"}}]}}"#, content);
-    let req = make_request(Method::POST, "/api/v1/repo/test/blobs", Some(upload_body));
+    let req = make_request(Method::POST, "/api/v1/blobs", Some(upload_body));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
@@ -69,7 +69,7 @@ async fn test_upload_blob_and_get() {
 #[tokio::test]
 async fn test_get_blob_not_found() {
     let (_tmp, app) = make_app().await;
-    let req = make_request(Method::GET, "/api/v1/repo/test/blob/nonexistent_hash", None);
+    let req = make_request(Method::GET, "/api/v1/blob/nonexistent_hash", None);
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
@@ -77,7 +77,7 @@ async fn test_get_blob_not_found() {
 #[tokio::test]
 async fn test_get_tree_not_found() {
     let (_tmp, app) = make_app().await;
-    let req = make_request(Method::GET, "/api/v1/repo/test/tree/nonexistent_hash", None);
+    let req = make_request(Method::GET, "/api/v1/tree/nonexistent_hash", None);
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
@@ -85,7 +85,7 @@ async fn test_get_tree_not_found() {
 #[tokio::test]
 async fn test_list_workspaces() {
     let (_tmp, app) = make_app().await;
-    let req = make_request(Method::GET, "/api/v1/repo/test/workspaces", None);
+    let req = make_request(Method::GET, "/api/v1/workspaces", None);
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
@@ -93,7 +93,7 @@ async fn test_list_workspaces() {
 #[tokio::test]
 async fn test_list_snapshots() {
     let (_tmp, app) = make_app().await;
-    let req = make_request(Method::GET, "/api/v1/repo/test/snapshots", None);
+    let req = make_request(Method::GET, "/api/v1/snapshots", None);
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
@@ -102,7 +102,7 @@ async fn test_list_snapshots() {
 async fn test_create_workspace() {
     let (_tmp, app) = make_app().await;
     let body = r#"{"workspace": {"name": "test-ws", "head": "noa_base", "base": "noa_base", "agent_id": null, "created_at": 1000, "updated_at": 1000}}"#.to_string();
-    let req = make_request(Method::POST, "/api/v1/repo/test/workspaces", Some(body));
+    let req = make_request(Method::POST, "/api/v1/workspaces", Some(body));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 }
@@ -113,7 +113,7 @@ async fn test_upload_trees() {
     let body =
         r#"{"trees": [{"entries": [{"name": "main.rs", "kind": "Blob", "id": "hash123"}]}]}"#
             .to_string();
-    let req = make_request(Method::POST, "/api/v1/repo/test/trees", Some(body));
+    let req = make_request(Method::POST, "/api/v1/trees", Some(body));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
@@ -122,7 +122,7 @@ async fn test_upload_trees() {
 async fn test_create_snapshot() {
     let (_tmp, app) = make_app().await;
     let body = r#"{"snapshot": {"id": "noa_snap001", "tree_hash": "tree123", "parents": [], "workspace": "default", "author": "test", "timestamp": 1000, "message": "test snapshot"}}"#.to_string();
-    let req = make_request(Method::POST, "/api/v1/repo/test/snapshots", Some(body));
+    let req = make_request(Method::POST, "/api/v1/snapshots", Some(body));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 }
@@ -131,7 +131,7 @@ async fn test_create_snapshot() {
 async fn test_upload_blobs_invalid_base64() {
     let (_tmp, app) = make_app().await;
     let body = r#"{"blobs": [{"content": "not-valid-base64!!!"}]}"#.to_string();
-    let req = make_request(Method::POST, "/api/v1/repo/test/blobs", Some(body));
+    let req = make_request(Method::POST, "/api/v1/blobs", Some(body));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }

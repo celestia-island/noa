@@ -51,9 +51,10 @@ impl FileAgentLog {
 impl AgentLog for FileAgentLog {
     async fn append(&self, entry: &LogEntry) -> Result<u64> {
         let line = format::serialize_entry(entry)?;
-        let mut file = self.file.lock().map_err(|e| {
-            NoaError::Io(std::io::Error::other(e.to_string()))
-        })?;
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|e| NoaError::Io(std::io::Error::other(e.to_string())))?;
         writeln!(file, "{}", line)?;
         file.sync_all()?;
         Ok(entry.seq)
@@ -65,9 +66,10 @@ impl AgentLog for FileAgentLog {
     }
 
     async fn read_all(&self) -> Result<Vec<LogEntry>> {
-        let mut file = self.file.lock().map_err(|e| {
-            NoaError::Io(std::io::Error::other(e.to_string()))
-        })?;
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|e| NoaError::Io(std::io::Error::other(e.to_string())))?;
         file.seek(SeekFrom::Start(0))?;
         let mut content = String::new();
         file.read_to_string(&mut content)?;

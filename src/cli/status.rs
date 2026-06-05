@@ -1,8 +1,6 @@
 use anyhow::Result;
 
-use crate::{
-    refs::RefStore, repo::Repository, snapshot::SnapshotStore,
-};
+use crate::{refs::RefStore, repo::Repository, snapshot::SnapshotStore};
 
 pub async fn run() -> Result<()> {
     let root = Repository::find(std::path::Path::new("."))?;
