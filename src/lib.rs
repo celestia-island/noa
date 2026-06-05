@@ -6,3 +6,4 @@ pub mod object;
 pub mod refs;
 pub mod repo;
 pub mod snapshot;
+pub mod workspace;
