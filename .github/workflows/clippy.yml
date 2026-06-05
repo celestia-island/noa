@@ -4,12 +4,12 @@ on:
   pull_request:
     paths:
       - '.github/workflows/clippy.yml'
-      - 'noa/**/*'
-      - 'noa-macros/**/*'
+      - 'src/**/*'
+      - 'bin/**/*'
       - 'Cargo.toml'
       - 'Cargo.lock'
   push:
-    branches: [master]
+    branches: [master, dev]
 
 jobs:
   clippy:

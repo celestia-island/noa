@@ -2,13 +2,13 @@ name: Format
 on:
   pull_request:
     paths:
-      - '.github/workflows/clippy.yml'
-      - 'noa/**/*'
-      - 'noa-macros/**/*'
+      - '.github/workflows/fmt.yml'
+      - 'src/**/*'
+      - 'bin/**/*'
       - 'Cargo.toml'
       - 'Cargo.lock'
   push:
-    branches: [master]
+    branches: [master, dev]
 
 jobs:
   format:

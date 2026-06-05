@@ -1,0 +1,216 @@
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    Json,
+};
+use base64::Engine;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+use crate::object::{ObjectStore, RedbObjectStore, TreeEntries, TreeId, BlobId};
+use crate::refs::{RedbRefStore, RefStore};
+use crate::snapshot::{RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore};
+use crate::workspace::{Workspace, WorkspaceManager};
+
+#[derive(Clone)]
+pub struct AppState {
+    pub db: Arc<redb::Database>,
+}
+
+impl AppState {
+    pub fn new(db: Arc<redb::Database>) -> Self {
+        AppState { db }
+    }
+
+    pub fn object_store(&self) -> Result<RedbObjectStore, crate::error::NoaError> {
+        RedbObjectStore::new(Arc::clone(&self.db))
+    }
+
+    pub fn snapshot_store(&self) -> Result<RedbSnapshotStore, crate::error::NoaError> {
+        RedbSnapshotStore::new(Arc::clone(&self.db))
+    }
+
+    pub fn ref_store(&self) -> Result<RedbRefStore, crate::error::NoaError> {
+        RedbRefStore::new(Arc::clone(&self.db))
+    }
+
+    pub fn workspace_manager(&self) -> Result<WorkspaceManager, crate::error::NoaError> {
+        WorkspaceManager::new(Arc::clone(&self.db))
+    }
+}
+
+#[derive(Serialize)]
+pub struct ApiError {
+    pub error: String,
+}
+
+fn err_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
+    (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: msg.to_string() }))
+}
+
+fn not_found_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
+    (StatusCode::NOT_FOUND, Json(ApiError { error: msg.to_string() }))
+}
+
+pub async fn list_refs(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ApiError>)> {
+    let ref_store = state.ref_store().map_err(err_json)?;
+    let refs = ref_store.list().await.map_err(err_json)?;
+    let result: Vec<serde_json::Value> = refs
+        .into_iter()
+        .map(|(n, id)| serde_json::json!({"name": n, "id": id.0}))
+        .collect();
+    Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+pub struct PushRefsRequest {
+    pub name: String,
+    pub id: String,
+}
+
+pub async fn push_refs(
+    State(state): State<AppState>,
+    Path(repo): Path<String>,
+    Json(body): Json<PushRefsRequest>,
+) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+    let ref_store = state.ref_store().map_err(err_json)?;
+    let id = SnapshotId(body.id);
+    ref_store.cas(&body.name, None, &id).await.map_err(err_json)?;
+    Ok(StatusCode::CREATED)
+}
+
+#[derive(Deserialize)]
+pub struct UploadBlobsRequest {
+    pub blobs: Vec<BlobUpload>,
+}
+
+#[derive(Deserialize)]
+pub struct BlobUpload {
+    pub content: String,
+}
+
+#[derive(Serialize)]
+pub struct UploadResult {
+    pub ids: Vec<String>,
+}
+
+pub async fn upload_blobs(
+    State(state): State<AppState>,
+    Path(repo): Path<String>,
+    Json(body): Json<UploadBlobsRequest>,
+) -> Result<Json<UploadResult>, (StatusCode, Json<ApiError>)> {
+    let store = state.object_store().map_err(err_json)?;
+    let mut ids = Vec::new();
+    for blob in &body.blobs {
+        let content = base64::engine::general_purpose::STANDARD
+            .decode(&blob.content)
+            .map_err(|e| err_json(e))?;
+        let id = store.put_blob(&content).await.map_err(err_json)?;
+        ids.push(id.0);
+    }
+    Ok(Json(UploadResult { ids }))
+}
+
+pub async fn get_blob(
+    State(state): State<AppState>,
+    Path((repo, hash)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let store = state.object_store().map_err(err_json)?;
+    match store.get_blob(&BlobId(hash)).await {
+        Ok(data) => {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+            Ok(Json(serde_json::json!({ "content": encoded })))
+        }
+        Err(crate::error::NoaError::ObjectNotFound(_)) => Err(not_found_json("blob not found")),
+        Err(e) => Err(err_json(e)),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct UploadTreesRequest {
+    pub trees: Vec<TreeUpload>,
+}
+
+#[derive(Deserialize)]
+pub struct TreeUpload {
+    pub entries: serde_json::Value,
+}
+
+pub async fn upload_trees(
+    State(state): State<AppState>,
+    Path(repo): Path<String>,
+    Json(body): Json<UploadTreesRequest>,
+) -> Result<Json<UploadResult>, (StatusCode, Json<ApiError>)> {
+    let store = state.object_store().map_err(err_json)?;
+    let mut ids = Vec::new();
+    for tree in &body.trees {
+        let entries: TreeEntries = serde_json::from_value(tree.entries.clone())
+            .map_err(|e| err_json(e))?;
+        let id = store.put_tree(&entries).await.map_err(err_json)?;
+        ids.push(id.0);
+    }
+    Ok(Json(UploadResult { ids }))
+}
+
+pub async fn get_tree(
+    State(state): State<AppState>,
+    Path((repo, hash)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let store = state.object_store().map_err(err_json)?;
+    match store.get_tree(&TreeId(hash)).await {
+        Ok(entries) => Ok(Json(serde_json::to_value(&entries).unwrap())),
+        Err(crate::error::NoaError::ObjectNotFound(_)) => Err(not_found_json("tree not found")),
+        Err(e) => Err(err_json(e)),
+    }
+}
+
+pub async fn list_snapshots(
+    State(state): State<AppState>,
+    Path(repo): Path<String>,
+) -> Result<Json<Vec<Snapshot>>, (StatusCode, Json<ApiError>)> {
+    let store = state.snapshot_store().map_err(err_json)?;
+    let snapshots = store.list_all().await.map_err(err_json)?;
+    Ok(Json(snapshots))
+}
+
+#[derive(Deserialize)]
+pub struct CreateSnapshotRequest {
+    pub snapshot: Snapshot,
+}
+
+pub async fn create_snapshot(
+    State(state): State<AppState>,
+    Path(repo): Path<String>,
+    Json(body): Json<CreateSnapshotRequest>,
+) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+    let store = state.snapshot_store().map_err(err_json)?;
+    store.store(&body.snapshot).await.map_err(err_json)?;
+    Ok(StatusCode::CREATED)
+}
+
+pub async fn list_workspaces(
+    State(state): State<AppState>,
+    Path(repo): Path<String>,
+) -> Result<Json<Vec<Workspace>>, (StatusCode, Json<ApiError>)> {
+    let mgr = state.workspace_manager().map_err(err_json)?;
+    let workspaces = mgr.list().await.map_err(err_json)?;
+    Ok(Json(workspaces))
+}
+
+#[derive(Deserialize)]
+pub struct CreateWorkspaceRequest {
+    pub workspace: Workspace,
+}
+
+pub async fn create_workspace(
+    State(state): State<AppState>,
+    Path(repo): Path<String>,
+    Json(body): Json<CreateWorkspaceRequest>,
+) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+    let mgr = state.workspace_manager().map_err(err_json)?;
+    mgr.create(&body.workspace).await.map_err(err_json)?;
+    Ok(StatusCode::CREATED)
+}

@@ -1,2 +1,34 @@
-target
+# Rust
+/target/
+**/*.rs.bk
 Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.bak
+*.tmp
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+*.log
+/logs/
+/tmp/
+
+# Operating system
+.DS_Store
+Thumbs.db
+
+# noa repository (for testing)
+.noa/
