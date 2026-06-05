@@ -1,7 +1,6 @@
-use std::path::PathBuf;
-
 use anyhow::Result;
 use clap::Args;
+use std::path::PathBuf;
 
 use crate::repo::Repository;
 
@@ -15,7 +14,10 @@ pub struct InitArgs {
 }
 
 pub fn run(args: &InitArgs) -> Result<()> {
-    let path = args.path.canonicalize().unwrap_or_else(|_| args.path.clone());
+    let path = args
+        .path
+        .canonicalize()
+        .unwrap_or_else(|_| args.path.clone());
 
     if Repository::exists(&path) {
         anyhow::bail!(

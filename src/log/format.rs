@@ -1,5 +1,7 @@
-use crate::error::{NoaError, Result};
-use crate::log::LogEntry;
+use crate::{
+    error::{NoaError, Result},
+    log::LogEntry,
+};
 
 pub fn serialize_entry(entry: &LogEntry) -> Result<String> {
     serde_json::to_string(entry).map_err(|e| NoaError::Serialization(e.to_string()))

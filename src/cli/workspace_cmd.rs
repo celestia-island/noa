@@ -1,11 +1,11 @@
 use anyhow::Result;
 
-use crate::log::AgentLog;
-use crate::object::ObjectStore;
-use crate::refs::RefStore;
-use crate::repo::Repository;
-use crate::snapshot::{generate_snapshot_id, SnapshotStore};
-use crate::workspace::WorkspaceManager;
+use crate::{
+    log::AgentLog,
+    object::ObjectStore,
+    repo::Repository,
+    snapshot::{generate_snapshot_id, SnapshotStore},
+};
 
 pub async fn run_create(repo: &Repository, name: &str, agent: Option<&str>) -> Result<()> {
     let ws_mgr = repo.workspace_manager()?;
@@ -36,7 +36,8 @@ pub async fn run_create(repo: &Repository, name: &str, agent: Option<&str>) -> R
         snapshot_id: Some(base_snapshot.0.clone()),
         ts: now,
         message: Some(format!("workspace {} created", name)),
-    }).await?;
+    })
+    .await?;
 
     println!("Created workspace '{}' (base: {})", name, base_snapshot);
     Ok(())
@@ -44,7 +45,9 @@ pub async fn run_create(repo: &Repository, name: &str, agent: Option<&str>) -> R
 
 pub async fn run_switch(repo: &Repository, name: &str) -> Result<()> {
     let ws_mgr = repo.workspace_manager()?;
-    ws_mgr.get(name).await?
+    ws_mgr
+        .get(name)
+        .await?
         .ok_or_else(|| anyhow::anyhow!("workspace '{}' not found", name))?;
 
     let prev = repo.read_head()?;
@@ -67,7 +70,10 @@ pub async fn run_list(repo: &Repository) -> Result<()> {
 
     for ws in &list {
         let marker = if ws.name == current { "*" } else { " " };
-        println!("{} {:<20} head: {} base: {}", marker, ws.name, ws.head, ws.base);
+        println!(
+            "{} {:<20} head: {} base: {}",
+            marker, ws.name, ws.head, ws.base
+        );
     }
     Ok(())
 }
@@ -89,9 +95,13 @@ pub async fn run_merge(repo: &Repository, from: &str) -> Result<()> {
     let ws_mgr = repo.workspace_manager()?;
     let current = repo.read_head()?;
 
-    let from_ws = ws_mgr.get(from).await?
+    let from_ws = ws_mgr
+        .get(from)
+        .await?
         .ok_or_else(|| anyhow::anyhow!("workspace '{}' not found", from))?;
-    let cur_ws = ws_mgr.get(&current).await?
+    let cur_ws = ws_mgr
+        .get(&current)
+        .await?
         .ok_or_else(|| anyhow::anyhow!("workspace '{}' not found", current))?;
 
     let snap_store = repo.snapshot_store()?;
@@ -100,8 +110,12 @@ pub async fn run_merge(repo: &Repository, from: &str) -> Result<()> {
     let base_snap = snap_store.get(&cur_ws.head).await?;
     let their_snap = snap_store.get(&from_ws.head).await?;
 
-    let base_tree = obj_store.get_tree(&crate::object::TreeId(base_snap.tree_hash)).await?;
-    let theirs_tree = obj_store.get_tree(&crate::object::TreeId(their_snap.tree_hash)).await?;
+    let base_tree = obj_store
+        .get_tree(&crate::object::TreeId(base_snap.tree_hash))
+        .await?;
+    let theirs_tree = obj_store
+        .get_tree(&crate::object::TreeId(their_snap.tree_hash))
+        .await?;
 
     let result = crate::merge::three_way_merge(&base_tree, &base_tree, &theirs_tree)?;
 

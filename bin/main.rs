@@ -98,13 +98,8 @@ enum WorkspaceSub {
 
 #[derive(Subcommand)]
 enum RemoteSub {
-    Add {
-        name: String,
-        url: String,
-    },
-    Remove {
-        name: String,
-    },
+    Add { name: String, url: String },
+    Remove { name: String },
     List,
 }
 

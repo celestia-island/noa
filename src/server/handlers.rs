@@ -1,16 +1,19 @@
+use base64::Engine;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     Json,
 };
-use base64::Engine;
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
-use crate::object::{ObjectStore, RedbObjectStore, TreeEntries, TreeId, BlobId};
-use crate::refs::{RedbRefStore, RefStore};
-use crate::snapshot::{RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore};
-use crate::workspace::{Workspace, WorkspaceManager};
+use crate::{
+    object::{BlobId, ObjectStore, RedbObjectStore, TreeEntries, TreeId},
+    refs::{RedbRefStore, RefStore},
+    snapshot::{RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore},
+    workspace::{Workspace, WorkspaceManager},
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -45,11 +48,21 @@ pub struct ApiError {
 }
 
 fn err_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
-    (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: msg.to_string() }))
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ApiError {
+            error: msg.to_string(),
+        }),
+    )
 }
 
 fn not_found_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
-    (StatusCode::NOT_FOUND, Json(ApiError { error: msg.to_string() }))
+    (
+        StatusCode::NOT_FOUND,
+        Json(ApiError {
+            error: msg.to_string(),
+        }),
+    )
 }
 
 pub async fn list_refs(
@@ -78,7 +91,10 @@ pub async fn push_refs(
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     let ref_store = state.ref_store().map_err(err_json)?;
     let id = SnapshotId(body.id);
-    ref_store.cas(&body.name, None, &id).await.map_err(err_json)?;
+    ref_store
+        .cas(&body.name, None, &id)
+        .await
+        .map_err(err_json)?;
     Ok(StatusCode::CREATED)
 }
 
@@ -107,7 +123,7 @@ pub async fn upload_blobs(
     for blob in &body.blobs {
         let content = base64::engine::general_purpose::STANDARD
             .decode(&blob.content)
-            .map_err(|e| err_json(e))?;
+            .map_err(err_json)?;
         let id = store.put_blob(&content).await.map_err(err_json)?;
         ids.push(id.0);
     }
@@ -147,8 +163,8 @@ pub async fn upload_trees(
     let store = state.object_store().map_err(err_json)?;
     let mut ids = Vec::new();
     for tree in &body.trees {
-        let entries: TreeEntries = serde_json::from_value(tree.entries.clone())
-            .map_err(|e| err_json(e))?;
+        let entries: TreeEntries =
+            serde_json::from_value(tree.entries.clone()).map_err(err_json)?;
         let id = store.put_tree(&entries).await.map_err(err_json)?;
         ids.push(id.0);
     }

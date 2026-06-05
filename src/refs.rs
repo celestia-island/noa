@@ -1,19 +1,17 @@
 use async_trait::async_trait;
-use redb::ReadableTable;
 use std::sync::Arc;
 
-use crate::error::{NoaError, Result};
-use crate::snapshot::SnapshotId;
+use redb::ReadableTable;
+
+use crate::{
+    error::{NoaError, Result},
+    snapshot::SnapshotId,
+};
 
 #[async_trait]
 pub trait RefStore: Send + Sync {
     async fn get(&self, name: &str) -> Result<Option<SnapshotId>>;
-    async fn cas(
-        &self,
-        name: &str,
-        old: Option<&SnapshotId>,
-        new: &SnapshotId,
-    ) -> Result<bool>;
+    async fn cas(&self, name: &str, old: Option<&SnapshotId>, new: &SnapshotId) -> Result<bool>;
     async fn list(&self) -> Result<Vec<(String, SnapshotId)>>;
     async fn delete(&self, name: &str) -> Result<bool>;
 }
@@ -61,12 +59,7 @@ impl RefStore for RedbRefStore {
         }
     }
 
-    async fn cas(
-        &self,
-        name: &str,
-        old: Option<&SnapshotId>,
-        new: &SnapshotId,
-    ) -> Result<bool> {
+    async fn cas(&self, name: &str, old: Option<&SnapshotId>, new: &SnapshotId) -> Result<bool> {
         let txn = redb_err!(self.db.begin_write())?;
         {
             let mut table = redb_err!(txn.open_table(REFS))?;
@@ -172,8 +165,14 @@ mod tests {
     #[tokio::test]
     async fn test_list() {
         let (_tmp, store) = make_store();
-        store.cas("main", None, &SnapshotId("noa_a".to_string())).await.unwrap();
-        store.cas("dev", None, &SnapshotId("noa_b".to_string())).await.unwrap();
+        store
+            .cas("main", None, &SnapshotId("noa_a".to_string()))
+            .await
+            .unwrap();
+        store
+            .cas("dev", None, &SnapshotId("noa_b".to_string()))
+            .await
+            .unwrap();
         let refs = store.list().await.unwrap();
         assert_eq!(refs.len(), 2);
     }
@@ -181,7 +180,10 @@ mod tests {
     #[tokio::test]
     async fn test_delete() {
         let (_tmp, store) = make_store();
-        store.cas("main", None, &SnapshotId("noa_a".to_string())).await.unwrap();
+        store
+            .cas("main", None, &SnapshotId("noa_a".to_string()))
+            .await
+            .unwrap();
         let _ = store.delete("main").await.unwrap();
         let got = store.get("main").await.unwrap();
         assert!(got.is_none());
@@ -197,16 +199,34 @@ mod tests {
     #[tokio::test]
     async fn test_multiple_refs() {
         let (_tmp, store) = make_store();
-        store.cas("main", None, &SnapshotId("noa_a".to_string())).await.unwrap();
-        store.cas("dev", None, &SnapshotId("noa_b".to_string())).await.unwrap();
-        store.cas("feature", None, &SnapshotId("noa_c".to_string())).await.unwrap();
+        store
+            .cas("main", None, &SnapshotId("noa_a".to_string()))
+            .await
+            .unwrap();
+        store
+            .cas("dev", None, &SnapshotId("noa_b".to_string()))
+            .await
+            .unwrap();
+        store
+            .cas("feature", None, &SnapshotId("noa_c".to_string()))
+            .await
+            .unwrap();
 
         let refs = store.list().await.unwrap();
         assert_eq!(refs.len(), 3);
 
-        assert_eq!(store.get("main").await.unwrap(), Some(SnapshotId("noa_a".to_string())));
-        assert_eq!(store.get("dev").await.unwrap(), Some(SnapshotId("noa_b".to_string())));
-        assert_eq!(store.get("feature").await.unwrap(), Some(SnapshotId("noa_c".to_string())));
+        assert_eq!(
+            store.get("main").await.unwrap(),
+            Some(SnapshotId("noa_a".to_string()))
+        );
+        assert_eq!(
+            store.get("dev").await.unwrap(),
+            Some(SnapshotId("noa_b".to_string()))
+        );
+        assert_eq!(
+            store.get("feature").await.unwrap(),
+            Some(SnapshotId("noa_c".to_string()))
+        );
     }
 
     #[tokio::test]

@@ -1,8 +1,6 @@
+use anyhow::Result;
 use std::sync::Arc;
 
-use anyhow::Result;
-
-use crate::object::ObjectStore;
 use crate::repo::Repository;
 
 pub async fn run_push(remote_name: &str) -> Result<()> {
@@ -69,7 +67,10 @@ pub async fn run_pull(remote_name: &str) -> Result<()> {
     crate::git::import::import_git_to_noa(&root, db.clone()).await?;
 
     let ref_store = crate::refs::RedbRefStore::new(db.clone())?;
-    let head_ref = crate::refs::RefStore::get(&ref_store, "HEAD").await.ok().flatten();
+    let head_ref = crate::refs::RefStore::get(&ref_store, "HEAD")
+        .await
+        .ok()
+        .flatten();
     if let Some(snap_id) = head_ref {
         let ws_mgr = crate::workspace::WorkspaceManager::new(db)?;
         ws_mgr.update_head(&head_ws, &snap_id).await.ok();
@@ -100,7 +101,11 @@ pub async fn run_fetch(remote_name: &str) -> Result<()> {
 
     println!("Remote refs from {}:", remote_name);
     for r in &refs {
-        println!("  {} -> {}", r.name, &r.commit_hash[..12.min(r.commit_hash.len())]);
+        println!(
+            "  {} -> {}",
+            r.name,
+            &r.commit_hash[..12.min(r.commit_hash.len())]
+        );
     }
 
     Ok(())
@@ -133,7 +138,11 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
         format!("{}/trunk", url.trim_end_matches('/'))
     };
 
-    println!("Exporting from SVN {} into {} ...", svn_url, target.display());
+    println!(
+        "Exporting from SVN {} into {} ...",
+        svn_url,
+        target.display()
+    );
 
     let export_output = std::process::Command::new("svn")
         .args(["export", "--force", &svn_url, &target.to_string_lossy()])
@@ -185,7 +194,9 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
     );
 
     {
-        let txn = db.begin_write().map_err(|e| anyhow::anyhow!("db write failed: {}", e))?;
+        let txn = db
+            .begin_write()
+            .map_err(|e| anyhow::anyhow!("db write failed: {}", e))?;
         {
             let _ = txn.open_table(redb::TableDefinition::<&[u8], &[u8]>::new("blobs"));
             let _ = txn.open_table(redb::TableDefinition::<&[u8], &[u8]>::new("trees"));
@@ -193,10 +204,9 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
             let _ = txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("workspaces"));
             let _ = txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("refs"));
         }
-        txn.commit().map_err(|e| anyhow::anyhow!("db commit failed: {}", e))?;
+        txn.commit()
+            .map_err(|e| anyhow::anyhow!("db commit failed: {}", e))?;
     }
-
-    use redb::TableDefinition;
 
     let config = crate::config::RepoConfig {
         name: "default".to_string(),
@@ -212,33 +222,46 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
 
     crate::git::import::import_git_to_noa(&target, std::sync::Arc::clone(&db)).await?;
 
-    let snap_store = crate::snapshot::RedbSnapshotStore::new(std::sync::Arc::clone(&db))?;
+    let _snap_store = crate::snapshot::RedbSnapshotStore::new(std::sync::Arc::clone(&db))?;
     let ref_store = crate::refs::RedbRefStore::new(std::sync::Arc::clone(&db))?;
-    let head_ref = crate::refs::RefStore::get(&ref_store, "HEAD").await.ok().flatten();
-    let head_snap_id = head_ref.unwrap_or_else(|| crate::snapshot::SnapshotId("noa_empty".to_string()));
+    let head_ref = crate::refs::RefStore::get(&ref_store, "HEAD")
+        .await
+        .ok()
+        .flatten();
+    let head_snap_id =
+        head_ref.unwrap_or_else(|| crate::snapshot::SnapshotId("noa_empty".to_string()));
 
     let ws_mgr = crate::workspace::WorkspaceManager::new(std::sync::Arc::clone(&db))?;
     let now = chrono::Utc::now().timestamp_micros() as u64;
-    ws_mgr.create(&crate::workspace::Workspace {
-        name: "default".to_string(),
-        head: head_snap_id.clone(),
-        base: head_snap_id.clone(),
-        agent_id: None,
-        created_at: now,
-        updated_at: now,
-    }).await.ok();
+    ws_mgr
+        .create(&crate::workspace::Workspace {
+            name: "default".to_string(),
+            head: head_snap_id.clone(),
+            base: head_snap_id.clone(),
+            agent_id: None,
+            created_at: now,
+            updated_at: now,
+        })
+        .await
+        .ok();
 
     let gitignore_path = target.join(".gitignore");
     if !gitignore_path.exists() {
         std::fs::write(&gitignore_path, "# Added by noa\n.noa/\n")?;
     } else {
         let content = std::fs::read_to_string(&gitignore_path)?;
-        if !content.lines().any(|l| l.trim() == ".noa/" || l.trim() == ".noa") {
+        if !content
+            .lines()
+            .any(|l| l.trim() == ".noa/" || l.trim() == ".noa")
+        {
             std::fs::write(&gitignore_path, format!("{}\n.noa/\n", content.trim_end()))?;
         }
     }
 
-    println!("SVN repository exported and imported into noa: {}", target.display());
+    println!(
+        "SVN repository exported and imported into noa: {}",
+        target.display()
+    );
     println!("Note: This is a one-time import. Use 'svn export' + 'noa snapshot create' for incremental sync.");
     Ok(())
 }

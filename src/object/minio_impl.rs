@@ -1,9 +1,12 @@
 use async_trait::async_trait;
-use aws_sdk_s3::Client;
-use aws_sdk_s3::primitives::ByteStream;
 
-use crate::error::{NoaError, Result};
-use crate::object::{BlobId, ObjectStore, TreeEntries, TreeId};
+use aws_config::BehaviorVersion;
+use aws_sdk_s3::{primitives::ByteStream, Client};
+
+use crate::{
+    error::{NoaError, Result},
+    object::{BlobId, ObjectStore, TreeEntries, TreeId},
+};
 
 pub struct MinioObjectStore {
     client: Client,
@@ -22,7 +25,7 @@ impl MinioObjectStore {
         secret_key: &str,
         region: &str,
     ) -> Result<Self> {
-        let config = aws_config::from_env()
+        let config = aws_config::defaults(BehaviorVersion::latest())
             .region(aws_config::Region::new(region.to_string()))
             .endpoint_url(endpoint)
             .credentials_provider(aws_sdk_s3::config::Credentials::new(
@@ -41,7 +44,10 @@ impl MinioObjectStore {
 
         let client = Client::from_conf(s3_config);
 
-        Ok(MinioObjectStore { client, bucket: bucket.to_string() })
+        Ok(MinioObjectStore {
+            client,
+            bucket: bucket.to_string(),
+        })
     }
 
     fn blob_key(id: &BlobId) -> String {
@@ -73,7 +79,8 @@ impl ObjectStore for MinioObjectStore {
     }
 
     async fn get_blob(&self, id: &BlobId) -> Result<Vec<u8>> {
-        let output = self.client
+        let output = self
+            .client
             .get_object()
             .bucket(&self.bucket)
             .key(Self::blob_key(id))
@@ -81,13 +88,17 @@ impl ObjectStore for MinioObjectStore {
             .await
             .map_err(|e| NoaError::ObjectNotFound(e.to_string()))?;
 
-        let bytes = output.body.collect().await
+        let bytes = output
+            .body
+            .collect()
+            .await
             .map_err(|e| NoaError::Remote(e.to_string()))?;
         Ok(bytes.into_bytes().to_vec())
     }
 
     async fn has_blob(&self, id: &BlobId) -> Result<bool> {
-        let result = self.client
+        let result = self
+            .client
             .head_object()
             .bucket(&self.bucket)
             .key(Self::blob_key(id))
@@ -97,8 +108,8 @@ impl ObjectStore for MinioObjectStore {
     }
 
     async fn put_tree(&self, entries: &TreeEntries) -> Result<TreeId> {
-        let data = rmp_serde::to_vec(entries)
-            .map_err(|e| NoaError::Serialization(e.to_string()))?;
+        let data =
+            rmp_serde::to_vec(entries).map_err(|e| NoaError::Serialization(e.to_string()))?;
 
         use sha2::{Digest, Sha256};
         let hash = hex::encode(Sha256::digest(&data));
@@ -117,7 +128,8 @@ impl ObjectStore for MinioObjectStore {
     }
 
     async fn get_tree(&self, id: &TreeId) -> Result<TreeEntries> {
-        let output = self.client
+        let output = self
+            .client
             .get_object()
             .bucket(&self.bucket)
             .key(Self::tree_key(id))
@@ -125,14 +137,18 @@ impl ObjectStore for MinioObjectStore {
             .await
             .map_err(|e| NoaError::ObjectNotFound(e.to_string()))?;
 
-        let bytes = output.body.collect().await
+        let bytes = output
+            .body
+            .collect()
+            .await
             .map_err(|e| NoaError::Remote(e.to_string()))?;
         rmp_serde::from_slice(&bytes.into_bytes())
             .map_err(|e| NoaError::Serialization(e.to_string()))
     }
 
     async fn has_tree(&self, id: &TreeId) -> Result<bool> {
-        let result = self.client
+        let result = self
+            .client
             .head_object()
             .bucket(&self.bucket)
             .key(Self::tree_key(id))

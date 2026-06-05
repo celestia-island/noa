@@ -1,5 +1,7 @@
-use crate::error::{NoaError, Result};
-use crate::object::{BlobId, EntryKind, ObjectStore, TreeEntries, TreeEntry, TreeId};
+use crate::{
+    error::{NoaError, Result},
+    object::{EntryKind, TreeEntries, TreeEntry},
+};
 
 pub struct GitTranslator;
 
@@ -13,7 +15,9 @@ impl GitTranslator {
     }
 
     pub fn git_blob_to_noa(git_obj: &[u8]) -> Result<Vec<u8>> {
-        let null_pos = git_obj.iter().position(|&b| b == 0)
+        let null_pos = git_obj
+            .iter()
+            .position(|&b| b == 0)
             .ok_or_else(|| NoaError::Serialization("invalid git blob: no null separator".into()))?;
         Ok(git_obj[null_pos + 1..].to_vec())
     }
@@ -47,7 +51,9 @@ impl GitTranslator {
         }
 
         while pos < git_data.len() {
-            let space_pos = git_data[pos..].iter().position(|&b| b == b' ')
+            let space_pos = git_data[pos..]
+                .iter()
+                .position(|&b| b == b' ')
                 .map(|p| pos + p)
                 .ok_or_else(|| NoaError::Serialization("invalid git tree entry".into()))?;
 
@@ -55,7 +61,9 @@ impl GitTranslator {
                 .map_err(|e| NoaError::Serialization(e.to_string()))?;
 
             let name_start = space_pos + 1;
-            let name_end = git_data[name_start..].iter().position(|&b| b == 0)
+            let name_end = git_data[name_start..]
+                .iter()
+                .position(|&b| b == 0)
                 .map(|p| name_start + p)
                 .ok_or_else(|| NoaError::Serialization("invalid git tree entry name".into()))?;
 
@@ -76,7 +84,11 @@ impl GitTranslator {
                 EntryKind::Blob
             };
 
-            entries.push(TreeEntry { name, kind, id: hash_hex });
+            entries.push(TreeEntry {
+                name,
+                kind,
+                id: hash_hex,
+            });
             pos = hash_end;
         }
 
@@ -99,8 +111,16 @@ mod tests {
     #[test]
     fn test_tree_to_git_and_back() {
         let entries = TreeEntries(vec![
-            TreeEntry { name: "main.rs".into(), kind: EntryKind::Blob, id: "ab".repeat(20) },
-            TreeEntry { name: "lib".into(), kind: EntryKind::Tree, id: "cd".repeat(20) },
+            TreeEntry {
+                name: "main.rs".into(),
+                kind: EntryKind::Blob,
+                id: "ab".repeat(20),
+            },
+            TreeEntry {
+                name: "lib".into(),
+                kind: EntryKind::Tree,
+                id: "cd".repeat(20),
+            },
         ]);
         let git_data = GitTranslator::noa_tree_to_git(&entries);
         let parsed = GitTranslator::git_tree_to_noa(&git_data).unwrap();
@@ -153,9 +173,11 @@ mod tests {
 
     #[test]
     fn test_tree_single_blob_entry() {
-        let entries = TreeEntries(vec![
-            TreeEntry { name: "README.md".into(), kind: EntryKind::Blob, id: "ff".repeat(20) },
-        ]);
+        let entries = TreeEntries(vec![TreeEntry {
+            name: "README.md".into(),
+            kind: EntryKind::Blob,
+            id: "ff".repeat(20),
+        }]);
         let git_data = GitTranslator::noa_tree_to_git(&entries);
         let parsed = GitTranslator::git_tree_to_noa(&git_data).unwrap();
         assert_eq!(parsed.0.len(), 1);
@@ -164,9 +186,11 @@ mod tests {
 
     #[test]
     fn test_tree_with_header_prefix() {
-        let entries = TreeEntries(vec![
-            TreeEntry { name: "test.rs".into(), kind: EntryKind::Blob, id: "ab".repeat(20) },
-        ]);
+        let entries = TreeEntries(vec![TreeEntry {
+            name: "test.rs".into(),
+            kind: EntryKind::Blob,
+            id: "ab".repeat(20),
+        }]);
         let git_data = GitTranslator::noa_tree_to_git(&entries);
         let mut with_header = format!("tree {}\0", git_data.len()).into_bytes();
         with_header.extend_from_slice(&git_data);

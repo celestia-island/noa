@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
-use axum::body::Body;
-use axum::http::{Method, Request, StatusCode};
+use axum::{
+    body::Body,
+    http::{Method, Request, StatusCode},
+};
 use tower::ServiceExt;
 
 use libnoa::server::{router, AppState};
@@ -67,11 +69,7 @@ async fn test_upload_blob_and_get() {
 #[tokio::test]
 async fn test_get_blob_not_found() {
     let (_tmp, app) = make_app().await;
-    let req = make_request(
-        Method::GET,
-        "/api/v1/repo/test/blob/nonexistent_hash",
-        None,
-    );
+    let req = make_request(Method::GET, "/api/v1/repo/test/blob/nonexistent_hash", None);
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
@@ -79,11 +77,7 @@ async fn test_get_blob_not_found() {
 #[tokio::test]
 async fn test_get_tree_not_found() {
     let (_tmp, app) = make_app().await;
-    let req = make_request(
-        Method::GET,
-        "/api/v1/repo/test/tree/nonexistent_hash",
-        None,
-    );
+    let req = make_request(Method::GET, "/api/v1/repo/test/tree/nonexistent_hash", None);
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
@@ -116,7 +110,9 @@ async fn test_create_workspace() {
 #[tokio::test]
 async fn test_upload_trees() {
     let (_tmp, app) = make_app().await;
-    let body = r#"{"trees": [{"entries": [{"name": "main.rs", "kind": "Blob", "id": "hash123"}]}]}"#.to_string();
+    let body =
+        r#"{"trees": [{"entries": [{"name": "main.rs", "kind": "Blob", "id": "hash123"}]}]}"#
+            .to_string();
     let req = make_request(Method::POST, "/api/v1/repo/test/trees", Some(body));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
