@@ -1,8 +1,9 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use crate::error::{NoaError, Result};
-use crate::object::ObjectStore;
+use crate::object::{EntryKind, ObjectStore, TreeEntries, TreeEntry};
 use crate::refs::{RedbRefStore, RefStore};
 use crate::snapshot::{RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore};
 
@@ -31,7 +32,11 @@ pub async fn import_git_to_noa(
         .map_err(|e| NoaError::Remote(e.to_string()))?
         .detach();
 
-    import_tree_recursive(&repo, tree_id, &obj_store)?;
+    let entries = import_tree_recursive(&repo, tree_id, &obj_store)?;
+
+    let mut sorted = entries;
+    sorted.sort_by(|a, b| a.name.cmp(&b.name));
+    let noa_tree_id = obj_store.put_tree(&TreeEntries(sorted)).await?;
 
     let author = commit.author()
         .ok()
@@ -47,7 +52,7 @@ pub async fn import_git_to_noa(
 
     let snapshot = Snapshot {
         id: SnapshotId(format!("noa_{}", &head_id.to_hex().to_string()[..12])),
-        tree_hash: head_id.to_hex().to_string(),
+        tree_hash: noa_tree_id.0,
         parents: vec![],
         workspace: "default".to_string(),
         author,
@@ -64,31 +69,44 @@ fn import_tree_recursive(
     repo: &gix::Repository,
     tree_id: gix::hash::ObjectId,
     obj_store: &crate::object::RedbObjectStore,
-) -> Result<()> {
+) -> Result<Vec<TreeEntry>> {
     let obj = repo.find_object(tree_id)
         .map_err(|e| NoaError::Remote(e.to_string()))?;
 
     let tree = obj.try_into_tree()
         .map_err(|e| NoaError::Remote(format!("not a tree: {}", e)))?;
 
+    let mut entries = Vec::new();
+
     for entry_result in tree.iter() {
         let entry = entry_result.map_err(|e| NoaError::Remote(e.to_string()))?;
         let mode = entry.mode();
         let entry_id = entry.oid();
+        let filename = entry.filename()
+            .to_string();
 
         if mode.is_tree() {
-            import_tree_recursive(repo, entry_id.to_owned(), obj_store)?;
+            let sub_entries = import_tree_recursive(repo, entry_id.to_owned(), obj_store)?;
+            for mut sub in sub_entries {
+                sub.name = format!("{}/{}", filename, sub.name);
+                entries.push(sub);
+            }
         } else {
             let blob_obj = repo.find_object(entry_id)
                 .map_err(|e| NoaError::Remote(e.to_string()))?;
             let blob = blob_obj.try_into_blob()
                 .map_err(|e| NoaError::Remote(format!("not a blob: {}", e)))?;
             let content = blob.data.clone();
-            tokio::task::block_in_place(|| {
+            let blob_id = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(obj_store.put_blob(&content))
             })?;
+            entries.push(TreeEntry {
+                name: filename,
+                kind: EntryKind::Blob,
+                id: blob_id.0,
+            });
         }
     }
 
-    Ok(())
+    Ok(entries)
 }

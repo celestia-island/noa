@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
-use crate::error::Result;
+use crate::error::{NoaError, Result};
 use crate::ignore::IgnoreMatcher;
 use crate::log::{AgentLog, LogEntry, OpType};
 use crate::object::{EntryKind, ObjectStore, TreeEntries, TreeEntry};
@@ -11,6 +12,7 @@ pub struct SnapshotEngine<L: AgentLog, S: SnapshotStore, O: ObjectStore> {
     pub snapshot_store: S,
     pub object_store: O,
     ignore_matcher: Option<IgnoreMatcher>,
+    repo_root: Option<PathBuf>,
 }
 
 impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
@@ -20,11 +22,17 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
             snapshot_store,
             object_store,
             ignore_matcher: None,
+            repo_root: None,
         }
     }
 
     pub fn with_ignore(mut self, matcher: IgnoreMatcher) -> Self {
         self.ignore_matcher = Some(matcher);
+        self
+    }
+
+    pub fn with_repo_root(mut self, root: PathBuf) -> Self {
+        self.repo_root = Some(root);
         self
     }
 
@@ -65,18 +73,27 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
         for entry in entries {
             match entry.op {
                 OpType::Write => {
-                    if let (Some(path), Some(blob_id)) = (&entry.path, &entry.blob_id) {
+                    if let (Some(path), Some(_log_blob_id)) = (&entry.path, &entry.blob_id) {
                         if let Some(ref matcher) = self.ignore_matcher {
                             if matcher.should_skip(path, false) {
                                 continue;
                             }
                         }
+                        let blob_id = if let Some(ref root) = self.repo_root {
+                            let file_path = root.join(path);
+                            match std::fs::read(&file_path) {
+                                Ok(content) => self.object_store.put_blob(&content).await?.0,
+                                Err(_) => _log_blob_id.clone(),
+                            }
+                        } else {
+                            _log_blob_id.clone()
+                        };
                         tree_map.insert(
                             path.clone(),
                             TreeEntry {
                                 name: path.clone(),
                                 kind: EntryKind::Blob,
-                                id: blob_id.clone(),
+                                id: blob_id,
                             },
                         );
                     }

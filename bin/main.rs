@@ -179,16 +179,16 @@ async fn main() -> anyhow::Result<()> {
             }
         },
         Commands::Push { remote } => {
-            println!("push to {} (not yet implemented)", remote);
+            cli::pushpull::run_push(&remote).await?;
         }
         Commands::Pull { remote } => {
-            println!("pull from {} (not yet implemented)", remote);
+            cli::pushpull::run_pull(&remote).await?;
         }
         Commands::Fetch { remote } => {
-            println!("fetch from {} (not yet implemented)", remote);
+            cli::pushpull::run_fetch(&remote).await?;
         }
         Commands::Clone { url, path } => {
-            println!("clone {} into {} (not yet implemented)", url, path);
+            cli::pushpull::run_clone(&url, &path).await?;
         }
     }
 

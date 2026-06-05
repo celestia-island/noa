@@ -21,7 +21,9 @@ pub async fn run_create(repo: &Repository, message: &str, author: &str) -> Resul
     };
 
     let matcher = IgnoreMatcher::from_repo_root(&repo.root);
-    let engine = SnapshotEngine::new(agent_log, snap_store, obj_store).with_ignore(matcher);
+    let engine = SnapshotEngine::new(agent_log, snap_store, obj_store)
+        .with_ignore(matcher)
+        .with_repo_root(repo.root.clone());
     let snapshot = engine.compute(&head_ws, parent_ids, author, message).await?;
 
     ws_mgr.update_head(&head_ws, &snapshot.id).await?;
