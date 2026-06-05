@@ -1,0 +1,123 @@
+# 并发设计
+
+## 问题陈述
+
+传统 VCS 系统通过单一锁或合并队列序列化写入。这对人类级别的工​​作流（10-100 次提交/天）有效，但 AI 代理每分钟产生数千次文件修改时会崩溃。
+
+```mermaid
+graph LR
+    subgraph 问题
+        A["100 个 AI 代理 × 10 次写入/秒 = 1000 次写入/秒"]
+    end
+    subgraph 传统方式
+        B["Git/SVN：单锁 → 队列<br/>~100 次写入/秒吞吐量"]
+    end
+    subgraph Noa
+        C["noa：追加日志<br/>~10,000+ 次写入/秒吞吐量"]
+    end
+```
+
+## 架构
+
+### 第一层：AgentLog（写入路径）
+
+每个工作区在 `.noa/agent-logs/` 下拥有一个专用的 JSONL 文件。
+
+```mermaid
+graph LR
+    ws1["工作区 'agent-001'"] --> f1["agent-logs/agent-001.log"]
+    ws2["工作区 'agent-002'"] --> f2["agent-logs/agent-002.log"]
+```
+
+写入使用 `O_APPEND` 标志，提供：
+- **原子性**：内核保证追加操作的完整写入原子性
+- **有序性**：写入按文件序列化（按工作区）
+- **无锁**：不同文件之间无需 fcntl/flock
+
+### 第二层：快照存储（读取路径）
+
+快照存储在 redb 中，使用 MVCC（多版本并发控制）：
+- 写入通过 redb 的单写入者事务序列化
+- 读取从不阻塞写入（快照隔离）
+- 多个读取者可同时访问
+
+### 第三层：合并（合并路径）
+
+`Consolidator` 读取所有工作区的代理日志，按时间戳排序，生成统一的快照链：
+
+```mermaid
+graph TD
+    subgraph 输入
+        L1["agent-001.log：[write A@t1, write B@t3]"]
+        L2["agent-002.log：[write C@t2, write D@t4]"]
+    end
+    subgraph 合并后
+        C1["write A@t1 → write C@t2 → write B@t3 → write D@t4"]
+    end
+    L1 --> C1
+    L2 --> C1
+```
+
+合并异步运行，不阻塞代理写入。
+
+## 并发保证
+
+| 保证 | 机制 |
+|------|------|
+| 无数据丢失 | O_APPEND + 每次写入 fsync |
+| 工作区内有序性 | 每个工作区单文件 |
+| 工作区间有序性 | 微秒时间戳 |
+| 读取一致性 | redb MVCC 快照隔离 |
+| 工作区 head 安全 | CAS（比较并交换）更新 |
+
+## 可扩展性分析
+
+### 单进程（嵌入式）
+
+```
+代理数：1-100（同一进程）
+吞吐量：~10,000 次写入/秒
+瓶颈：磁盘 I/O（每次写入 fsync）
+```
+
+### 多进程（noa-server）
+
+```
+代理数：100-1000（独立进程）
+吞吐量：~5,000 次写入/秒
+瓶颈：服务端写入序列化
+```
+
+### 分布式（MinIO 后端）
+
+```
+代理数：1000+
+吞吐量：S3 PUT 速率限制（~3,500/秒每前缀）
+瓶颈：网络 + S3 速率限制
+```
+
+## fsync 策略
+
+每次代理日志写入遵循以下模式：
+
+```rust
+file.write_all(data)?;   // 追加到文件
+file.flush()?;           // 刷新用户空间缓冲区
+file.sync_data()?;       // fsync — 确保磁盘持久性
+```
+
+在 Linux 上，`sync_data()` 跳过元数据同步（fdatasync），与完整 fsync 相比减少约 30% 延迟。
+
+## 未来：预写日志批处理
+
+当前：每次写入一个 fsync。
+计划：将多次写入批处理为单个 fsync：
+
+```rust
+agent.buffer(write_a);
+agent.buffer(write_b);
+agent.buffer(write_c);
+agent.flush(); // 三次写入一次 fsync
+```
+
+预期吞吐量提升：对突发写入提升 3-5 倍。
