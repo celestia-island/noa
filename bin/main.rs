@@ -16,6 +16,8 @@ enum Commands {
     Init {
         #[arg(default_value = ".")]
         path: PathBuf,
+        #[arg(long)]
+        noa_remote: Option<String>,
     },
     Status,
     Log {
@@ -106,8 +108,8 @@ async fn main() -> anyhow::Result<()> {
     let app = App::parse();
 
     match app.command {
-        Commands::Init { path } => {
-            cli::init::run(&cli::init::InitArgs { path })?;
+        Commands::Init { path, noa_remote } => {
+            cli::init::run(&cli::init::InitArgs { path, noa_remote })?;
         }
         Commands::Status => {
             cli::status::run().await?;

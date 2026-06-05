@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+use crate::ignore::IgnoreMatcher;
 use crate::log::AgentLog;
 use crate::object::ObjectStore;
 use crate::refs::RefStore;
@@ -19,7 +20,8 @@ pub async fn run_create(repo: &Repository, message: &str, author: &str) -> Resul
         None => vec![],
     };
 
-    let engine = SnapshotEngine::new(agent_log, snap_store, obj_store);
+    let matcher = IgnoreMatcher::from_repo_root(&repo.root);
+    let engine = SnapshotEngine::new(agent_log, snap_store, obj_store).with_ignore(matcher);
     let snapshot = engine.compute(&head_ws, parent_ids, author, message).await?;
 
     ws_mgr.update_head(&head_ws, &snapshot.id).await?;

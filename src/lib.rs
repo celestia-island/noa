@@ -2,6 +2,7 @@ pub mod cli;
 pub mod config;
 pub mod error;
 pub mod git;
+pub mod ignore;
 pub mod log;
 pub mod merge;
 pub mod object;

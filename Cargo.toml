@@ -43,6 +43,8 @@ async-trait = "^0.1"
 
 gix = "^0.84"
 
+ignore = "^0.4"
+
 axum = "^0.8"
 tower = "^0.5"
 

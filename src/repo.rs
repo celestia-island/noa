@@ -26,6 +26,10 @@ pub struct Repository {
 
 impl Repository {
     pub fn init(path: &Path) -> Result<Self> {
+        Self::init_with_noa_remote(path, None)
+    }
+
+    pub fn init_with_noa_remote(path: &Path, noa_remote: Option<&str>) -> Result<Self> {
         let noa_dir = path.join(NOA_DIR_NAME);
 
         if noa_dir.exists() {
@@ -37,7 +41,10 @@ impl Repository {
         std::fs::create_dir_all(&noa_dir)?;
         std::fs::create_dir_all(noa_dir.join(AGENT_LOGS_DIR))?;
 
-        let config = RepoConfig::default();
+        let mut config = RepoConfig::default();
+        if let Some(url) = noa_remote {
+            config.noa_remote = Some(url.to_string());
+        }
         config.save_to_dir(&noa_dir)?;
 
         std::fs::write(noa_dir.join(HEAD_FILE), "default\n")?;
@@ -47,6 +54,12 @@ impl Repository {
 
         let db = Arc::new(db);
         Self::create_default_workspace(&db)?;
+
+        manage_gitignore(path);
+
+        if let Some(url) = noa_remote {
+            manage_gitattributes(path, url);
+        }
 
         Ok(Repository {
             root: path.to_path_buf(),
@@ -238,6 +251,63 @@ impl Repository {
     }
 }
 
+pub fn manage_gitignore(root: &Path) {
+    let gitignore_path = root.join(".gitignore");
+
+    if !gitignore_path.exists() {
+        let content = "# Added by noa \u{2014} keep agent iteration data out of git\n.noa/\n";
+        let _ = std::fs::write(&gitignore_path, content);
+        return;
+    }
+
+    let content = match std::fs::read_to_string(&gitignore_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    for line in content.lines() {
+        if line.trim() == ".noa" || line.trim() == ".noa/" {
+            return;
+        }
+    }
+
+    let _ = std::fs::write(&gitignore_path, format!("{}\n.noa/\n", content.trim_end()));
+}
+
+pub fn manage_gitattributes(root: &Path, noa_remote_url: &str) {
+    let gitattributes_path = root.join(".gitattributes");
+    let attr_line = format!("{}/**   noa-remote={}", ".noa", noa_remote_url);
+
+    if !gitattributes_path.exists() {
+        let content = format!(
+            "# Added by noa \u{2014} specifies where agent iteration data is hosted\n{}\n",
+            attr_line
+        );
+        let _ = std::fs::write(&gitattributes_path, content);
+        return;
+    }
+
+    let content = match std::fs::read_to_string(&gitattributes_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    for line in content.lines() {
+        if line.contains("noa-remote=") {
+            return;
+        }
+    }
+
+    let _ = std::fs::write(
+        &gitattributes_path,
+        format!(
+            "{}\n# Added by noa \u{2014} specifies where agent iteration data is hosted\n{}\n",
+            content.trim_end(),
+            attr_line
+        ),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,5 +378,66 @@ mod tests {
         assert!(repo.ref_store().is_ok());
         assert!(repo.workspace_manager().is_ok());
         assert!(repo.agent_log("default").is_ok());
+    }
+
+    #[test]
+    fn test_init_creates_gitignore() {
+        let tmp = TempDir::new().unwrap();
+        Repository::init(tmp.path()).unwrap();
+        let gitignore = tmp.path().join(".gitignore");
+        assert!(gitignore.exists());
+        let content = std::fs::read_to_string(&gitignore).unwrap();
+        assert!(content.contains(".noa/"));
+    }
+
+    #[test]
+    fn test_init_appends_to_existing_gitignore() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join(".gitignore"), "*.log\n").unwrap();
+        Repository::init(tmp.path()).unwrap();
+        let content = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        assert!(content.contains("*.log"));
+        assert!(content.contains(".noa/"));
+    }
+
+    #[test]
+    fn test_init_does_not_duplicate_gitignore_entry() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join(".gitignore"), ".noa/\n").unwrap();
+        let before = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        Repository::init(tmp.path()).unwrap();
+        let after = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn test_init_with_noa_remote_creates_gitattributes() {
+        let tmp = TempDir::new().unwrap();
+        let repo = Repository::init_with_noa_remote(tmp.path(), Some("https://noa.example.com/repo")).unwrap();
+
+        let gitattributes = tmp.path().join(".gitattributes");
+        assert!(gitattributes.exists());
+        let content = std::fs::read_to_string(&gitattributes).unwrap();
+        assert!(content.contains("noa-remote=https://noa.example.com/repo"));
+
+        assert_eq!(repo.config.noa_remote, Some("https://noa.example.com/repo".to_string()));
+    }
+
+    #[test]
+    fn test_init_without_noa_remote_no_gitattributes() {
+        let tmp = TempDir::new().unwrap();
+        Repository::init(tmp.path()).unwrap();
+        assert!(!tmp.path().join(".gitattributes").exists());
+    }
+
+    #[test]
+    fn test_init_with_noa_remote_appends_to_existing_gitattributes() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join(".gitattributes"), "*.bin binary\n").unwrap();
+        Repository::init_with_noa_remote(tmp.path(), Some("https://noa.example.com/repo")).unwrap();
+
+        let content = std::fs::read_to_string(tmp.path().join(".gitattributes")).unwrap();
+        assert!(content.contains("*.bin binary"));
+        assert!(content.contains("noa-remote="));
     }
 }

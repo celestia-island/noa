@@ -10,6 +10,9 @@ pub struct RepoConfig {
 
     #[serde(default)]
     pub remotes: Vec<RemoteConfig>,
+
+    #[serde(default)]
+    pub noa_remote: Option<String>,
 }
 
 fn default_repo_name() -> String {
@@ -33,6 +36,7 @@ impl Default for RepoConfig {
         RepoConfig {
             name: default_repo_name(),
             remotes: Vec::new(),
+            noa_remote: None,
         }
     }
 }

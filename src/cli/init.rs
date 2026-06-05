@@ -9,6 +9,9 @@ use crate::repo::Repository;
 pub struct InitArgs {
     #[arg(default_value = ".")]
     pub path: PathBuf,
+
+    #[arg(long)]
+    pub noa_remote: Option<String>,
 }
 
 pub fn run(args: &InitArgs) -> Result<()> {
@@ -21,7 +24,10 @@ pub fn run(args: &InitArgs) -> Result<()> {
         );
     }
 
-    let repo = Repository::init(&path)?;
+    let repo = match args.noa_remote.as_deref() {
+        Some(url) => Repository::init_with_noa_remote(&path, Some(url))?,
+        None => Repository::init(&path)?,
+    };
 
     println!(
         "Initialized empty noa repository in {}",

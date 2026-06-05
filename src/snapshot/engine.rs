@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::error::Result;
+use crate::ignore::IgnoreMatcher;
 use crate::log::{AgentLog, LogEntry, OpType};
 use crate::object::{EntryKind, ObjectStore, TreeEntries, TreeEntry};
 use crate::snapshot::{generate_snapshot_id, Snapshot, SnapshotId, SnapshotStore};
@@ -9,6 +10,7 @@ pub struct SnapshotEngine<L: AgentLog, S: SnapshotStore, O: ObjectStore> {
     pub log: L,
     pub snapshot_store: S,
     pub object_store: O,
+    ignore_matcher: Option<IgnoreMatcher>,
 }
 
 impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
@@ -17,7 +19,13 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
             log,
             snapshot_store,
             object_store,
+            ignore_matcher: None,
         }
+    }
+
+    pub fn with_ignore(mut self, matcher: IgnoreMatcher) -> Self {
+        self.ignore_matcher = Some(matcher);
+        self
     }
 
     pub async fn compute(
@@ -58,6 +66,11 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
             match entry.op {
                 OpType::Write => {
                     if let (Some(path), Some(blob_id)) = (&entry.path, &entry.blob_id) {
+                        if let Some(ref matcher) = self.ignore_matcher {
+                            if matcher.should_skip(path, false) {
+                                continue;
+                            }
+                        }
                         tree_map.insert(
                             path.clone(),
                             TreeEntry {
@@ -75,6 +88,12 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
                 }
                 OpType::Rename => {
                     if let (Some(from), Some(to)) = (&entry.from_path, &entry.path) {
+                        if let Some(ref matcher) = self.ignore_matcher {
+                            if matcher.should_skip(to, false) {
+                                tree_map.remove(from);
+                                continue;
+                            }
+                        }
                         if let Some(removed) = tree_map.remove(from) {
                             tree_map.insert(
                                 to.clone(),
@@ -187,5 +206,86 @@ mod tests {
 
         assert_eq!(child.parents.len(), 1);
         assert_eq!(child.parents[0], parent.id);
+    }
+
+    #[tokio::test]
+    async fn test_ignore_filters_noa_paths() {
+        let tmp = TempDir::new().unwrap();
+        let db = Arc::new(
+            redb::Database::builder()
+                .create(tmp.path().join("test.redb"))
+                .unwrap(),
+        );
+
+        let log = FileAgentLog::create(&tmp.path().join("test.log")).unwrap();
+        let snapshot_store = RedbSnapshotStore::new(Arc::clone(&db)).unwrap();
+        let object_store = RedbObjectStore::new(db).unwrap();
+
+        let matcher = IgnoreMatcher::from_repo_root(tmp.path());
+        let engine = SnapshotEngine::new(log, snapshot_store, object_store).with_ignore(matcher);
+
+        engine.log.append(&write_entry(1, "main.rs", "h1", 100)).await.unwrap();
+        engine.log.append(&write_entry(2, ".noa/config", "h2", 200)).await.unwrap();
+        engine.log.append(&write_entry(3, ".noa/noa.redb", "h3", 300)).await.unwrap();
+
+        let snap = engine.compute("default", vec![], "test", "ignore noa").await.unwrap();
+        let tree = engine.object_store.get_tree(&crate::object::TreeId(snap.tree_hash)).await.unwrap();
+        assert_eq!(tree.0.len(), 1);
+        assert_eq!(tree.0[0].name, "main.rs");
+    }
+
+    #[tokio::test]
+    async fn test_ignore_filters_gitignore_patterns() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join(".gitignore"), "*.log\ntarget/\n").unwrap();
+
+        let db = Arc::new(
+            redb::Database::builder()
+                .create(tmp.path().join("test.redb"))
+                .unwrap(),
+        );
+
+        let log = FileAgentLog::create(&tmp.path().join("test.log")).unwrap();
+        let snapshot_store = RedbSnapshotStore::new(Arc::clone(&db)).unwrap();
+        let object_store = RedbObjectStore::new(db).unwrap();
+
+        let matcher = IgnoreMatcher::from_repo_root(tmp.path());
+        let engine = SnapshotEngine::new(log, snapshot_store, object_store).with_ignore(matcher);
+
+        engine.log.append(&write_entry(1, "main.rs", "h1", 100)).await.unwrap();
+        engine.log.append(&write_entry(2, "debug.log", "h2", 200)).await.unwrap();
+        engine.log.append(&write_entry(3, "target/dep.rs", "h3", 300)).await.unwrap();
+
+        let snap = engine.compute("default", vec![], "test", "ignore gitignore").await.unwrap();
+        let tree = engine.object_store.get_tree(&crate::object::TreeId(snap.tree_hash)).await.unwrap();
+        assert_eq!(tree.0.len(), 1);
+        assert_eq!(tree.0[0].name, "main.rs");
+    }
+
+    #[tokio::test]
+    async fn test_ignore_allows_whitelisted() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join(".gitignore"), "*.log\n!important.log\n").unwrap();
+
+        let db = Arc::new(
+            redb::Database::builder()
+                .create(tmp.path().join("test.redb"))
+                .unwrap(),
+        );
+
+        let log = FileAgentLog::create(&tmp.path().join("test.log")).unwrap();
+        let snapshot_store = RedbSnapshotStore::new(Arc::clone(&db)).unwrap();
+        let object_store = RedbObjectStore::new(db).unwrap();
+
+        let matcher = IgnoreMatcher::from_repo_root(tmp.path());
+        let engine = SnapshotEngine::new(log, snapshot_store, object_store).with_ignore(matcher);
+
+        engine.log.append(&write_entry(1, "important.log", "h1", 100)).await.unwrap();
+        engine.log.append(&write_entry(2, "debug.log", "h2", 200)).await.unwrap();
+
+        let snap = engine.compute("default", vec![], "test", "whitelist").await.unwrap();
+        let tree = engine.object_store.get_tree(&crate::object::TreeId(snap.tree_hash)).await.unwrap();
+        assert_eq!(tree.0.len(), 1);
+        assert_eq!(tree.0[0].name, "important.log");
     }
 }
