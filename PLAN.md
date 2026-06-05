@@ -1,7 +1,7 @@
 # noa — Implementation Plan
 
 > **Last updated**: 2026-06-05
-> **Status**: Planning complete, ready for Phase 0
+> **Status**: Phases 0–5 complete; Phase 6+ in progress
 
 ---
 
@@ -38,7 +38,7 @@ JSONL append-only logs for zero-lock concurrent writes.
 │       │  │   RemoteBackend trait │              │
 │       │  │  ┌──────┬───────────┐ │              │
 │       │  │  │ Git  │ Noa-native│ │              │
-│       │  │  │(git2)│ (HTTP)    │ │              │
+│       │  │  │(gix) │ (HTTP)    │ │              │
 │       │  │  └──────┴───────────┘ │              │
 │       │  └───────────────────────┘              │
 │       │                                         │
@@ -71,7 +71,7 @@ JSONL append-only logs for zero-lock concurrent writes.
 | workspace state | **redb** | MVCC multi-read | — (local authority) |
 | ref pointers | **redb** | ACID CAS | — (local authority) |
 | agent incremental logs | **File JSONL** | `O_APPEND` zero-lock | — (local authority) |
-| remote sync | — | git2 HTTP | GitHub / Bitbucket / GitLab |
+| remote sync | — | gix HTTP | GitHub / Bitbucket / GitLab |
 
 ### `.noa/` Directory Layout
 
@@ -203,7 +203,7 @@ pub trait RemoteBackend: Send + Sync {
     async fn fetch(&self, url: &str, specs: &[FetchSpec]) -> Result<FetchResult>;
     async fn list_refs(&self, url: &str) -> Result<Vec<RemoteRef>>;
 }
-// Impls: GitBackend (git2), NoaBackend (native HTTP, future)
+// Impls: GitBackend (gix), NoaBackend (native HTTP, future)
 ```
 
 ---
@@ -288,14 +288,15 @@ affecting external Git compatibility.
 
 1. Read target snapshot → recursively walk tree → collect all blobs
 2. Convert to Git packfile format
-3. Push via git2 (libgit2) to remote
+3. Push via gix (pure Rust Git) to remote
 4. Update `refs/remotes/origin/*`
 
 ### Clone flow
 
-1. Fetch via git2 → packfile
+1. Clone via gix (or fallback to system git CLI)
 2. Parse Git objects → insert into noa redb (blobs + trees)
 3. Parse commits → create snapshots + workspaces + refs
+4. Run `noa init` if `.noa/` doesn't exist → establish noa workspace alongside `.git/`
 
 ---
 
@@ -338,7 +339,7 @@ go through MinIO.
 [package]
 name = "noa"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 # KV storage
@@ -356,13 +357,17 @@ clap = { version = "4", features = ["derive"] }
 # Hashing
 sha2 = "0.10"
 hex = "0.4"
+base64 = "0.22"
 
 # Async
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 
-# Git remote
-git2 = "0.19"
+# Git remote (pure Rust, replaces git2)
+gix = "0.84"
+
+# .gitignore parsing (ripgrep's engine — nested patterns, negation, .git/info/exclude)
+ignore = "0.4"
 
 # HTTP (noa-server)
 axum = "0.8"
@@ -403,10 +408,12 @@ src/
 │   ├── file_impl.rs          # FileAgentLog (JSONL, O_APPEND)
 │   └── format.rs             # LogEntry ↔ JSONL serialization
 │
+├── ignore.rs                 # ===== IgnoreMatcher (.gitignore + .noa exclusion) =====
+│
 ├── snapshot/                 # ===== Snapshot engine =====
 │   ├── mod.rs                # SnapshotStore trait + Snapshot struct
 │   ├── redb_impl.rs          # RedbSnapshotStore
-│   ├── engine.rs             # compute(agent_logs) → tree → snapshot
+│   ├── engine.rs             # compute(agent_logs) → tree → snapshot (with ignore filter)
 │   └── diff.rs               # diff(snap_a, snap_b) → Vec<FileDiff>
 │
 ├── workspace/                # ===== Workspace manager =====
@@ -428,9 +435,13 @@ src/
 │
 ├── remote.rs                 # ===== RemoteBackend trait =====
 │
+├── server/                   # ===== noa-server =====
+│   ├── mod.rs                # axum router + API routes
+│   └── handlers.rs           # API handlers (CRUD for refs/blobs/trees/snapshots/workspaces)
+│
 └── cli/                      # ===== CLI commands =====
     ├── mod.rs                # clap definitions + subcommand dispatch
-    ├── init.rs               # noa init [--git]
+    ├── init.rs               # noa init [--noa-remote <url>]
     ├── status.rs             # noa status
     ├── log_cmd.rs            # noa log
     ├── snapshot_cmd.rs       # noa snapshot [create|list|diff]
@@ -443,169 +454,237 @@ src/
 
 ## Implementation Phases
 
-### Phase 0: Skeleton (2 days)
+### ✅ Phase 0: Skeleton — COMPLETE
 
-- [ ] Cargo workspace + dependencies
-- [ ] `error.rs` — unified error types
-- [ ] `config.rs` — TOML config parsing
-- [ ] `repo.rs` — repository lifecycle (init, open, validate)
-- [ ] `cli/init.rs` — `noa init` (create `.noa/`, init redb, create `agent-logs/`)
-- [ ] Unit test scaffolding
+**Delivered**:
+- Cargo workspace + all dependencies
+- `error.rs` — unified error types via thiserror
+- `config.rs` — TOML config parsing with remote entries
+- `repo.rs` — init (creates `.noa/`, redb DB, agent-logs/, HEAD, ORIG_HEAD, config), open, validate, find (walk-up), exists
+- `cli/init.rs` — `noa init`
+- Unit tests passing (init, open, find, store accessibility)
 
-**Deliverable**: `noa init` creates a valid `.noa/` directory structure.
+### ✅ Phase 1: ObjectStore + redb — COMPLETE
 
-### Phase 1: ObjectStore + redb (3 days)
+**Delivered**:
+- `ObjectStore` trait + `BlobId`/`TreeId`/`TreeEntries` types
+- `RedbObjectStore` — blobs + trees tables with SHA-256 content addressing
+- `MinioObjectStore` — S3-compatible remote backend via aws-sdk-s3
+- Integration tests (round-trip blob, round-trip tree)
 
-- [ ] `object/mod.rs` — `ObjectStore` trait + `BlobId`/`TreeId`/`TreeEntries` types
-- [ ] `object/redb_impl.rs` — `RedbObjectStore` (blobs + trees tables)
-- [ ] Content-addressing: `BlobId = SHA256(content)`, `TreeId = SHA256(msgpack(entries))`
-- [ ] Integration tests (round-trip blob, round-trip tree)
+### ✅ Phase 2: AgentLog — COMPLETE
 
-**Deliverable**: Local blob/tree CRUD via redb.
+**Delivered**:
+- `AgentLog` trait + `LogEntry` + `OpType` (Write, Delete, Rename, Snapshot, Merge)
+- `FileAgentLog` — per-workspace JSONL with O_APPEND zero-lock concurrent writes
+- Log serialization (JSONL ↔ LogEntry), blank-line resilience
+- `read_since(seq)` incremental reads, `read_all()` full scan
+- Concurrency test (multi-thread simultaneous append)
 
-### Phase 2: AgentLog (3 days)
+### ✅ Phase 3: Snapshot + Ref — COMPLETE
 
-- [ ] `log/mod.rs` — `AgentLog` trait + `LogEntry` + `OpType`
-- [ ] `log/format.rs` — `LogEntry` ↔ JSONL serialization
-- [ ] `log/file_impl.rs` — `FileAgentLog` (O_APPEND + fsync)
-  - Each workspace gets its own log file via UUID
-  - `append()` returns monotonic seq
-  - `read_since(seq)` for incremental readers
-  - `read_all()` for full scan
-- [ ] Concurrency stress test (100 threads simultaneous append)
+**Delivered**:
+- `SnapshotStore` trait + `Snapshot` struct
+- `RedbSnapshotStore` — MessagePack serialization in redb
+- `RedbRefStore` — CAS compare-and-swap via redb write transaction
+- `SnapshotEngine::compute()` — agent log replay → tree → snapshot
+- `snapshot/diff.rs` — file-diff between two snapshots (added/modified/deleted)
+- Unit tests (basic compute, delete, parent chain)
 
-**Deliverable**: Zero-lock agent log for concurrent multi-agent writes.
+### ✅ Phase 4: Workspace Manager — COMPLETE
 
-### Phase 3: Snapshot + Ref (3 days)
+**Delivered**:
+- `Workspace` struct (name, head, base, agent_id, timestamps)
+- `WorkspaceManager` — redb-backed CRUD
+- Operations: create (fork from HEAD), switch, list, delete, update_head
+- HEAD / ORIG_HEAD read/write management
+- Default workspace ("default") creation on init
+- Integration tests
 
-- [ ] `snapshot/mod.rs` — `SnapshotStore` trait + `Snapshot` struct
-- [ ] `snapshot/redb_impl.rs` — `RedbSnapshotStore`
-- [ ] `refs.rs` — `RefStore` trait + `RedbRefStore` (CAS via redb write transaction)
-- [ ] `snapshot/engine.rs` — `SnapshotEngine::compute(agent_logs) → tree → snapshot`
-  - Collect all entries from agent-logs
-  - Apply writes/deletes/renames to build tree
-  - Compute tree hash
-  - Store snapshot + update workspace head
-- [ ] `snapshot/diff.rs` — diff two snapshots, return file-level changes
-- [ ] Unit tests
+### ✅ Phase 5: Merge Engine — COMPLETE
 
-**Deliverable**: End-to-end snapshot lifecycle.
+**Delivered**:
+- Three-way merge (`base, ours, theirs`) comparing tree entries
+- `ConflictDetector` — add/modify/delete comparisons, upstream-wins resolution
+- `Consolidator` — sort all workspace logs by timestamp, batch into snapshot chain
+- Unit tests (no-conflict merge, file-level conflict, rename conflict)
 
-### Phase 4: Workspace Manager (3 days)
+---
 
-- [ ] `workspace/mod.rs` — `Workspace` struct + `WorkspaceManager`
-- [ ] `workspace/ops.rs`:
-  - `create(name)` — fork from HEAD snapshot
-  - `switch(name)` — update HEAD, update working tree
-  - `list()` — enumerate all workspaces with status
-  - `delete(name)` — remove merged workspace
-- [ ] HEAD / ORIG_HEAD management
-- [ ] Integration tests
+### Phase 6: Git Remote Compatibility (in progress)
 
-**Deliverable**: Multi-workspace isolation for concurrent agent work.
+See design docs in `docs/designs/` for detailed analysis of approach choices.
 
-### Phase 5: Merge Engine (3 days)
+- [x] `RemoteBackend` trait + `PushSpec`/`FetchSpec`/`RemoteRef` types
+- [x] `git/import.rs` — `.git` → `.noa` import (walk git tree via gix, import all blobs/trees)
+- [x] `git/translate.rs` — bidirectional noa ↔ git blob/tree translation, roundtrip tested
+- [x] `cli/remote_cmd.rs` — `noa remote add/remove/list`, persisted in `.noa/config`
+- [ ] `git/mod.rs` — `GitBackend` (impl `RemoteBackend` via gix protocol)
+- [ ] `git/export.rs` — noa snapshot → git packfile export
+- [ ] `noa clone <git-url>` — git clone (gix fallback to system git CLI) → auto import into noa
+- [ ] `noa push <remote>` — translate noa objects to git packfile, push via gix
+- [ ] `noa pull <remote>` — fetch git packfile, translate to noa objects
+- [ ] `noa fetch <remote>` — list + fetch remote refs
 
-- [ ] `merge/mod.rs` — `MergeEngine::three_way_merge(base, ours, theirs)`
-  - Compare tree entries side by side
-  - Determine add/modify/delete for each side
-  - Same in both → no conflict
-  - Different → conflict
-- [ ] `merge/conflict.rs` — `ConflictDetector` + upstream-wins resolution
-- [ ] `merge/consolidate.rs` — `Consolidator`
-  - Read all agent-logs across workspaces
-  - Sort by timestamp
-  - Batch into snapshot chain
-  - Write snapshots to redb
-  - Mark log entries as consolidated
-- [ ] Unit tests (no-conflict merge, file-level conflict, rename conflict)
+**Deliverable**: Push/pull/clone to GitHub/Bitbucket/GitLab. Hybrid model where `.git/` and `.noa/` coexist in the same working tree, with source code managed by git and agent iteration data managed by noa.
 
-**Deliverable**: Agent log consolidation + three-way merge with conflict reporting.
+**Architectural note on clone**: `noa clone <git-url>` follows a two-step path:
+1. Clone via gix (preferred, pure Rust) or fallback to system `git` CLI for reliability
+2. Run `import_git_to_noa()` to import all git objects into noa's redb
+3. Create initial snapshot and workspace pointing to the imported tree
+4. Result: `.git/` and `.noa/` coexist in the cloned directory — git handles source, noa handles agent data
 
-### Phase 6: Git Remote Compatibility (3 days)
+For a noa-native clone (`noa://` protocol), full noa-server (Phase 8) is required.
 
-- [ ] `remote.rs` — `RemoteBackend` trait + `PushSpec`/`FetchSpec`/`RemoteRef`
-- [ ] `git/mod.rs` — `GitBackend` (impl `RemoteBackend` via git2)
-- [ ] `git/import.rs` — `.git` → `.noa` import
-  - Walk Git objects, translate blobs/trees/commits
-  - Create corresponding snapshots + workspaces + refs
-- [ ] `git/export.rs` — noa snapshot → Git packfile export
-  - Recursively collect blobs and trees
-  - Build Git commit objects
-  - Write packfile
-- [ ] `git/translate.rs` — Type translation layer
-- [ ] Round-trip tests (push → clone → verify)
+---
 
-**Deliverable**: Push/pull/clone to GitHub/Bitbucket/GitLab.
+### Phase 7: Ignore System & Noa Remotes (NEW — next target)
 
-### Phase 7: noa-server MVP (5 days)
+**Goal**: noa automatically respects existing `.gitignore` files (and other ignore sources) when computing snapshots — no `.noaignore` needed. Additionally, `noa init` auto-manages `.gitignore` (adds `.noa/`) and `.gitattributes` (adds `noa-remote` attribute) for seamless coexistence with git.
 
-- [ ] Server binary setup (axum + tokio)
-- [ ] `object/minio_impl.rs` — `MinioObjectStore` (S3-compatible via aws-sdk-s3)
-- [ ] REST API endpoints:
-  - `GET/POST /refs` — list / push refs
-  - `POST /blobs` — batch upload
-  - `GET /blob/<hash>` — single blob
-  - `POST /trees` — batch upload
-  - `GET /tree/<hash>` — single tree
-  - `POST /agent-log` — push incremental log
-  - `GET/POST /snapshots` — list / create
-  - `GET/POST /merge-queue` — merge coordination
-- [ ] Server config: `object_store = "minio"` | `"redb"`
-- [ ] Auth: API key / JWT
-- [ ] `NoaBackend` — impl `RemoteBackend` for noa-native protocol
+#### 7.1 Ignore System
+
+- [ ] `Cargo.toml` — add `ignore = "0.4"` (ripgrep's `.gitignore` engine)
+- [ ] `src/ignore.rs` — `IgnoreMatcher` module
+  - `from_repo_root(root)` — collects all `.gitignore` files across directory levels
+  - Also reads `.git/info/exclude` for full git compatibility
+  - `should_skip(path, is_dir)` — unified check: `.noa/` internal paths always excluded + gitignore patterns
+  - `is_ignored(path, is_dir)` — delegate to compiled `Gitignore` matcher
+  - Caches compiled regex automata per directory (handled by `ignore` crate internals)
+  - Handles nested `.gitignore`, negation patterns (`!`), directory-only patterns
+
+**Why snapshot-time filtering (not ingestion-time)**:
+The snapshot engine is a log-replay engine — it never walks the filesystem. Files enter the system via `OpType::Write` log entries. Filtering in `build_tree_from_entries()` means:
+- Ignored files are never included in snapshot trees, even if accidentally logged
+- Rebuilding any snapshot automatically applies the latest ignore rules
+- Single point of change in `engine.rs` — no agent code modifications needed
+
+- [ ] `src/snapshot/engine.rs` — integrate ignore filter
+  - Add `ignore_matcher: Option<IgnoreMatcher>` field to `SnapshotEngine`
+  - Add `with_ignore(matcher) -> Self` builder method
+  - In `build_tree_from_entries()`, skip entries whose path matches ignore rules
+  - `compute()` unchanged — filtering is transparent to callers
+
+- [ ] `src/cli/snapshot_cmd.rs` — pass `IgnoreMatcher` to engine when creating snapshots
+  - Construct `IgnoreMatcher::from_repo_root(repo.root())` before building engine
+  - Call `engine.with_ignore(matcher)` to activate filtering
+
+#### 7.2 `.gitignore` Auto-Management
+
+- [ ] `src/repo.rs` — `manage_gitignore(root)` helper
+  - On `noa init`:
+    - If `.gitignore` doesn't exist → create it with `# Added by noa — keep agent iteration data out of git\n.noa/\n`
+    - If `.gitignore` exists but lacks `.noa/` → append `.noa/`
+    - If `.gitignore` already has `.noa/` → no-op
+  - Called at the end of `Repository::init()` after redb initialization
+
+#### 7.3 `.gitattributes` Noa Remote Link
+
+**Design**: Git `.gitattributes` supports arbitrary custom attributes. Git ignores unknown attributes but stores them — exactly like Git LFS uses `filter=lfs`. We add a `noa-remote` attribute to `.gitattributes`:
+
+```
+.noa/**   noa-remote=https://noa-host.example.com/repo
+```
+
+When noa encounters this attribute, it knows where to push/pull agent iteration data. This keeps the noa hosting URL visible in the source tree and versioned alongside the project — no hidden configuration.
+
+**Dual storage strategy**:
+- `.gitattributes` — visible, versioned alongside source code; git-compatible
+- `.noa/config` → `noa_remote` field — authoritative for noa CLI at runtime; parsed once on init, cached
+- On `noa init --noa-remote <url>`: write to both locations
+- On `noa push/pull` (future): read from `.noa/config` first, fallback to `.gitattributes`
+
+- [ ] `src/config.rs` — add `noa_remote: Option<String>` to `RepoConfig`
+- [ ] `src/repo.rs` — `manage_gitattributes(root, noa_remote_url)` helper
+  - On `noa init --noa-remote <url>`:
+    - If `.gitattributes` doesn't exist → create it with `# Added by noa — specifies where agent iteration data is hosted\n.noa/**   noa-remote=<url>\n`
+    - If `.gitattributes` exists but lacks `noa-remote=` → append the line
+  - Store `noa_remote_url` in `.noa/config` as well
+- [ ] `src/cli/init.rs` — add `--noa-remote <url>` argument
+
+#### 7.4 Tests
+
+- [ ] `src/ignore.rs` — unit tests:
+  - `.noa/` paths are always skipped regardless of `.gitignore`
+  - Standard gitignore patterns (glob, directory, negation)
+  - Nested `.gitignore` in subdirectories
+  - `.git/info/exclude` integration
+- [ ] `src/snapshot/engine.rs` — integration tests:
+  - Snapshot filters out `.noa/` paths even if present in log
+  - Snapshot filters out gitignore'd paths
+  - Snapshot includes whitelisted (negation) paths
+- [ ] `src/repo.rs` — integration tests:
+  - `init` creates `.gitignore` if absent
+  - `init` appends `.noa/` to existing `.gitignore`
+  - `init --noa-remote <url>` writes `.gitattributes` and `.noa/config`
+
+**Deliverable**: noa transparently respects `.gitignore` for snapshot creation, auto-manages coexistence with git via `.gitignore` and `.gitattributes`, and supports `noa-remote` URL for future agent data hosting.
+
+---
+
+### Phase 8: noa-server MVP (in progress)
+
+- [x] Server binary setup (axum + tokio + tower)
+- [x] REST API handlers scaffolded (refs, blobs, trees, snapshots, workspaces CRUD)
+- [x] `object/minio_impl.rs` — `MinioObjectStore` (S3-compatible via aws-sdk-s3)
+- [ ] Wire MinIO as server's default ObjectStore (currently scaffold uses local redb)
+- [ ] Auth: API key / JWT (reuse kirino zero-trust framework)
+- [ ] `NoaBackend` — impl `RemoteBackend` for noa-native protocol (HTTP/JSON-RPC)
+- [ ] Merge queue endpoint implementation
+- [ ] Agent-log push endpoint (batch incremental log sync)
 - [ ] Integration tests (client ↔ server round-trip)
 
 **Deliverable**: Self-hosted noa remote with MinIO blob storage.
 
-### Phase 8: CLI Completion (4 days)
+---
 
-- [ ] Full CLI command implementation:
-  - `noa init [--git]` — initialize `.noa/`
-  - `noa status` — current workspace state
-  - `noa log [--workspace <name>]` — snapshot history
-  - `noa snapshot [-m <msg>]` — create snapshot
-  - `noa snapshot list` — list history
-  - `noa snapshot diff <a> <b>` — file-diff between snapshots
-  - `noa workspace create <name>` — new workspace
-  - `noa workspace switch <name>` — change active workspace
-  - `noa workspace list` — list all
-  - `noa workspace delete <name>` — remove merged workspace
-  - `noa workspace merge <from>` — merge from other workspace
-  - `noa remote add <name> <url>` — add remote
-  - `noa push [--remote <name>]` — push
-  - `noa pull [--remote <name>]` — pull
-  - `noa fetch [--remote <name>]` — fetch
-  - `noa clone <url>` — clone remote repo
-- [ ] End-to-end integration tests
+### Phase 9: CLI Completion (in progress)
+
+- [x] `noa init` — initialize `.noa/`
+- [x] `noa status` — current workspace state
+- [x] `noa log` — snapshot history
+- [x] `noa snapshot create|list|diff` — snapshot lifecycle
+- [x] `noa workspace create|switch|list|delete|merge` — workspace management
+- [x] `noa remote add|remove|list` — remote management
+- [ ] `noa push [--remote <name>]` — push agent data (depends on Phase 6 GitBackend)
+- [ ] `noa pull [--remote <name>]` — pull agent data (depends on Phase 6)
+- [ ] `noa fetch [--remote <name>]` — fetch remote refs (depends on Phase 6)
+- [ ] `noa clone <url>` — clone remote to local (depends on Phase 6)
+- [x] End-to-end workflow examples (basic, multi-agent, merge, remote-sync)
 - [ ] Basic documentation
 
 **Deliverable**: Full-featured CLI for both human and agent use.
 
-### Phase 10: MinIO ObjectStore (on-demand)
+---
 
-- [ ] `object/minio_impl.rs` — `MinioObjectStore`
-- [ ] Config: `object_store = "minio"` with endpoint + bucket + credentials
-- [ ] Integration tests with local MinIO instance
+### Phase 10: entelecheia Integration (future)
 
-**Deliverable**: Remote blob storage for noa-server deployments.
+noa is consumed by entelecheia (the multi-agent orchestration platform). Integration points:
+
+- [ ] **GitRemote → `noa init`**: When entelecheia clones a git workspace, automatically run `noa init` in the cloned directory to establish a parallel `.noa/` workspace alongside `.git/`
+- [ ] **Agent file writes → ignore check**: Before agents write files to noa, consult the `IgnoreMatcher` (or call `noa check-ignore <path>`) to avoid ingesting build artifacts / secrets
+- [ ] **Read `noa-remote` from `.gitattributes`**: When syncing agent iteration data, read the noa remote URL from `.gitattributes` to determine the sync target
+- [ ] **Container agent log isolation**: Each container-backed agent writes to its own workspace log in `.noa/agent-logs/<workspace>.log`
+- [ ] **Noa-native workspace type**: Add `NoaRemote` as a new `WorkspaceConnectionKind` (alongside existing LocalFilesystem, DockerVolume, PolemosRemote, GitRemote)
 
 ---
 
 ## Total Estimate
 
-| Phase | Days |
-|-------|------|
-| 0: Skeleton | 2 |
-| 1: ObjectStore + redb | 3 |
-| 2: AgentLog | 3 |
-| 3: Snapshot + Ref | 3 |
-| 4: Workspace Manager | 3 |
-| 5: Merge Engine | 3 |
-| 6: Git Remote | 3 |
-| 7: noa-server MVP | 5 |
-| 8: CLI Completion | 4 |
-| **Total** | **29 days** |
+| Phase | Days | Status |
+|-------|------|--------|
+| 0: Skeleton | 2 | ✅ Complete |
+| 1: ObjectStore + redb | 3 | ✅ Complete |
+| 2: AgentLog | 3 | ✅ Complete |
+| 3: Snapshot + Ref | 3 | ✅ Complete |
+| 4: Workspace Manager | 3 | ✅ Complete |
+| 5: Merge Engine | 3 | ✅ Complete |
+| 6: Git Remote (remaining) | 5 | In progress |
+| 7: Ignore System + Noa Remotes | 3 | **Next target** |
+| 8: noa-server MVP (remaining) | 4 | In progress |
+| 9: CLI Completion (remaining) | 2 | In progress |
+| 10: entelecheia Integration | 3 | Future |
+| **Total remaining** | **~17 days** | |
 
 Single developer, includes testing.
 
@@ -616,7 +695,6 @@ Single developer, includes testing.
 | Date | Decision | Rationale |
 |------|----------|-----------|
 | 2026-06-05 | noa as standalone project (not entelecheia sub-crate) | CLI tool usable independently; entelecheia calls noa via its API |
-| 2026-06-05 | Working directory isolation handled by downstream (entelecheia) | noa is a pure storage engine; workspace coordination is entelecheia's job |
 | 2026-06-05 | Local first + Git remote both in MVP | Ship usable Git replacement from day one |
 | 2026-06-05 | `redb` as local KV store | Active, stable, typed API, competitive perf. `sled` is unmaintained beta (last release 2021) |
 | 2026-06-05 | `AgentLog` as file JSONL, not redb | Zero-lock concurrent writes; single-writer redb bottleneck at scale |
@@ -625,6 +703,11 @@ Single developer, includes testing.
 | 2026-06-05 | CLI style: Git-like subcommands | Familiar UX, lower learning curve |
 | 2026-06-05 | noa-server in MVP scope | Self-hosted native remote with merge queue; not dependent on third-party platforms |
 | 2026-06-05 | SQLite rejected | Not a purpose-built KV store; redb provides ACID without relational overhead |
+| 2026-06-05 | Migrate git2 → gix (pure Rust) | No libgit2 C dependency; already at v0.84; full git protocol support |
+| 2026-06-05 | Ignore filtering at snapshot time (not ingestion) | Single point of change in engine.rs; rebuild snapshot auto-applies latest ignore; no agent code changes |
+| 2026-06-05 | No `.noaignore` — piggyback on `.gitignore` | Projects already have `.gitignore`; no need to maintain duplicate ignore patterns. `ignore` crate handles full gitignore spec |
+| 2026-06-05 | `noa-remote` in `.gitattributes` (dual storage with `.noa/config`) | Visible in source tree, versioned, git-compatible; same pattern as Git LFS's `filter=lfs` |
+| 2026-06-05 | Both gix + system git CLI for clone | gix preferred (pure Rust), but fallback to system git CLI ensures reliability for edge cases |
 
 ---
 
@@ -632,7 +715,7 @@ Single developer, includes testing.
 
 | Project | Path | Relationship |
 |---------|------|-------------|
-| **entelecheia** | `/mnt/sdb1/entelecheia` | Multi-agent orchestration. Consumes noa for version control. Container-based fork/merge model is the "heavier" alternative; noa is the lightweight local version. |
+| **entelecheia** | `/mnt/sdb1/entelecheia` | Multi-agent orchestration. Consumes noa for version control. Container-based fork/merge model is the "heavier" alternative; noa is the lightweight local version. Phase 10 integration planned. |
 | **tairitsu** | `/mnt/sdb1/tairitsu` | WASM component model framework. Future: noa client as WASM component. |
 | **kirino** | `/mnt/sdb1/kirino` | Zero-trust auth/RBAC. Used by noa-server for authentication. |
 | **aoba** | `/mnt/sdb1/aoba` | Modbus debugging tool. Unrelated. |
