@@ -6,9 +6,9 @@ use crate::object::{EntryKind, ObjectStore, TreeEntries, TreeEntry};
 use crate::snapshot::{generate_snapshot_id, Snapshot, SnapshotId, SnapshotStore};
 
 pub struct SnapshotEngine<L: AgentLog, S: SnapshotStore, O: ObjectStore> {
-    log: L,
-    snapshot_store: S,
-    object_store: O,
+    pub log: L,
+    pub snapshot_store: S,
+    pub object_store: O,
 }
 
 impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
