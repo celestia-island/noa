@@ -192,4 +192,71 @@ mod tests {
         let result = mgr.update_head("missing", &SnapshotId("noa_x".to_string())).await;
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn test_put_overwrites() {
+        let (_tmp, mgr) = make_manager();
+        let ws = make_workspace("ws1");
+        mgr.create(&ws).await.unwrap();
+        let mut updated = ws.clone();
+        updated.head = SnapshotId("noa_new_head".to_string());
+        mgr.put(&updated).await.unwrap();
+        let got = mgr.get("ws1").await.unwrap().unwrap();
+        assert_eq!(got.head, SnapshotId("noa_new_head".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_workspace_with_agent_id() {
+        let (_tmp, mgr) = make_manager();
+        let ws = Workspace {
+            name: "agent-ws".to_string(),
+            head: SnapshotId("noa_base".to_string()),
+            base: SnapshotId("noa_base".to_string()),
+            agent_id: Some("agent-007".to_string()),
+            created_at: 1000,
+            updated_at: 1000,
+        };
+        mgr.create(&ws).await.unwrap();
+        let got = mgr.get("agent-ws").await.unwrap().unwrap();
+        assert_eq!(got.agent_id, Some("agent-007".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_update_head_updates_timestamp() {
+        let (_tmp, mgr) = make_manager();
+        let ws = make_workspace("ws1");
+        mgr.create(&ws).await.unwrap();
+        let before = mgr.get("ws1").await.unwrap().unwrap().updated_at;
+        std::thread::sleep(std::time::Duration::from_micros(100));
+        mgr.update_head("ws1", &SnapshotId("noa_new".to_string())).await.unwrap();
+        let after = mgr.get("ws1").await.unwrap().unwrap().updated_at;
+        assert!(after >= before);
+    }
+
+    #[tokio::test]
+    async fn test_list_empty_after_delete_all() {
+        let (_tmp, mgr) = make_manager();
+        mgr.create(&make_workspace("a")).await.unwrap();
+        mgr.create(&make_workspace("b")).await.unwrap();
+        mgr.delete("a").await.unwrap();
+        mgr.delete("b").await.unwrap();
+        let list = mgr.list().await.unwrap();
+        assert!(list.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_workspace_serialization_roundtrip() {
+        let (_tmp, mgr) = make_manager();
+        let ws = Workspace {
+            name: "test".to_string(),
+            head: SnapshotId("noa_head".to_string()),
+            base: SnapshotId("noa_base".to_string()),
+            agent_id: Some("agent-001".to_string()),
+            created_at: 12345,
+            updated_at: 67890,
+        };
+        mgr.create(&ws).await.unwrap();
+        let got = mgr.get("test").await.unwrap().unwrap();
+        assert_eq!(got, ws);
+    }
 }

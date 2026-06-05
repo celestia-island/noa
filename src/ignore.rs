@@ -175,4 +175,56 @@ mod tests {
         assert!(!matcher.should_skip("src/lib.rs", false));
         assert!(matcher.should_skip(".noa", true));
     }
+
+    #[test]
+    fn test_deep_nested_gitignore() {
+        let tmp = TempDir::new().unwrap();
+        let root = make_repo_root(&tmp);
+        std::fs::write(root.join(".gitignore"), "").unwrap();
+
+        let deep = root.join("a").join("b").join("c");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join(".gitignore"), "*.gen\n").unwrap();
+
+        let matcher = IgnoreMatcher::from_repo_root(root);
+        assert!(matcher.should_skip("a/b/c/foo.gen", false));
+        assert!(!matcher.should_skip("a/b/c/foo.rs", false));
+    }
+
+    #[test]
+    fn test_directory_pattern_with_children() {
+        let tmp = TempDir::new().unwrap();
+        let root = make_repo_root(&tmp);
+        std::fs::write(root.join(".gitignore"), "build/\n").unwrap();
+
+        let matcher = IgnoreMatcher::from_repo_root(root);
+        assert!(matcher.should_skip("build", true));
+        assert!(matcher.should_skip("build/output.js", false));
+        assert!(matcher.should_skip("build/debug/bin", true));
+        assert!(!matcher.should_skip("src/main.rs", false));
+    }
+
+    #[test]
+    fn test_wildcard_patterns() {
+        let tmp = TempDir::new().unwrap();
+        let root = make_repo_root(&tmp);
+        std::fs::write(root.join(".gitignore"), "*.rs.bk\ndocs/*.pdf\n").unwrap();
+
+        let matcher = IgnoreMatcher::from_repo_root(root);
+        assert!(matcher.should_skip("main.rs.bk", false));
+        assert!(!matcher.should_skip("main.rs", false));
+        assert!(matcher.should_skip("docs/manual.pdf", false));
+        assert!(!matcher.should_skip("docs/readme.md", false));
+    }
+
+    #[test]
+    fn test_noa_internal_various_paths() {
+        let tmp = TempDir::new().unwrap();
+        let matcher = IgnoreMatcher::from_repo_root(make_repo_root(&tmp));
+        assert!(matcher.should_skip(".noa", true));
+        assert!(matcher.should_skip(".noa/noa.redb", false));
+        assert!(matcher.should_skip(".noa/agent-logs/default.log", false));
+        assert!(matcher.should_skip(".noa/config", false));
+        assert!(matcher.should_skip(".noa/HEAD", false));
+    }
 }

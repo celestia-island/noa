@@ -82,3 +82,104 @@ impl From<toml::ser::Error> for NoaError {
         NoaError::Config(e.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_repo_not_found_display() {
+        let err = NoaError::RepoNotFound("/path/.noa".to_string());
+        assert!(err.to_string().contains("/path/.noa"));
+    }
+
+    #[test]
+    fn test_repo_already_exists_display() {
+        let err = NoaError::RepoAlreadyExists("/path/.noa".to_string());
+        assert!(err.to_string().contains("already exists"));
+    }
+
+    #[test]
+    fn test_invalid_repo_display() {
+        let err = NoaError::InvalidRepo("missing noa.redb".to_string());
+        assert!(err.to_string().contains("missing noa.redb"));
+    }
+
+    #[test]
+    fn test_object_not_found_display() {
+        let err = NoaError::ObjectNotFound("hash123".to_string());
+        assert!(err.to_string().contains("hash123"));
+    }
+
+    #[test]
+    fn test_snapshot_not_found_display() {
+        let err = NoaError::SnapshotNotFound("noa_abc".to_string());
+        assert!(err.to_string().contains("noa_abc"));
+    }
+
+    #[test]
+    fn test_workspace_not_found_display() {
+        let err = NoaError::WorkspaceNotFound("feature".to_string());
+        assert!(err.to_string().contains("feature"));
+    }
+
+    #[test]
+    fn test_workspace_already_exists_display() {
+        let err = NoaError::WorkspaceAlreadyExists("feature".to_string());
+        assert!(err.to_string().contains("feature"));
+    }
+
+    #[test]
+    fn test_ref_conflict_display() {
+        let err = NoaError::RefConflict {
+            expected: Some("noa_a".to_string()),
+            actual: Some("noa_b".to_string()),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("noa_a"));
+        assert!(msg.contains("noa_b"));
+    }
+
+    #[test]
+    fn test_merge_conflict_display() {
+        let err = NoaError::MergeConflict {
+            path: "src/main.rs".to_string(),
+            detail: "both modified".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("src/main.rs"));
+        assert!(msg.contains("both modified"));
+    }
+
+    #[test]
+    fn test_io_error_from() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
+        let noa_err: NoaError = io_err.into();
+        assert!(matches!(noa_err, NoaError::Io(_)));
+    }
+
+    #[test]
+    fn test_serde_json_error_conversion() {
+        let json_err = serde_json::from_str::<i32>("not a number").unwrap_err();
+        let noa_err: NoaError = json_err.into();
+        assert!(matches!(noa_err, NoaError::Serialization(_)));
+    }
+
+    #[test]
+    fn test_redb_error_display() {
+        let err = NoaError::Redb("write failed".to_string());
+        assert!(err.to_string().contains("write failed"));
+    }
+
+    #[test]
+    fn test_remote_error_display() {
+        let err = NoaError::Remote("connection refused".to_string());
+        assert!(err.to_string().contains("connection refused"));
+    }
+
+    #[test]
+    fn test_config_error_display() {
+        let err = NoaError::Config("invalid toml".to_string());
+        assert!(err.to_string().contains("invalid toml"));
+    }
+}

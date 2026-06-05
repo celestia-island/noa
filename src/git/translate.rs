@@ -110,4 +110,68 @@ mod tests {
         assert_eq!(parsed.0[1].name, "lib");
         assert_eq!(parsed.0[1].kind, EntryKind::Tree);
     }
+
+    #[test]
+    fn test_blob_empty_content() {
+        let content = b"";
+        let git_obj = GitTranslator::noa_blob_to_git(content);
+        let back = GitTranslator::git_blob_to_noa(&git_obj).unwrap();
+        assert!(back.is_empty());
+    }
+
+    #[test]
+    fn test_blob_large_content() {
+        let content = vec![0u8; 1024 * 1024];
+        let git_obj = GitTranslator::noa_blob_to_git(&content);
+        assert!(git_obj.len() > content.len());
+        let back = GitTranslator::git_blob_to_noa(&git_obj).unwrap();
+        assert_eq!(back.len(), content.len());
+    }
+
+    #[test]
+    fn test_blob_binary_content() {
+        let content: Vec<u8> = (0..=255).collect();
+        let git_obj = GitTranslator::noa_blob_to_git(&content);
+        let back = GitTranslator::git_blob_to_noa(&git_obj).unwrap();
+        assert_eq!(back, content);
+    }
+
+    #[test]
+    fn test_git_blob_to_noa_invalid_input() {
+        let result = GitTranslator::git_blob_to_noa(b"no null byte here");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tree_empty_entries() {
+        let entries = TreeEntries(vec![]);
+        let git_data = GitTranslator::noa_tree_to_git(&entries);
+        assert!(git_data.is_empty());
+        let parsed = GitTranslator::git_tree_to_noa(&git_data).unwrap();
+        assert!(parsed.0.is_empty());
+    }
+
+    #[test]
+    fn test_tree_single_blob_entry() {
+        let entries = TreeEntries(vec![
+            TreeEntry { name: "README.md".into(), kind: EntryKind::Blob, id: "ff".repeat(20) },
+        ]);
+        let git_data = GitTranslator::noa_tree_to_git(&entries);
+        let parsed = GitTranslator::git_tree_to_noa(&git_data).unwrap();
+        assert_eq!(parsed.0.len(), 1);
+        assert_eq!(parsed.0[0].id, "ff".repeat(20));
+    }
+
+    #[test]
+    fn test_tree_with_header_prefix() {
+        let entries = TreeEntries(vec![
+            TreeEntry { name: "test.rs".into(), kind: EntryKind::Blob, id: "ab".repeat(20) },
+        ]);
+        let git_data = GitTranslator::noa_tree_to_git(&entries);
+        let mut with_header = format!("tree {}\0", git_data.len()).into_bytes();
+        with_header.extend_from_slice(&git_data);
+        let parsed = GitTranslator::git_tree_to_noa(&with_header).unwrap();
+        assert_eq!(parsed.0.len(), 1);
+        assert_eq!(parsed.0[0].name, "test.rs");
+    }
 }

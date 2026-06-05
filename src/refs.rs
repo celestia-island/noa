@@ -193,4 +193,59 @@ mod tests {
         let got = store.get("missing").await.unwrap();
         assert!(got.is_none());
     }
+
+    #[tokio::test]
+    async fn test_multiple_refs() {
+        let (_tmp, store) = make_store();
+        store.cas("main", None, &SnapshotId("noa_a".to_string())).await.unwrap();
+        store.cas("dev", None, &SnapshotId("noa_b".to_string())).await.unwrap();
+        store.cas("feature", None, &SnapshotId("noa_c".to_string())).await.unwrap();
+
+        let refs = store.list().await.unwrap();
+        assert_eq!(refs.len(), 3);
+
+        assert_eq!(store.get("main").await.unwrap(), Some(SnapshotId("noa_a".to_string())));
+        assert_eq!(store.get("dev").await.unwrap(), Some(SnapshotId("noa_b".to_string())));
+        assert_eq!(store.get("feature").await.unwrap(), Some(SnapshotId("noa_c".to_string())));
+    }
+
+    #[tokio::test]
+    async fn test_cas_update_wrong_old_fails() {
+        let (_tmp, store) = make_store();
+        let id1 = SnapshotId("noa_abc".to_string());
+        let id2 = SnapshotId("noa_def".to_string());
+        let id3 = SnapshotId("noa_ghi".to_string());
+        store.cas("main", None, &id1).await.unwrap();
+        let ok = store.cas("main", Some(&id2), &id3).await.unwrap();
+        assert!(!ok);
+        assert_eq!(store.get("main").await.unwrap(), Some(id1));
+    }
+
+    #[tokio::test]
+    async fn test_delete_nonexistent() {
+        let (_tmp, store) = make_store();
+        let ok = store.delete("nonexistent").await.unwrap();
+        assert!(ok);
+    }
+
+    #[tokio::test]
+    async fn test_empty_list() {
+        let (_tmp, store) = make_store();
+        let refs = store.list().await.unwrap();
+        assert!(refs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_overwrite_via_cas() {
+        let (_tmp, store) = make_store();
+        let v1 = SnapshotId("noa_v1".to_string());
+        let v2 = SnapshotId("noa_v2".to_string());
+        let v3 = SnapshotId("noa_v3".to_string());
+
+        store.cas("main", None, &v1).await.unwrap();
+        store.cas("main", Some(&v1), &v2).await.unwrap();
+        store.cas("main", Some(&v2), &v3).await.unwrap();
+
+        assert_eq!(store.get("main").await.unwrap(), Some(v3));
+    }
 }

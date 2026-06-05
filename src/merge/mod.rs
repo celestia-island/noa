@@ -193,4 +193,48 @@ mod tests {
         let result = three_way_merge(&base, &ours, &theirs).unwrap();
         assert_eq!(result.conflicts.len(), 1);
     }
+
+    #[test]
+    fn test_both_delete_no_conflict() {
+        let base = TreeEntries(vec![entry("a.rs", "h1")]);
+        let ours = TreeEntries(vec![]);
+        let theirs = TreeEntries(vec![]);
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        assert!(result.conflicts.is_empty());
+        assert!(result.tree.0.is_empty());
+    }
+
+    #[test]
+    fn test_unchanged_preserves_base() {
+        let base = TreeEntries(vec![entry("a.rs", "h1"), entry("b.rs", "h2")]);
+        let result = three_way_merge(&base, &base, &base).unwrap();
+        assert!(result.conflicts.is_empty());
+        assert_eq!(result.tree.0.len(), 2);
+    }
+
+    #[test]
+    fn test_large_tree_merge() {
+        let base: TreeEntries = TreeEntries((0..50).map(|i| entry(&format!("f{}.rs", i), &format!("h{}", i))).collect());
+        let mut ours_entries: Vec<TreeEntry> = base.0.clone();
+        ours_entries.push(entry("new_ours.rs", "h_ours"));
+        let ours = TreeEntries(ours_entries);
+        let mut theirs_entries: Vec<TreeEntry> = base.0.clone();
+        theirs_entries.push(entry("new_theirs.rs", "h_theirs"));
+        let theirs = TreeEntries(theirs_entries);
+
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        assert!(result.conflicts.is_empty());
+        assert_eq!(result.tree.0.len(), 52);
+    }
+
+    #[test]
+    fn test_only_one_side_modified() {
+        let base = TreeEntries(vec![entry("a.rs", "h1"), entry("b.rs", "h2")]);
+        let ours = TreeEntries(vec![entry("a.rs", "h1"), entry("b.rs", "h2_changed")]);
+        let theirs = base.clone();
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        assert!(result.conflicts.is_empty());
+        assert_eq!(result.tree.0.len(), 2);
+        assert!(result.tree.0.iter().any(|e| e.name == "b.rs" && e.id == "h2_changed"));
+    }
 }
