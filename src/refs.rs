@@ -106,7 +106,6 @@ impl RefStore for RedbRefStore {
         let txn = redb_err!(self.db.begin_write())?;
         {
             let mut table = redb_err!(txn.open_table(REFS))?;
-            let _existed = redb_err!(table.get(name))?.is_some();
             redb_err!(table.remove(name))?;
         }
         redb_err!(txn.commit())?;

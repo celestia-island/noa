@@ -576,7 +576,13 @@ def main() -> int:
     cf.header("ENFORCE USE STATEMENT GROUPS")
     print(f"Working directory: {Path.cwd()}")
     print(f"Python version: {sys.version}")
-    changed: List[str] = []
+
+    snapshots: dict[str, str] = {}
+    for path in Path.cwd().rglob("*.rs"):
+        if "target" in path.parts:
+            continue
+        snapshots[str(path)] = path.read_text(encoding="utf-8")
+
     total_files = 0
     for path in Path.cwd().rglob("*.rs"):
         if "target" in path.parts:
@@ -586,35 +592,39 @@ def main() -> int:
             new_text = process_file(path)
             if new_text is not None:
                 path.write_text(new_text, encoding="utf-8")
-                changed.append(str(path))
         except Exception as e:
             print(f"Error processing {path}: {e}")
             import traceback
             traceback.print_exc()
             return 1
+
+    if shutil.which("cargo"):
+        cf.step("Running cargo fmt")
+        result = subprocess.run(
+            ["cargo", "fmt"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if result.returncode != 0:
+            cf.fail(f"cargo fmt exit code: {result.returncode}")
+            if result.stderr:
+                print(f"cargo fmt stderr: {result.stderr}")
+    else:
+        cf.warn("cargo not found in PATH; skipping cargo fmt")
+
+    changed: List[str] = []
+    for path_str, original in snapshots.items():
+        current = Path(path_str).read_text(encoding="utf-8")
+        if current != original:
+            changed.append(path_str)
+
     cf.ok(f"Processed {total_files} Rust files")
     cf.ok(f"Updated {len(changed)} files")
     for item in changed:
         print(item)
-    try:
-        if shutil.which("cargo"):
-            cf.step("Running cargo fmt")
-            result = subprocess.run(
-                ["cargo", "fmt"],
-                check=False,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
-            if result.returncode != 0:
-                cf.fail(f"cargo fmt exit code: {result.returncode}")
-                if result.stderr:
-                    print(f"cargo fmt stderr: {result.stderr}")
-        else:
-            cf.warn("cargo not found in PATH; skipping cargo fmt")
-    except Exception as e:
-        cf.fail(f"Failed to run cargo fmt: {e}")
     cf.ok("Use statement enforcement completed successfully")
     return 0
 
