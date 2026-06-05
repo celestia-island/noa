@@ -10,72 +10,85 @@ pub async fn import_git_to_noa(
     git_dir: &Path,
     db: Arc<redb::Database>,
 ) -> Result<()> {
-    let repo = git2::Repository::open(git_dir)
-        .map_err(|e| NoaError::Remote(e.message().to_string()))?;
+    let repo = gix::open(git_dir)
+        .map_err(|e| NoaError::Remote(e.to_string()))?;
 
     let obj_store = crate::object::RedbObjectStore::new(Arc::clone(&db))?;
     let snap_store = RedbSnapshotStore::new(Arc::clone(&db))?;
     let ref_store = RedbRefStore::new(db)?;
 
-    let head_ref = repo.head()
-        .map_err(|e| NoaError::Remote(e.message().to_string()))?;
-    let head_target = head_ref.target();
+    let head_id = repo.head_id()
+        .map_err(|e| NoaError::Remote(e.to_string()))?
+        .detach();
 
-    if let Some(head_oid) = head_target {
-        let commit = repo.find_commit(head_oid)
-            .map_err(|e| NoaError::Remote(e.message().to_string()))?;
+    let head_obj = repo.find_object(head_id)
+        .map_err(|e| NoaError::Remote(e.to_string()))?;
 
-        import_tree_recursive(&repo, &commit.tree()
-            .map_err(|e| NoaError::Remote(e.message().to_string()))?, &obj_store)?;
+    let commit = head_obj.try_into_commit()
+        .map_err(|e| NoaError::Remote(format!("HEAD is not a commit: {}", e)))?;
 
-        let snapshot = Snapshot {
-            id: SnapshotId(format!("noa_{}", &head_oid.to_string()[..12])),
-            tree_hash: head_oid.to_string(),
-            parents: vec![],
-            workspace: "default".to_string(),
-            author: commit.author().name().unwrap_or("unknown").to_string(),
-            timestamp: commit.time().seconds() as u64,
-            message: commit.message().unwrap_or("").to_string(),
-        };
-        snap_store.store(&snapshot).await?;
-        ref_store.cas("HEAD", None, &snapshot.id).await?;
-    }
+    let tree_id = commit.tree_id()
+        .map_err(|e| NoaError::Remote(e.to_string()))?
+        .detach();
+
+    import_tree_recursive(&repo, tree_id, &obj_store)?;
+
+    let author = commit.author()
+        .ok()
+        .map(|a| a.name.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let message = commit.message_raw()
+        .map(|m| m.to_string())
+        .unwrap_or_default();
+
+    let time = commit.time()
+        .map_err(|e| NoaError::Remote(e.to_string()))?;
+
+    let snapshot = Snapshot {
+        id: SnapshotId(format!("noa_{}", &head_id.to_hex().to_string()[..12])),
+        tree_hash: head_id.to_hex().to_string(),
+        parents: vec![],
+        workspace: "default".to_string(),
+        author,
+        timestamp: time.seconds as u64,
+        message,
+    };
+    snap_store.store(&snapshot).await?;
+    ref_store.cas("HEAD", None, &snapshot.id).await?;
 
     Ok(())
 }
 
 fn import_tree_recursive(
-    repo: &git2::Repository,
-    tree: &git2::Tree,
+    repo: &gix::Repository,
+    tree_id: gix::hash::ObjectId,
     obj_store: &crate::object::RedbObjectStore,
 ) -> Result<()> {
-    for entry in tree.iter() {
-        let obj = entry.to_object(repo)
-            .map_err(|e| NoaError::Remote(e.message().to_string()))?;
+    let obj = repo.find_object(tree_id)
+        .map_err(|e| NoaError::Remote(e.to_string()))?;
 
-        match obj.kind() {
-            Some(git2::ObjectType::Blob) => {
-                if let Some(blob) = obj.as_blob() {
-                    let content = blob.content();
-                    tokio::task::block_in_place(|| {
-                        tokio::runtime::Handle::current().block_on(obj_store.put_blob(content))
-                    })?;
-                }
-            }
-            Some(git2::ObjectType::Tree) => {
-                if let Some(subtree) = obj.as_tree() {
-                    import_tree_recursive(repo, subtree, obj_store)?;
-                }
-            }
-            _ => {}
+    let tree = obj.try_into_tree()
+        .map_err(|e| NoaError::Remote(format!("not a tree: {}", e)))?;
+
+    for entry_result in tree.iter() {
+        let entry = entry_result.map_err(|e| NoaError::Remote(e.to_string()))?;
+        let mode = entry.mode();
+        let entry_id = entry.oid();
+
+        if mode.is_tree() {
+            import_tree_recursive(repo, entry_id.to_owned(), obj_store)?;
+        } else {
+            let blob_obj = repo.find_object(entry_id)
+                .map_err(|e| NoaError::Remote(e.to_string()))?;
+            let blob = blob_obj.try_into_blob()
+                .map_err(|e| NoaError::Remote(format!("not a blob: {}", e)))?;
+            let content = blob.data.clone();
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(obj_store.put_blob(&content))
+            })?;
         }
     }
-    Ok(())
-}
 
-pub async fn export_noa_to_git(
-    _db_path: &std::path::Path,
-    _git_dir: &std::path::Path,
-) -> Result<()> {
-    todo!("noa → git packfile export")
+    Ok(())
 }
