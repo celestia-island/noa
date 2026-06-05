@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use noa::log::{AgentLog, FileAgentLog, LogEntry, OpType};
-use noa::object::ObjectStore;
-use noa::refs::RefStore;
-use noa::repo::{manage_gitattributes, manage_gitignore, Repository};
-use noa::snapshot::{diff_snapshots, SnapshotEngine, SnapshotId};
-use noa::workspace::WorkspaceManager;
+use libnoa::log::{AgentLog, FileAgentLog, LogEntry, OpType};
+use libnoa::object::ObjectStore;
+use libnoa::refs::RefStore;
+use libnoa::repo::{manage_gitattributes, manage_gitignore, Repository};
+use libnoa::snapshot::{diff_snapshots, SnapshotEngine, SnapshotId};
+use libnoa::workspace::WorkspaceManager;
 
 fn make_log_entry(seq: u64, op: OpType, path: &str, blob_id: Option<&str>, ts: u64) -> LogEntry {
     LogEntry {
@@ -81,7 +81,7 @@ async fn smoke_test_full_snapshot_workflow() {
 
     let tree = engine
         .object_store
-        .get_tree(&noa::object::TreeId(snapshot.tree_hash.clone()))
+        .get_tree(&libnoa::object::TreeId(snapshot.tree_hash.clone()))
         .await
         .unwrap();
     assert_eq!(tree.0.len(), 2);
@@ -108,7 +108,7 @@ async fn smoke_test_workspace_create_switch_merge() {
         .unwrap();
     ws_mgr.update_head("default", &base_snap.id).await.unwrap();
 
-    let feature_ws = noa::workspace::Workspace {
+    let feature_ws = libnoa::workspace::Workspace {
         name: "feature".to_string(),
         head: base_snap.id.clone(),
         base: base_snap.id.clone(),
@@ -135,15 +135,15 @@ async fn smoke_test_workspace_create_switch_merge() {
     assert_eq!(repo.read_head().unwrap(), "feature");
 
     let default_tree = obj_store
-        .get_tree(&noa::object::TreeId(base_snap.tree_hash.clone()))
+        .get_tree(&libnoa::object::TreeId(base_snap.tree_hash.clone()))
         .await
         .unwrap();
     let feature_tree = obj_store
-        .get_tree(&noa::object::TreeId(feature_snap.tree_hash.clone()))
+        .get_tree(&libnoa::object::TreeId(feature_snap.tree_hash.clone()))
         .await
         .unwrap();
     let result =
-        noa::merge::three_way_merge(&default_tree, &default_tree, &feature_tree).unwrap();
+        libnoa::merge::three_way_merge(&default_tree, &default_tree, &feature_tree).unwrap();
     assert!(result.conflicts.is_empty());
     assert!(result.tree.0.iter().any(|e| e.name == "feature.rs"));
 }
@@ -181,7 +181,7 @@ async fn smoke_test_ignore_filtering_in_snapshot() {
         .await
         .unwrap();
 
-    let matcher = noa::ignore::IgnoreMatcher::from_repo_root(root);
+    let matcher = libnoa::ignore::IgnoreMatcher::from_repo_root(root);
     let engine = SnapshotEngine::new(agent_log, snap_store, obj_store).with_ignore(matcher);
     let snap = engine
         .compute("default", vec![], "test", "filtered")
@@ -190,7 +190,7 @@ async fn smoke_test_ignore_filtering_in_snapshot() {
 
     let tree = engine
         .object_store
-        .get_tree(&noa::object::TreeId(snap.tree_hash))
+        .get_tree(&libnoa::object::TreeId(snap.tree_hash))
         .await
         .unwrap();
     assert_eq!(tree.0.len(), 1);
@@ -231,29 +231,29 @@ async fn smoke_test_snapshot_diff() {
             .create(tmp.path().join("test.redb"))
             .unwrap(),
     );
-    let obj_store = noa::object::RedbObjectStore::new(db).unwrap();
+    let obj_store = libnoa::object::RedbObjectStore::new(db).unwrap();
 
-    let tree_a = noa::object::TreeEntries(vec![
-        noa::object::TreeEntry {
+    let tree_a = libnoa::object::TreeEntries(vec![
+        libnoa::object::TreeEntry {
             name: "a.rs".to_string(),
-            kind: noa::object::EntryKind::Blob,
+            kind: libnoa::object::EntryKind::Blob,
             id: "h1".to_string(),
         },
-        noa::object::TreeEntry {
+        libnoa::object::TreeEntry {
             name: "b.rs".to_string(),
-            kind: noa::object::EntryKind::Blob,
+            kind: libnoa::object::EntryKind::Blob,
             id: "h2".to_string(),
         },
     ]);
-    let tree_b = noa::object::TreeEntries(vec![
-        noa::object::TreeEntry {
+    let tree_b = libnoa::object::TreeEntries(vec![
+        libnoa::object::TreeEntry {
             name: "a.rs".to_string(),
-            kind: noa::object::EntryKind::Blob,
+            kind: libnoa::object::EntryKind::Blob,
             id: "h1_changed".to_string(),
         },
-        noa::object::TreeEntry {
+        libnoa::object::TreeEntry {
             name: "c.rs".to_string(),
-            kind: noa::object::EntryKind::Blob,
+            kind: libnoa::object::EntryKind::Blob,
             id: "h3".to_string(),
         },
     ]);
@@ -262,13 +262,13 @@ async fn smoke_test_snapshot_diff() {
     assert_eq!(diffs.len(), 3);
     assert!(diffs
         .iter()
-        .any(|d| d.path == "a.rs" && matches!(d.kind, noa::snapshot::DiffKind::Modified)));
+        .any(|d| d.path == "a.rs" && matches!(d.kind, libnoa::snapshot::DiffKind::Modified)));
     assert!(diffs
         .iter()
-        .any(|d| d.path == "b.rs" && matches!(d.kind, noa::snapshot::DiffKind::Deleted)));
+        .any(|d| d.path == "b.rs" && matches!(d.kind, libnoa::snapshot::DiffKind::Deleted)));
     assert!(diffs
         .iter()
-        .any(|d| d.path == "c.rs" && matches!(d.kind, noa::snapshot::DiffKind::Added)));
+        .any(|d| d.path == "c.rs" && matches!(d.kind, libnoa::snapshot::DiffKind::Added)));
 }
 
 #[tokio::test]
@@ -281,7 +281,7 @@ async fn smoke_test_concurrent_agent_logs() {
     let mut handles = Vec::new();
     for i in 0..5 {
         let ws_name = format!("agent-{}", i);
-        let ws = noa::workspace::Workspace {
+        let ws = libnoa::workspace::Workspace {
             name: ws_name.clone(),
             head: SnapshotId("noa_empty".to_string()),
             base: SnapshotId("noa_empty".to_string()),
@@ -410,17 +410,17 @@ async fn smoke_test_log_entry_all_ops() {
 
 #[tokio::test]
 async fn smoke_test_three_way_merge_no_conflict() {
-    let make_entry = |name: &str, id: &str| noa::object::TreeEntry {
+    let make_entry = |name: &str, id: &str| libnoa::object::TreeEntry {
         name: name.to_string(),
-        kind: noa::object::EntryKind::Blob,
+        kind: libnoa::object::EntryKind::Blob,
         id: id.to_string(),
     };
 
-    let base = noa::object::TreeEntries(vec![make_entry("a.rs", "h1"), make_entry("b.rs", "h2")]);
-    let ours = noa::object::TreeEntries(vec![make_entry("a.rs", "h1"), make_entry("b.rs", "h2_changed")]);
-    let theirs = noa::object::TreeEntries(vec![make_entry("a.rs", "h1"), make_entry("b.rs", "h2"), make_entry("c.rs", "h3")]);
+    let base = libnoa::object::TreeEntries(vec![make_entry("a.rs", "h1"), make_entry("b.rs", "h2")]);
+    let ours = libnoa::object::TreeEntries(vec![make_entry("a.rs", "h1"), make_entry("b.rs", "h2_changed")]);
+    let theirs = libnoa::object::TreeEntries(vec![make_entry("a.rs", "h1"), make_entry("b.rs", "h2"), make_entry("c.rs", "h3")]);
 
-    let result = noa::merge::three_way_merge(&base, &ours, &theirs).unwrap();
+    let result = libnoa::merge::three_way_merge(&base, &ours, &theirs).unwrap();
     assert!(result.conflicts.is_empty());
     assert_eq!(result.tree.0.len(), 3);
 }
@@ -433,7 +433,7 @@ async fn smoke_test_object_store_large_blob() {
             .create(tmp.path().join("test.redb"))
             .unwrap(),
     );
-    let store = noa::object::RedbObjectStore::new(db).unwrap();
+    let store = libnoa::object::RedbObjectStore::new(db).unwrap();
 
     let large = vec![0xABu8; 1024 * 100];
     let id = store.put_blob(&large).await.unwrap();

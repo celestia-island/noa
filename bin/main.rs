@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use noa::cli;
+use libnoa::cli;
 
 #[derive(Parser)]
 #[command(name = "noa")]
@@ -121,62 +121,62 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Snapshot { cmd } => match cmd {
             SnapshotSub::Create { message, author } => {
-                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
-                let repo = noa::repo::Repository::open(&root)?;
+                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
+                let repo = libnoa::repo::Repository::open(&root)?;
                 cli::snapshot_cmd::run_create(&repo, &message, &author).await?;
             }
             SnapshotSub::List => {
-                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
-                let repo = noa::repo::Repository::open(&root)?;
+                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
+                let repo = libnoa::repo::Repository::open(&root)?;
                 cli::snapshot_cmd::run_list(&repo).await?;
             }
             SnapshotSub::Diff { a, b } => {
-                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
-                let repo = noa::repo::Repository::open(&root)?;
+                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
+                let repo = libnoa::repo::Repository::open(&root)?;
                 cli::snapshot_cmd::run_diff(&repo, &a, &b).await?;
             }
         },
         Commands::Workspace { cmd } => match cmd {
             WorkspaceSub::Create { name, agent } => {
-                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
-                let repo = noa::repo::Repository::open(&root)?;
+                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
+                let repo = libnoa::repo::Repository::open(&root)?;
                 cli::workspace_cmd::run_create(&repo, &name, agent.as_deref()).await?;
             }
             WorkspaceSub::Switch { name } => {
-                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
-                let repo = noa::repo::Repository::open(&root)?;
+                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
+                let repo = libnoa::repo::Repository::open(&root)?;
                 cli::workspace_cmd::run_switch(&repo, &name).await?;
             }
             WorkspaceSub::List => {
-                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
-                let repo = noa::repo::Repository::open(&root)?;
+                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
+                let repo = libnoa::repo::Repository::open(&root)?;
                 cli::workspace_cmd::run_list(&repo).await?;
             }
             WorkspaceSub::Delete { name } => {
-                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
-                let repo = noa::repo::Repository::open(&root)?;
+                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
+                let repo = libnoa::repo::Repository::open(&root)?;
                 cli::workspace_cmd::run_delete(&repo, &name).await?;
             }
             WorkspaceSub::Merge { from } => {
-                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
-                let repo = noa::repo::Repository::open(&root)?;
+                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
+                let repo = libnoa::repo::Repository::open(&root)?;
                 cli::workspace_cmd::run_merge(&repo, &from).await?;
             }
         },
         Commands::Remote { cmd } => match cmd {
             RemoteSub::Add { name, url } => {
-                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
-                let mut repo = noa::repo::Repository::open(&root)?;
+                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
+                let mut repo = libnoa::repo::Repository::open(&root)?;
                 cli::remote_cmd::run_add(&mut repo, &name, &url).await?;
             }
             RemoteSub::Remove { name } => {
-                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
-                let mut repo = noa::repo::Repository::open(&root)?;
+                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
+                let mut repo = libnoa::repo::Repository::open(&root)?;
                 cli::remote_cmd::run_remove(&mut repo, &name).await?;
             }
             RemoteSub::List => {
-                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
-                let repo = noa::repo::Repository::open(&root)?;
+                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
+                let repo = libnoa::repo::Repository::open(&root)?;
                 cli::remote_cmd::run_list(&repo).await?;
             }
         },

@@ -4,7 +4,7 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use tower::ServiceExt;
 
-use noa::server::{router, AppState};
+use libnoa::server::{router, AppState};
 
 async fn make_app() -> (tempfile::TempDir, axum::Router) {
     let tmp = tempfile::TempDir::new().unwrap();

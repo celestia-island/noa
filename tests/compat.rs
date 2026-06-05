@@ -1,6 +1,6 @@
 use std::path::Path;
 use std::process::Command;
-use noa::snapshot::SnapshotStore;
+use libnoa::snapshot::SnapshotStore;
 
 fn git_lfs_available() -> bool {
     Command::new("git")
@@ -55,28 +55,28 @@ fn sha256_hex(data: &[u8]) -> String {
 #[test]
 fn test_lfs_pointer_detection() {
     let pointer = b"version https://git-lfs.github.com/spec/v1\noid sha256:abc123\nsize 12345\n";
-    assert!(noa::git::is_lfs_pointer(pointer));
+    assert!(libnoa::git::is_lfs_pointer(pointer));
 
     let not_pointer = b"Hello, this is regular file content";
-    assert!(!noa::git::is_lfs_pointer(not_pointer));
+    assert!(!libnoa::git::is_lfs_pointer(not_pointer));
 
     let too_long = &[b'x'; 501];
-    assert!(!noa::git::is_lfs_pointer(too_long));
+    assert!(!libnoa::git::is_lfs_pointer(too_long));
 
     let binary: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a];
-    assert!(!noa::git::is_lfs_pointer(binary));
+    assert!(!libnoa::git::is_lfs_pointer(binary));
 }
 
 #[test]
 fn test_lfs_pointer_edge_cases() {
     let empty: &[u8] = b"";
-    assert!(!noa::git::is_lfs_pointer(empty));
+    assert!(!libnoa::git::is_lfs_pointer(empty));
 
     let exactly_v1 = b"version https://git-lfs.github.com/spec/v1";
-    assert!(noa::git::is_lfs_pointer(exactly_v1));
+    assert!(libnoa::git::is_lfs_pointer(exactly_v1));
 
     let v2 = b"version https://git-lfs.github.com/spec/v2\noid sha256:def456\nsize 999\n";
-    assert!(noa::git::is_lfs_pointer(v2));
+    assert!(libnoa::git::is_lfs_pointer(v2));
 }
 
 #[test]
@@ -85,23 +85,23 @@ fn test_bitbucket_url_format_handling() {
     let path = tmp.path();
 
     {
-        let _repo = noa::repo::Repository::init(path).unwrap();
+        let _repo = libnoa::repo::Repository::init(path).unwrap();
     }
-    let mut repo = noa::repo::Repository::open(path).unwrap();
+    let mut repo = libnoa::repo::Repository::open(path).unwrap();
 
-    repo.config.add_remote(noa::config::RemoteConfig {
+    repo.config.add_remote(libnoa::config::RemoteConfig {
         name: "bitbucket-ssh".to_string(),
         url: "git@bitbucket.org:workspace/repo.git".to_string(),
         protocol: "git".to_string(),
     });
-    repo.config.add_remote(noa::config::RemoteConfig {
+    repo.config.add_remote(libnoa::config::RemoteConfig {
         name: "bitbucket-https".to_string(),
         url: "https://user@bitbucket.org/workspace/repo.git".to_string(),
         protocol: "git".to_string(),
     });
     repo.config.save_to_dir(&path.join(".noa")).unwrap();
 
-    let loaded = noa::config::RepoConfig::load_from_dir(&path.join(".noa")).unwrap();
+    let loaded = libnoa::config::RepoConfig::load_from_dir(&path.join(".noa")).unwrap();
     assert_eq!(loaded.remotes.len(), 2);
 
     let ssh_remote = loaded.get_remote("bitbucket-ssh").unwrap();
@@ -117,33 +117,33 @@ fn test_multiple_remote_protocols() {
     let path = tmp.path();
 
     {
-        let _repo = noa::repo::Repository::init(path).unwrap();
+        let _repo = libnoa::repo::Repository::init(path).unwrap();
     }
-    let mut repo = noa::repo::Repository::open(path).unwrap();
+    let mut repo = libnoa::repo::Repository::open(path).unwrap();
 
-    repo.config.add_remote(noa::config::RemoteConfig {
+    repo.config.add_remote(libnoa::config::RemoteConfig {
         name: "github".to_string(),
         url: "https://github.com/user/repo.git".to_string(),
         protocol: "git".to_string(),
     });
-    repo.config.add_remote(noa::config::RemoteConfig {
+    repo.config.add_remote(libnoa::config::RemoteConfig {
         name: "gitlab".to_string(),
         url: "git@gitlab.com:user/repo.git".to_string(),
         protocol: "git".to_string(),
     });
-    repo.config.add_remote(noa::config::RemoteConfig {
+    repo.config.add_remote(libnoa::config::RemoteConfig {
         name: "svn-origin".to_string(),
         url: "https://svn.example.com/repo/trunk".to_string(),
         protocol: "svn".to_string(),
     });
-    repo.config.add_remote(noa::config::RemoteConfig {
+    repo.config.add_remote(libnoa::config::RemoteConfig {
         name: "noa-server".to_string(),
         url: "https://noa.example.com/repo".to_string(),
         protocol: "noa".to_string(),
     });
     repo.config.save_to_dir(&path.join(".noa")).unwrap();
 
-    let loaded = noa::config::RepoConfig::load_from_dir(&path.join(".noa")).unwrap();
+    let loaded = libnoa::config::RepoConfig::load_from_dir(&path.join(".noa")).unwrap();
     assert_eq!(loaded.remotes.len(), 4);
     assert_eq!(loaded.get_remote("github").unwrap().protocol, "git");
     assert_eq!(loaded.get_remote("svn-origin").unwrap().protocol, "svn");
@@ -180,7 +180,7 @@ async fn test_git_clone_and_push_roundtrip() {
         .output()
         .unwrap();
 
-    noa::git::clone_git_to_noa(
+    libnoa::git::clone_git_to_noa(
         &remote_path.to_string_lossy(),
         &cloned_path,
     ).await.unwrap();
@@ -222,7 +222,7 @@ fn test_export_noa_to_git_roundtrip() {
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        noa::git::clone_git_to_noa(
+        libnoa::git::clone_git_to_noa(
             &remote_path.to_string_lossy(),
             &work_path,
         ).await.unwrap();
@@ -248,11 +248,11 @@ fn test_export_noa_to_git_roundtrip() {
 
     let rt2 = tokio::runtime::Runtime::new().unwrap();
     rt2.block_on(async {
-        let repo = noa::repo::Repository::open(&work_path).unwrap();
-        noa::cli::snapshot_cmd::run_create(&repo, "update main", "test").await.unwrap();
+        let repo = libnoa::repo::Repository::open(&work_path).unwrap();
+        libnoa::cli::snapshot_cmd::run_create(&repo, "update main", "test").await.unwrap();
         let db = std::sync::Arc::clone(&repo.db);
         drop(repo);
-        noa::git::export_noa_to_git(&work_path, db).await.unwrap();
+        libnoa::git::export_noa_to_git(&work_path, db).await.unwrap();
     });
 
     let push_output = Command::new("git")
@@ -333,7 +333,7 @@ fn test_git_lfs_clone_roundtrip() {
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        noa::git::clone_git_to_noa(
+        libnoa::git::clone_git_to_noa(
             &remote_path.to_string_lossy(),
             &cloned_path,
         ).await.unwrap();
@@ -345,7 +345,7 @@ fn test_git_lfs_clone_roundtrip() {
 
     let bin_content = std::fs::read(cloned_path.join("data.bin")).unwrap();
     assert_eq!(bin_content.len(), 10000);
-    assert!(!noa::git::is_lfs_pointer(&bin_content));
+    assert!(!libnoa::git::is_lfs_pointer(&bin_content));
 }
 
 #[test]
@@ -424,7 +424,7 @@ fn test_svn_export_and_import() {
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        noa::git::import::import_git_to_noa(&noa_path, {
+        libnoa::git::import::import_git_to_noa(&noa_path, {
             let db_path = noa_path.join(".noa").join("noa.redb");
             std::fs::create_dir_all(noa_path.join(".noa").join("agent-logs")).unwrap();
             let db = std::sync::Arc::new(

@@ -1,17 +1,16 @@
 [package]
 name = "libnoa"
-version = "0.3.2"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 
 authors = ["langyo <langyo.china@gmail.com>"]
-description = "AI-native distributed version control system"
+description = "AI-native distributed version control system — agent workspace isolation, snapshots, and multi-remote sync"
 license = "Apache-2.0"
 repository = "https://github.com/celestia-island/noa"
-documentation = "https://docs.rs/libnoa"
-readme = "README.md"
+documentation = "https://github.com/celestia-island/noa"
 keywords = ["vcs", "version-control", "ai", "agent", "git"]
-categories = ["artificial-intelligence", "development-tools", "command-line-utilities", "filesystem", "data-structures"]
+categories = ["development-tools", "command-line-utilities", "version-control"]
 
 [[bin]]
 name = "noa"

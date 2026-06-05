@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use noa::server::{router, AppState};
+use libnoa::server::{router, AppState};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
