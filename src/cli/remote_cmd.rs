@@ -1,29 +1,34 @@
 use anyhow::Result;
-use clap::{Args, Subcommand};
 
-#[derive(Subcommand)]
-pub enum RemoteCommands {
-    Add {
-        name: String,
-        url: String,
-    },
-    Remove {
-        name: String,
-    },
-    List,
+use crate::repo::Repository;
+use crate::config::RemoteConfig;
+
+pub async fn run_add(repo: &mut Repository, name: &str, url: &str) -> Result<()> {
+    repo.config.add_remote(RemoteConfig {
+        name: name.to_string(),
+        url: url.to_string(),
+        protocol: "git".to_string(),
+    });
+    repo.save_config()?;
+    println!("Added remote '{}' -> {}", name, url);
+    Ok(())
 }
 
-pub fn run(cmd: &RemoteCommands) -> Result<()> {
-    match cmd {
-        RemoteCommands::Add { name, url } => {
-            println!("Adding remote '{}' -> {}", name, url);
-        }
-        RemoteCommands::Remove { name } => {
-            println!("Removing remote '{}'", name);
-        }
-        RemoteCommands::List => {
-            println!("Listing remotes");
-        }
+pub async fn run_remove(repo: &mut Repository, name: &str) -> Result<()> {
+    repo.config.remove_remote(name);
+    repo.save_config()?;
+    println!("Removed remote '{}'", name);
+    Ok(())
+}
+
+pub async fn run_list(repo: &Repository) -> Result<()> {
+    if repo.config.remotes.is_empty() {
+        println!("No remotes configured.");
+        return Ok(());
+    }
+
+    for remote in &repo.config.remotes {
+        println!("{}\t{} ({})", remote.name, remote.url, remote.protocol);
     }
     Ok(())
 }

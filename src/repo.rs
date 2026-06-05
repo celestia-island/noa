@@ -1,9 +1,15 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use redb::Database;
 
 use crate::config::RepoConfig;
 use crate::error::{NoaError, Result};
+use crate::log::FileAgentLog;
+use crate::object::RedbObjectStore;
+use crate::refs::RedbRefStore;
+use crate::snapshot::RedbSnapshotStore;
+use crate::workspace::WorkspaceManager;
 
 pub const NOA_DIR_NAME: &str = ".noa";
 pub const DB_NAME: &str = "noa.redb";
@@ -14,7 +20,7 @@ pub const ORIG_HEAD_FILE: &str = "ORIG_HEAD";
 pub struct Repository {
     pub root: PathBuf,
     pub noa_dir: PathBuf,
-    pub db: Database,
+    pub db: Arc<Database>,
     pub config: RepoConfig,
 }
 
@@ -42,7 +48,7 @@ impl Repository {
         Ok(Repository {
             root: path.to_path_buf(),
             noa_dir,
-            db,
+            db: Arc::new(db),
             config,
         })
     }
@@ -64,7 +70,7 @@ impl Repository {
         Ok(Repository {
             root: path.to_path_buf(),
             noa_dir,
-            db,
+            db: Arc::new(db),
             config,
         })
     }
@@ -176,8 +182,33 @@ impl Repository {
         self.noa_dir.join(AGENT_LOGS_DIR)
     }
 
-    pub fn save_config(&self) -> Result<()> {
+    pub fn agent_log_path(&self, workspace: &str) -> PathBuf {
+        self.agent_logs_dir().join(format!("{}.log", workspace))
+    }
+
+    pub fn save_config(&mut self) -> Result<()> {
         self.config.save_to_dir(&self.noa_dir)
+    }
+
+    pub fn object_store(&self) -> Result<RedbObjectStore> {
+        RedbObjectStore::new(Arc::clone(&self.db))
+    }
+
+    pub fn snapshot_store(&self) -> Result<RedbSnapshotStore> {
+        RedbSnapshotStore::new(Arc::clone(&self.db))
+    }
+
+    pub fn ref_store(&self) -> Result<RedbRefStore> {
+        RedbRefStore::new(Arc::clone(&self.db))
+    }
+
+    pub fn workspace_manager(&self) -> Result<WorkspaceManager> {
+        WorkspaceManager::new(Arc::clone(&self.db))
+    }
+
+    pub fn agent_log(&self, workspace: &str) -> Result<FileAgentLog> {
+        let path = self.agent_log_path(workspace);
+        FileAgentLog::create(&path)
     }
 }
 
@@ -240,5 +271,16 @@ mod tests {
         assert!(!Repository::exists(tmp.path()));
         Repository::init(tmp.path()).unwrap();
         assert!(Repository::exists(tmp.path()));
+    }
+
+    #[test]
+    fn test_stores_accessible() {
+        let tmp = TempDir::new().unwrap();
+        let repo = Repository::init(tmp.path()).unwrap();
+        assert!(repo.object_store().is_ok());
+        assert!(repo.snapshot_store().is_ok());
+        assert!(repo.ref_store().is_ok());
+        assert!(repo.workspace_manager().is_ok());
+        assert!(repo.agent_log("default").is_ok());
     }
 }

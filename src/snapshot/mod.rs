@@ -7,7 +7,7 @@ mod diff;
 mod engine;
 mod redb_impl;
 
-pub use diff::{diff_snapshots, FileDiff};
+pub use diff::{diff_snapshots, DiffKind, FileDiff};
 pub use engine::SnapshotEngine;
 pub use redb_impl::RedbSnapshotStore;
 

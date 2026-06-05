@@ -26,15 +26,15 @@ enum Commands {
     },
     Snapshot {
         #[command(subcommand)]
-        cmd: cli::snapshot_cmd::SnapshotCommands,
+        cmd: SnapshotSub,
     },
     Workspace {
         #[command(subcommand)]
-        cmd: cli::workspace_cmd::WorkspaceCommands,
+        cmd: WorkspaceSub,
     },
     Remote {
         #[command(subcommand)]
-        cmd: cli::remote_cmd::RemoteCommands,
+        cmd: RemoteSub,
     },
     Push {
         #[arg(short, long, default_value = "origin")]
@@ -55,7 +55,54 @@ enum Commands {
     },
 }
 
-fn main() -> anyhow::Result<()> {
+#[derive(Subcommand)]
+enum SnapshotSub {
+    Create {
+        #[arg(short, long, default_value = "")]
+        message: String,
+        #[arg(short, long, default_value = "default")]
+        author: String,
+    },
+    List,
+    Diff {
+        a: String,
+        b: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum WorkspaceSub {
+    Create {
+        name: String,
+        #[arg(short, long)]
+        agent: Option<String>,
+    },
+    Switch {
+        name: String,
+    },
+    List,
+    Delete {
+        name: String,
+    },
+    Merge {
+        from: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum RemoteSub {
+    Add {
+        name: String,
+        url: String,
+    },
+    Remove {
+        name: String,
+    },
+    List,
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let app = App::parse();
 
     match app.command {
@@ -63,31 +110,83 @@ fn main() -> anyhow::Result<()> {
             cli::init::run(&cli::init::InitArgs { path })?;
         }
         Commands::Status => {
-            cli::status::run()?;
+            cli::status::run().await?;
         }
         Commands::Log { workspace, limit } => {
-            cli::log_cmd::run(&cli::log_cmd::LogArgs { workspace, limit })?;
+            cli::log_cmd::run(workspace.as_deref(), limit).await?;
         }
-        Commands::Snapshot { cmd } => {
-            cli::snapshot_cmd::run(&cmd)?;
-        }
-        Commands::Workspace { cmd } => {
-            cli::workspace_cmd::run(&cmd)?;
-        }
-        Commands::Remote { cmd } => {
-            cli::remote_cmd::run(&cmd)?;
-        }
+        Commands::Snapshot { cmd } => match cmd {
+            SnapshotSub::Create { message, author } => {
+                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
+                let repo = noa::repo::Repository::open(&root)?;
+                cli::snapshot_cmd::run_create(&repo, &message, &author).await?;
+            }
+            SnapshotSub::List => {
+                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
+                let repo = noa::repo::Repository::open(&root)?;
+                cli::snapshot_cmd::run_list(&repo).await?;
+            }
+            SnapshotSub::Diff { a, b } => {
+                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
+                let repo = noa::repo::Repository::open(&root)?;
+                cli::snapshot_cmd::run_diff(&repo, &a, &b).await?;
+            }
+        },
+        Commands::Workspace { cmd } => match cmd {
+            WorkspaceSub::Create { name, agent } => {
+                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
+                let repo = noa::repo::Repository::open(&root)?;
+                cli::workspace_cmd::run_create(&repo, &name, agent.as_deref()).await?;
+            }
+            WorkspaceSub::Switch { name } => {
+                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
+                let repo = noa::repo::Repository::open(&root)?;
+                cli::workspace_cmd::run_switch(&repo, &name).await?;
+            }
+            WorkspaceSub::List => {
+                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
+                let repo = noa::repo::Repository::open(&root)?;
+                cli::workspace_cmd::run_list(&repo).await?;
+            }
+            WorkspaceSub::Delete { name } => {
+                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
+                let repo = noa::repo::Repository::open(&root)?;
+                cli::workspace_cmd::run_delete(&repo, &name).await?;
+            }
+            WorkspaceSub::Merge { from } => {
+                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
+                let repo = noa::repo::Repository::open(&root)?;
+                cli::workspace_cmd::run_merge(&repo, &from).await?;
+            }
+        },
+        Commands::Remote { cmd } => match cmd {
+            RemoteSub::Add { name, url } => {
+                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
+                let mut repo = noa::repo::Repository::open(&root)?;
+                cli::remote_cmd::run_add(&mut repo, &name, &url).await?;
+            }
+            RemoteSub::Remove { name } => {
+                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
+                let mut repo = noa::repo::Repository::open(&root)?;
+                cli::remote_cmd::run_remove(&mut repo, &name).await?;
+            }
+            RemoteSub::List => {
+                let root = noa::repo::Repository::find(std::path::Path::new("."))?;
+                let repo = noa::repo::Repository::open(&root)?;
+                cli::remote_cmd::run_list(&repo).await?;
+            }
+        },
         Commands::Push { remote } => {
-            cli::pushpull::push(&cli::pushpull::PushArgs { remote })?;
+            println!("push to {} (not yet implemented)", remote);
         }
         Commands::Pull { remote } => {
-            cli::pushpull::pull(&cli::pushpull::PullArgs { remote })?;
+            println!("pull from {} (not yet implemented)", remote);
         }
         Commands::Fetch { remote } => {
-            cli::pushpull::fetch(&cli::pushpull::FetchArgs { remote })?;
+            println!("fetch from {} (not yet implemented)", remote);
         }
         Commands::Clone { url, path } => {
-            cli::pushpull::clone(&cli::pushpull::CloneArgs { url, path })?;
+            println!("clone {} into {} (not yet implemented)", url, path);
         }
     }
 
