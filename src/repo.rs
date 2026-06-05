@@ -8,7 +8,7 @@ use crate::error::{NoaError, Result};
 use crate::log::FileAgentLog;
 use crate::object::RedbObjectStore;
 use crate::refs::RedbRefStore;
-use crate::snapshot::RedbSnapshotStore;
+use crate::snapshot::{RedbSnapshotStore, SnapshotId};
 use crate::workspace::WorkspaceManager;
 
 pub const NOA_DIR_NAME: &str = ".noa";
@@ -45,10 +45,13 @@ impl Repository {
         let db = Self::open_db(&noa_dir)?;
         Self::init_tables(&db)?;
 
+        let db = Arc::new(db);
+        Self::create_default_workspace(&db)?;
+
         Ok(Repository {
             root: path.to_path_buf(),
             noa_dir,
-            db: Arc::new(db),
+            db,
             config,
         })
     }
@@ -148,6 +151,29 @@ impl Repository {
         write_txn
             .commit()
             .map_err(|e| NoaError::Redb(e.to_string()))
+    }
+
+    fn create_default_workspace(db: &Arc<Database>) -> Result<()> {
+        use redb::ReadableTable;
+        let ws = crate::workspace::Workspace {
+            name: "default".to_string(),
+            head: SnapshotId("noa_empty".to_string()),
+            base: SnapshotId("noa_empty".to_string()),
+            agent_id: None,
+            created_at: 0,
+            updated_at: 0,
+        };
+        let data = rmp_serde::to_vec(&ws)
+            .map_err(|e| NoaError::Serialization(e.to_string()))?;
+        let txn = db.begin_write().map_err(|e| NoaError::Redb(e.to_string()))?;
+        {
+            let mut table = txn.open_table(
+                redb::TableDefinition::<&str, &[u8]>::new("workspaces"),
+            ).map_err(|e| NoaError::Redb(e.to_string()))?;
+            table.insert("default", data.as_slice())
+                .map_err(|e| NoaError::Redb(e.to_string()))?;
+        }
+        txn.commit().map_err(|e| NoaError::Redb(e.to_string()))
     }
 
     pub fn read_head(&self) -> Result<String> {
