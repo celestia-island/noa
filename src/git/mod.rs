@@ -2,19 +2,28 @@ pub mod export;
 pub mod import;
 mod translate;
 
-pub use export::{clone_git_to_noa, export_noa_to_git};
-pub use export::{detect_lfs_available, has_lfs_tracking, lfs_install, lfs_pull, lfs_push_all};
-pub use import::import_git_to_noa;
-pub use import::is_lfs_pointer;
-pub use translate::GitTranslator;
-
 use async_trait::async_trait;
 use std::process::Command;
 
-use crate::error::{NoaError, Result};
-use crate::remote::{FetchResult, FetchSpec, PushResult, PushSpec, RemoteRef, RemoteBackend};
+pub use export::{
+    clone_git_to_noa, detect_lfs_available, export_noa_to_git, has_lfs_tracking, lfs_install,
+    lfs_pull, lfs_push_all,
+};
+pub use import::{import_git_to_noa, is_lfs_pointer};
+pub use translate::GitTranslator;
+
+use crate::{
+    error::{NoaError, Result},
+    remote::{FetchResult, FetchSpec, PushResult, PushSpec, RemoteBackend, RemoteRef},
+};
 
 pub struct GitBackend;
+
+impl Default for GitBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl GitBackend {
     pub fn new() -> Self {
@@ -72,7 +81,10 @@ impl RemoteBackend for GitBackend {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(NoaError::Remote(format!("git ls-remote failed: {}", stderr)));
+            return Err(NoaError::Remote(format!(
+                "git ls-remote failed: {}",
+                stderr
+            )));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);

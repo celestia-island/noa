@@ -76,8 +76,8 @@ impl ObjectStore for RedbObjectStore {
     }
 
     async fn put_tree(&self, entries: &TreeEntries) -> Result<TreeId> {
-        let data = rmp_serde::to_vec(entries)
-            .map_err(|e| NoaError::Serialization(e.to_string()))?;
+        let data =
+            rmp_serde::to_vec(entries).map_err(|e| NoaError::Serialization(e.to_string()))?;
         let hash = sha256_hex(&data);
         let id = TreeId(hash);
 
@@ -146,7 +146,10 @@ mod tests {
         let (_tmp, store) = make_store();
         let id = store.put_blob(b"data").await.unwrap();
         assert!(store.has_blob(&id).await.unwrap());
-        assert!(!store.has_blob(&BlobId("nonexistent".to_string())).await.unwrap());
+        assert!(!store
+            .has_blob(&BlobId("nonexistent".to_string()))
+            .await
+            .unwrap());
     }
 
     #[tokio::test]
@@ -195,7 +198,10 @@ mod tests {
         let entries = TreeEntries::new();
         let id = store.put_tree(&entries).await.unwrap();
         assert!(store.has_tree(&id).await.unwrap());
-        assert!(!store.has_tree(&TreeId("nonexistent".to_string())).await.unwrap());
+        assert!(!store
+            .has_tree(&TreeId("nonexistent".to_string()))
+            .await
+            .unwrap());
     }
 
     #[tokio::test]

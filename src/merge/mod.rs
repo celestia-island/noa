@@ -1,12 +1,13 @@
-use crate::error::{NoaError, Result};
-use crate::object::{EntryKind, TreeEntries, TreeEntry};
-use crate::snapshot::SnapshotId;
-
 mod conflict;
 mod consolidate;
 
 pub use conflict::{ConflictDetector, ConflictResolution, FileConflict};
 pub use consolidate::Consolidator;
+
+use crate::{
+    error::Result,
+    object::{TreeEntries, TreeEntry},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MergeResult {
@@ -19,23 +20,15 @@ pub fn three_way_merge(
     ours: &TreeEntries,
     theirs: &TreeEntries,
 ) -> Result<MergeResult> {
-    let base_map: std::collections::HashMap<&str, &TreeEntry> = base
-        .0
-        .iter()
-        .map(|e| (e.name.as_str(), e))
-        .collect();
-    let ours_map: std::collections::HashMap<&str, &TreeEntry> = ours
-        .0
-        .iter()
-        .map(|e| (e.name.as_str(), e))
-        .collect();
-    let theirs_map: std::collections::HashMap<&str, &TreeEntry> = theirs
-        .0
-        .iter()
-        .map(|e| (e.name.as_str(), e))
-        .collect();
+    let base_map: std::collections::HashMap<&str, &TreeEntry> =
+        base.0.iter().map(|e| (e.name.as_str(), e)).collect();
+    let ours_map: std::collections::HashMap<&str, &TreeEntry> =
+        ours.0.iter().map(|e| (e.name.as_str(), e)).collect();
+    let theirs_map: std::collections::HashMap<&str, &TreeEntry> =
+        theirs.0.iter().map(|e| (e.name.as_str(), e)).collect();
 
-    let mut result_map: std::collections::BTreeMap<String, TreeEntry> = std::collections::BTreeMap::new();
+    let mut result_map: std::collections::BTreeMap<String, TreeEntry> =
+        std::collections::BTreeMap::new();
     let mut conflicts = Vec::new();
 
     let all_paths: std::collections::BTreeSet<&str> = base_map
@@ -128,6 +121,7 @@ pub fn three_way_merge(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::object::EntryKind;
 
     fn entry(name: &str, id: &str) -> TreeEntry {
         TreeEntry {
@@ -214,7 +208,11 @@ mod tests {
 
     #[test]
     fn test_large_tree_merge() {
-        let base: TreeEntries = TreeEntries((0..50).map(|i| entry(&format!("f{}.rs", i), &format!("h{}", i))).collect());
+        let base: TreeEntries = TreeEntries(
+            (0..50)
+                .map(|i| entry(&format!("f{}.rs", i), &format!("h{}", i)))
+                .collect(),
+        );
         let mut ours_entries: Vec<TreeEntry> = base.0.clone();
         ours_entries.push(entry("new_ours.rs", "h_ours"));
         let ours = TreeEntries(ours_entries);
@@ -235,6 +233,10 @@ mod tests {
         let result = three_way_merge(&base, &ours, &theirs).unwrap();
         assert!(result.conflicts.is_empty());
         assert_eq!(result.tree.0.len(), 2);
-        assert!(result.tree.0.iter().any(|e| e.name == "b.rs" && e.id == "h2_changed"));
+        assert!(result
+            .tree
+            .0
+            .iter()
+            .any(|e| e.name == "b.rs" && e.id == "h2_changed"));
     }
 }

@@ -1,16 +1,19 @@
+use base64::Engine;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     Json,
 };
-use base64::Engine;
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
-use crate::object::{ObjectStore, RedbObjectStore, TreeEntries, TreeId, BlobId};
-use crate::refs::{RedbRefStore, RefStore};
-use crate::snapshot::{RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore};
-use crate::workspace::{Workspace, WorkspaceManager};
+use crate::{
+    object::{BlobId, ObjectStore, RedbObjectStore, TreeEntries, TreeId},
+    refs::{RedbRefStore, RefStore},
+    snapshot::{RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore},
+    workspace::{Workspace, WorkspaceManager},
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -45,16 +48,25 @@ pub struct ApiError {
 }
 
 fn err_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
-    (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: msg.to_string() }))
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ApiError {
+            error: msg.to_string(),
+        }),
+    )
 }
 
 fn not_found_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
-    (StatusCode::NOT_FOUND, Json(ApiError { error: msg.to_string() }))
+    (
+        StatusCode::NOT_FOUND,
+        Json(ApiError {
+            error: msg.to_string(),
+        }),
+    )
 }
 
 pub async fn list_refs(
     State(state): State<AppState>,
-    Path(name): Path<String>,
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ApiError>)> {
     let ref_store = state.ref_store().map_err(err_json)?;
     let refs = ref_store.list().await.map_err(err_json)?;
@@ -73,12 +85,14 @@ pub struct PushRefsRequest {
 
 pub async fn push_refs(
     State(state): State<AppState>,
-    Path(repo): Path<String>,
     Json(body): Json<PushRefsRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     let ref_store = state.ref_store().map_err(err_json)?;
     let id = SnapshotId(body.id);
-    ref_store.cas(&body.name, None, &id).await.map_err(err_json)?;
+    ref_store
+        .cas(&body.name, None, &id)
+        .await
+        .map_err(err_json)?;
     Ok(StatusCode::CREATED)
 }
 
@@ -99,7 +113,6 @@ pub struct UploadResult {
 
 pub async fn upload_blobs(
     State(state): State<AppState>,
-    Path(repo): Path<String>,
     Json(body): Json<UploadBlobsRequest>,
 ) -> Result<Json<UploadResult>, (StatusCode, Json<ApiError>)> {
     let store = state.object_store().map_err(err_json)?;
@@ -107,7 +120,7 @@ pub async fn upload_blobs(
     for blob in &body.blobs {
         let content = base64::engine::general_purpose::STANDARD
             .decode(&blob.content)
-            .map_err(|e| err_json(e))?;
+            .map_err(err_json)?;
         let id = store.put_blob(&content).await.map_err(err_json)?;
         ids.push(id.0);
     }
@@ -116,7 +129,7 @@ pub async fn upload_blobs(
 
 pub async fn get_blob(
     State(state): State<AppState>,
-    Path((repo, hash)): Path<(String, String)>,
+    Path(hash): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
     let store = state.object_store().map_err(err_json)?;
     match store.get_blob(&BlobId(hash)).await {
@@ -141,14 +154,13 @@ pub struct TreeUpload {
 
 pub async fn upload_trees(
     State(state): State<AppState>,
-    Path(repo): Path<String>,
     Json(body): Json<UploadTreesRequest>,
 ) -> Result<Json<UploadResult>, (StatusCode, Json<ApiError>)> {
     let store = state.object_store().map_err(err_json)?;
     let mut ids = Vec::new();
     for tree in &body.trees {
-        let entries: TreeEntries = serde_json::from_value(tree.entries.clone())
-            .map_err(|e| err_json(e))?;
+        let entries: TreeEntries =
+            serde_json::from_value(tree.entries.clone()).map_err(err_json)?;
         let id = store.put_tree(&entries).await.map_err(err_json)?;
         ids.push(id.0);
     }
@@ -157,7 +169,7 @@ pub async fn upload_trees(
 
 pub async fn get_tree(
     State(state): State<AppState>,
-    Path((repo, hash)): Path<(String, String)>,
+    Path(hash): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
     let store = state.object_store().map_err(err_json)?;
     match store.get_tree(&TreeId(hash)).await {
@@ -169,7 +181,6 @@ pub async fn get_tree(
 
 pub async fn list_snapshots(
     State(state): State<AppState>,
-    Path(repo): Path<String>,
 ) -> Result<Json<Vec<Snapshot>>, (StatusCode, Json<ApiError>)> {
     let store = state.snapshot_store().map_err(err_json)?;
     let snapshots = store.list_all().await.map_err(err_json)?;
@@ -183,7 +194,6 @@ pub struct CreateSnapshotRequest {
 
 pub async fn create_snapshot(
     State(state): State<AppState>,
-    Path(repo): Path<String>,
     Json(body): Json<CreateSnapshotRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     let store = state.snapshot_store().map_err(err_json)?;
@@ -193,7 +203,6 @@ pub async fn create_snapshot(
 
 pub async fn list_workspaces(
     State(state): State<AppState>,
-    Path(repo): Path<String>,
 ) -> Result<Json<Vec<Workspace>>, (StatusCode, Json<ApiError>)> {
     let mgr = state.workspace_manager().map_err(err_json)?;
     let workspaces = mgr.list().await.map_err(err_json)?;
@@ -207,7 +216,6 @@ pub struct CreateWorkspaceRequest {
 
 pub async fn create_workspace(
     State(state): State<AppState>,
-    Path(repo): Path<String>,
     Json(body): Json<CreateWorkspaceRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     let mgr = state.workspace_manager().map_err(err_json)?;

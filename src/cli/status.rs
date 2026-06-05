@@ -1,10 +1,6 @@
 use anyhow::Result;
 
-use crate::object::ObjectStore;
-use crate::refs::RefStore;
-use crate::repo::Repository;
-use crate::snapshot::SnapshotStore;
-use crate::workspace::WorkspaceManager;
+use crate::{refs::RefStore, repo::Repository, snapshot::SnapshotStore};
 
 pub async fn run() -> Result<()> {
     let root = Repository::find(std::path::Path::new("."))?;

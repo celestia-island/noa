@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
-use libnoa::log::{AgentLog, FileAgentLog, LogEntry, OpType};
-use libnoa::object::ObjectStore;
-use libnoa::refs::RefStore;
-use libnoa::repo::{manage_gitattributes, manage_gitignore, Repository};
-use libnoa::snapshot::{diff_snapshots, SnapshotEngine, SnapshotId};
-use libnoa::workspace::WorkspaceManager;
+use libnoa::{
+    log::{AgentLog, FileAgentLog, LogEntry, OpType},
+    object::ObjectStore,
+    refs::RefStore,
+    repo::{manage_gitattributes, manage_gitignore, Repository},
+    snapshot::{diff_snapshots, SnapshotEngine, SnapshotId},
+};
 
 fn make_log_entry(seq: u64, op: OpType, path: &str, blob_id: Option<&str>, ts: u64) -> LogEntry {
     LogEntry {
@@ -59,11 +60,23 @@ async fn smoke_test_full_snapshot_workflow() {
     let snap_store = repo.snapshot_store().unwrap();
 
     agent_log
-        .append(&make_log_entry(1, OpType::Write, "main.rs", Some("blob1"), 100))
+        .append(&make_log_entry(
+            1,
+            OpType::Write,
+            "main.rs",
+            Some("blob1"),
+            100,
+        ))
         .await
         .unwrap();
     agent_log
-        .append(&make_log_entry(2, OpType::Write, "lib.rs", Some("blob2"), 200))
+        .append(&make_log_entry(
+            2,
+            OpType::Write,
+            "lib.rs",
+            Some("blob2"),
+            200,
+        ))
         .await
         .unwrap();
 
@@ -98,7 +111,13 @@ async fn smoke_test_workspace_create_switch_merge() {
 
     let agent_log = repo.agent_log("default").unwrap();
     agent_log
-        .append(&make_log_entry(1, OpType::Write, "main.rs", Some("blob1"), 100))
+        .append(&make_log_entry(
+            1,
+            OpType::Write,
+            "main.rs",
+            Some("blob1"),
+            100,
+        ))
         .await
         .unwrap();
     let engine = SnapshotEngine::new(agent_log, snap_store.clone(), obj_store.clone());
@@ -120,15 +139,29 @@ async fn smoke_test_workspace_create_switch_merge() {
 
     let feature_log = repo.agent_log("feature").unwrap();
     feature_log
-        .append(&make_log_entry(1, OpType::Write, "feature.rs", Some("blob_feat"), 300))
+        .append(&make_log_entry(
+            1,
+            OpType::Write,
+            "feature.rs",
+            Some("blob_feat"),
+            300,
+        ))
         .await
         .unwrap();
     let feature_engine = SnapshotEngine::new(feature_log, snap_store.clone(), obj_store.clone());
     let feature_snap = feature_engine
-        .compute("feature", vec![base_snap.id.clone()], "agent-001", "add feature")
+        .compute(
+            "feature",
+            vec![base_snap.id.clone()],
+            "agent-001",
+            "add feature",
+        )
         .await
         .unwrap();
-    ws_mgr.update_head("feature", &feature_snap.id).await.unwrap();
+    ws_mgr
+        .update_head("feature", &feature_snap.id)
+        .await
+        .unwrap();
 
     repo.write_orig_head(&repo.read_head().unwrap()).unwrap();
     repo.write_head("feature").unwrap();
@@ -165,19 +198,43 @@ async fn smoke_test_ignore_filtering_in_snapshot() {
     let snap_store = repo.snapshot_store().unwrap();
 
     agent_log
-        .append(&make_log_entry(1, OpType::Write, "main.rs", Some("b1"), 100))
+        .append(&make_log_entry(
+            1,
+            OpType::Write,
+            "main.rs",
+            Some("b1"),
+            100,
+        ))
         .await
         .unwrap();
     agent_log
-        .append(&make_log_entry(2, OpType::Write, "debug.log", Some("b2"), 200))
+        .append(&make_log_entry(
+            2,
+            OpType::Write,
+            "debug.log",
+            Some("b2"),
+            200,
+        ))
         .await
         .unwrap();
     agent_log
-        .append(&make_log_entry(3, OpType::Write, "build/output.js", Some("b3"), 300))
+        .append(&make_log_entry(
+            3,
+            OpType::Write,
+            "build/output.js",
+            Some("b3"),
+            300,
+        ))
         .await
         .unwrap();
     agent_log
-        .append(&make_log_entry(4, OpType::Write, ".noa/config", Some("b4"), 400))
+        .append(&make_log_entry(
+            4,
+            OpType::Write,
+            ".noa/config",
+            Some("b4"),
+            400,
+        ))
         .await
         .unwrap();
 
@@ -231,7 +288,7 @@ async fn smoke_test_snapshot_diff() {
             .create(tmp.path().join("test.redb"))
             .unwrap(),
     );
-    let obj_store = libnoa::object::RedbObjectStore::new(db).unwrap();
+    let _obj_store = libnoa::object::RedbObjectStore::new(db).unwrap();
 
     let tree_a = libnoa::object::TreeEntries(vec![
         libnoa::object::TreeEntry {
@@ -300,7 +357,7 @@ async fn smoke_test_concurrent_agent_logs() {
                     OpType::Write,
                     &format!("file_{}.rs", j),
                     Some(&format!("blob_{}", j)),
-                    (j as u64 + 1) * 100,
+                    (j + 1) * 100,
                 );
                 log.append(&entry).await.unwrap();
             }
@@ -322,9 +379,8 @@ async fn smoke_test_concurrent_agent_logs() {
 #[tokio::test]
 async fn smoke_test_init_with_noa_remote() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let repo =
-        Repository::init_with_noa_remote(tmp.path(), Some("https://noa.example.com/myrepo"))
-            .unwrap();
+    let repo = Repository::init_with_noa_remote(tmp.path(), Some("https://noa.example.com/myrepo"))
+        .unwrap();
 
     let gitattributes = std::fs::read_to_string(tmp.path().join(".gitattributes")).unwrap();
     assert!(gitattributes.contains("noa-remote=https://noa.example.com/myrepo"));
@@ -416,9 +472,17 @@ async fn smoke_test_three_way_merge_no_conflict() {
         id: id.to_string(),
     };
 
-    let base = libnoa::object::TreeEntries(vec![make_entry("a.rs", "h1"), make_entry("b.rs", "h2")]);
-    let ours = libnoa::object::TreeEntries(vec![make_entry("a.rs", "h1"), make_entry("b.rs", "h2_changed")]);
-    let theirs = libnoa::object::TreeEntries(vec![make_entry("a.rs", "h1"), make_entry("b.rs", "h2"), make_entry("c.rs", "h3")]);
+    let base =
+        libnoa::object::TreeEntries(vec![make_entry("a.rs", "h1"), make_entry("b.rs", "h2")]);
+    let ours = libnoa::object::TreeEntries(vec![
+        make_entry("a.rs", "h1"),
+        make_entry("b.rs", "h2_changed"),
+    ]);
+    let theirs = libnoa::object::TreeEntries(vec![
+        make_entry("a.rs", "h1"),
+        make_entry("b.rs", "h2"),
+        make_entry("c.rs", "h3"),
+    ]);
 
     let result = libnoa::merge::three_way_merge(&base, &ours, &theirs).unwrap();
     assert!(result.conflicts.is_empty());

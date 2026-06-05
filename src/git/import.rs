@@ -1,33 +1,34 @@
-use std::path::Path;
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
-use crate::error::{NoaError, Result};
-use crate::object::{EntryKind, ObjectStore, TreeEntries, TreeEntry};
-use crate::refs::{RedbRefStore, RefStore};
-use crate::snapshot::{RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore};
+use crate::{
+    error::{NoaError, Result},
+    object::{EntryKind, ObjectStore, TreeEntries, TreeEntry},
+    refs::{RedbRefStore, RefStore},
+    snapshot::{RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore},
+};
 
-pub async fn import_git_to_noa(
-    git_dir: &Path,
-    db: Arc<redb::Database>,
-) -> Result<()> {
-    let repo = gix::open(git_dir)
-        .map_err(|e| NoaError::Remote(e.to_string()))?;
+pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Result<()> {
+    let repo = gix::open(git_dir).map_err(|e| NoaError::Remote(e.to_string()))?;
 
     let obj_store = crate::object::RedbObjectStore::new(Arc::clone(&db))?;
     let snap_store = RedbSnapshotStore::new(Arc::clone(&db))?;
     let ref_store = RedbRefStore::new(db)?;
 
-    let head_id = repo.head_id()
+    let head_id = repo
+        .head_id()
         .map_err(|e| NoaError::Remote(e.to_string()))?
         .detach();
 
-    let head_obj = repo.find_object(head_id)
+    let head_obj = repo
+        .find_object(head_id)
         .map_err(|e| NoaError::Remote(e.to_string()))?;
 
-    let commit = head_obj.try_into_commit()
+    let commit = head_obj
+        .try_into_commit()
         .map_err(|e| NoaError::Remote(format!("HEAD is not a commit: {}", e)))?;
 
-    let tree_id = commit.tree_id()
+    let tree_id = commit
+        .tree_id()
         .map_err(|e| NoaError::Remote(e.to_string()))?
         .detach();
 
@@ -37,17 +38,18 @@ pub async fn import_git_to_noa(
     sorted.sort_by(|a, b| a.name.cmp(&b.name));
     let noa_tree_id = obj_store.put_tree(&TreeEntries(sorted)).await?;
 
-    let author = commit.author()
+    let author = commit
+        .author()
         .ok()
         .map(|a| a.name.to_string())
         .unwrap_or_else(|| "unknown".to_string());
 
-    let message = commit.message_raw()
+    let message = commit
+        .message_raw()
         .map(|m| m.to_string())
         .unwrap_or_default();
 
-    let time = commit.time()
-        .map_err(|e| NoaError::Remote(e.to_string()))?;
+    let time = commit.time().map_err(|e| NoaError::Remote(e.to_string()))?;
 
     let snapshot = Snapshot {
         id: SnapshotId(format!("noa_{}", &head_id.to_hex().to_string()[..12])),
@@ -80,10 +82,12 @@ fn import_tree_recursive(
     tree_id: gix::hash::ObjectId,
     obj_store: &crate::object::RedbObjectStore,
 ) -> Result<Vec<TreeEntry>> {
-    let obj = repo.find_object(tree_id)
+    let obj = repo
+        .find_object(tree_id)
         .map_err(|e| NoaError::Remote(e.to_string()))?;
 
-    let tree = obj.try_into_tree()
+    let tree = obj
+        .try_into_tree()
         .map_err(|e| NoaError::Remote(format!("not a tree: {}", e)))?;
 
     let mut entries = Vec::new();
@@ -92,8 +96,7 @@ fn import_tree_recursive(
         let entry = entry_result.map_err(|e| NoaError::Remote(e.to_string()))?;
         let mode = entry.mode();
         let entry_id = entry.oid();
-        let filename = entry.filename()
-            .to_string();
+        let filename = entry.filename().to_string();
 
         if mode.is_tree() {
             let sub_entries = import_tree_recursive(repo, entry_id.to_owned(), obj_store)?;
@@ -102,9 +105,11 @@ fn import_tree_recursive(
                 entries.push(sub);
             }
         } else {
-            let blob_obj = repo.find_object(entry_id)
+            let blob_obj = repo
+                .find_object(entry_id)
                 .map_err(|e| NoaError::Remote(e.to_string()))?;
-            let blob = blob_obj.try_into_blob()
+            let blob = blob_obj
+                .try_into_blob()
                 .map_err(|e| NoaError::Remote(format!("not a blob: {}", e)))?;
             let content = blob.data.clone();
             let blob_id = tokio::task::block_in_place(|| {

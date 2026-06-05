@@ -1,9 +1,12 @@
-use redb::ReadableTable;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::error::{NoaError, Result};
-use crate::snapshot::SnapshotId;
+use redb::ReadableTable;
+
+use crate::{
+    error::{NoaError, Result},
+    snapshot::SnapshotId,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Workspace {
@@ -64,8 +67,8 @@ impl WorkspaceManager {
     }
 
     pub async fn put(&self, workspace: &Workspace) -> Result<()> {
-        let data = rmp_serde::to_vec(workspace)
-            .map_err(|e| NoaError::Serialization(e.to_string()))?;
+        let data =
+            rmp_serde::to_vec(workspace).map_err(|e| NoaError::Serialization(e.to_string()))?;
         let txn = redb_err!(self.db.begin_write())?;
         {
             let mut table = redb_err!(txn.open_table(WORKSPACES))?;
@@ -78,7 +81,6 @@ impl WorkspaceManager {
         let txn = redb_err!(self.db.begin_write())?;
         {
             let mut table = redb_err!(txn.open_table(WORKSPACES))?;
-            let _existed = redb_err!(table.get(name))?.is_some();
             redb_err!(table.remove(name))?;
         }
         redb_err!(txn.commit())?;
@@ -189,7 +191,9 @@ mod tests {
     #[tokio::test]
     async fn test_update_head_nonexistent() {
         let (_tmp, mgr) = make_manager();
-        let result = mgr.update_head("missing", &SnapshotId("noa_x".to_string())).await;
+        let result = mgr
+            .update_head("missing", &SnapshotId("noa_x".to_string()))
+            .await;
         assert!(result.is_err());
     }
 
@@ -228,7 +232,9 @@ mod tests {
         mgr.create(&ws).await.unwrap();
         let before = mgr.get("ws1").await.unwrap().unwrap().updated_at;
         std::thread::sleep(std::time::Duration::from_micros(100));
-        mgr.update_head("ws1", &SnapshotId("noa_new".to_string())).await.unwrap();
+        mgr.update_head("ws1", &SnapshotId("noa_new".to_string()))
+            .await
+            .unwrap();
         let after = mgr.get("ws1").await.unwrap().unwrap().updated_at;
         assert!(after >= before);
     }

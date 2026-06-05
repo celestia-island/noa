@@ -40,10 +40,12 @@ clean:
 
 fmt:
     {{python_cmd}} scripts/utils/format_markdown.py .
+    {{python_cmd}} scripts/utils/enforce_use_groups.py
     cargo fmt --all
 
 fmt-check:
     {{python_cmd}} scripts/utils/format_markdown.py . --check
+    {{python_cmd}} scripts/utils/enforce_use_groups.py --test
     cargo fmt --all -- --check
 
 clippy:

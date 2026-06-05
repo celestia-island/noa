@@ -1,7 +1,4 @@
-use crate::error::Result;
-use crate::snapshot::SnapshotId;
-use crate::workspace::Workspace;
-use crate::workspace::WorkspaceManager;
+use crate::{error::Result, snapshot::SnapshotId, workspace::{Workspace, WorkspaceManager}};
 
 pub async fn create(
     mgr: &WorkspaceManager,

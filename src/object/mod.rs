@@ -1,13 +1,13 @@
+pub mod minio_impl;
+mod redb_impl;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::error::Result;
-
-mod redb_impl;
-pub mod minio_impl;
-
-pub use redb_impl::RedbObjectStore;
 pub use minio_impl::MinioObjectStore;
+pub use redb_impl::RedbObjectStore;
+
+use crate::error::Result;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BlobId(pub String);
@@ -54,6 +54,12 @@ pub enum EntryKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TreeEntries(pub Vec<TreeEntry>);
+
+impl Default for TreeEntries {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl TreeEntries {
     pub fn new() -> Self {

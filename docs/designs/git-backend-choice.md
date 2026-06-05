@@ -2,7 +2,7 @@
 
 ## Status: Analysis
 
-**Current**: `git2 = "0.19"` (C binding to libgit2)  
+**Current**: `git2 = "0.19"` (C binding to libgit2)
 **Proposed**: `gix = "0.84"` (pure-Rust git implementation)
 
 ## Summary

@@ -1,12 +1,12 @@
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
-use std::sync::Mutex;
-
 use async_trait::async_trait;
+use std::{
+    fs::{File, OpenOptions},
+    io::{Read, Seek, SeekFrom, Write},
+    path::Path,
+    sync::Mutex,
+};
 
-use super::format;
-use super::{AgentLog, LogEntry};
+use super::{format, AgentLog, LogEntry};
 use crate::error::{NoaError, Result};
 
 pub struct FileAgentLog {
@@ -51,12 +51,10 @@ impl FileAgentLog {
 impl AgentLog for FileAgentLog {
     async fn append(&self, entry: &LogEntry) -> Result<u64> {
         let line = format::serialize_entry(entry)?;
-        let mut file = self.file.lock().map_err(|e| {
-            NoaError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            ))
-        })?;
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|e| NoaError::Io(std::io::Error::other(e.to_string())))?;
         writeln!(file, "{}", line)?;
         file.sync_all()?;
         Ok(entry.seq)
@@ -68,12 +66,10 @@ impl AgentLog for FileAgentLog {
     }
 
     async fn read_all(&self) -> Result<Vec<LogEntry>> {
-        let mut file = self.file.lock().map_err(|e| {
-            NoaError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            ))
-        })?;
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|e| NoaError::Io(std::io::Error::other(e.to_string())))?;
         file.seek(SeekFrom::Start(0))?;
         let mut content = String::new();
         file.read_to_string(&mut content)?;
@@ -125,9 +121,14 @@ mod tests {
         let log = FileAgentLog::create(&log_path).unwrap();
 
         for i in 1..=5 {
-            log.append(&make_entry(i, OpType::Write, &format!("f{}.rs", i), i * 100))
-                .await
-                .unwrap();
+            log.append(&make_entry(
+                i,
+                OpType::Write,
+                &format!("f{}.rs", i),
+                i * 100,
+            ))
+            .await
+            .unwrap();
         }
 
         let entries = log.read_since(2).await.unwrap();
@@ -150,7 +151,12 @@ mod tests {
             handles.push(tokio::spawn(async move {
                 for i in 0..10 {
                     let seq = thread_id * 10 + i + 1;
-                    let entry = make_entry(seq, OpType::Write, &format!("t{}-{}.rs", thread_id, i), seq * 100);
+                    let entry = make_entry(
+                        seq,
+                        OpType::Write,
+                        &format!("t{}-{}.rs", thread_id, i),
+                        seq * 100,
+                    );
                     log.append(&entry).await.unwrap();
                 }
             }));

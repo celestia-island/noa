@@ -48,8 +48,8 @@ impl SnapshotStore for RedbSnapshotStore {
     }
 
     async fn store(&self, snapshot: &Snapshot) -> Result<()> {
-        let data = rmp_serde::to_vec(snapshot)
-            .map_err(|e| NoaError::Serialization(e.to_string()))?;
+        let data =
+            rmp_serde::to_vec(snapshot).map_err(|e| NoaError::Serialization(e.to_string()))?;
 
         let txn = redb_err!(self.db.begin_write())?;
         {

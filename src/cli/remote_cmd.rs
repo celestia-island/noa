@@ -1,7 +1,6 @@
 use anyhow::Result;
 
-use crate::repo::Repository;
-use crate::config::RemoteConfig;
+use crate::{config::RemoteConfig, repo::Repository};
 
 pub async fn run_add(repo: &mut Repository, name: &str, url: &str) -> Result<()> {
     repo.config.add_remote(RemoteConfig {
