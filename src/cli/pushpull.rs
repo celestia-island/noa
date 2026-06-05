@@ -64,8 +64,17 @@ pub async fn run_pull(remote_name: &str) -> Result<()> {
     }
 
     let db = Arc::clone(&repo.db);
+    let head_ws = repo.read_head()?;
     drop(repo);
-    crate::git::import::import_git_to_noa(&root, db).await?;
+    crate::git::import::import_git_to_noa(&root, db.clone()).await?;
+
+    let ref_store = crate::refs::RedbRefStore::new(db.clone())?;
+    let head_ref = crate::refs::RefStore::get(&ref_store, "HEAD").await.ok().flatten();
+    if let Some(snap_id) = head_ref {
+        let ws_mgr = crate::workspace::WorkspaceManager::new(db)?;
+        ws_mgr.update_head(&head_ws, &snap_id).await.ok();
+    }
+
     println!("Pulled from {} and re-imported into noa", remote_name);
 
     Ok(())
