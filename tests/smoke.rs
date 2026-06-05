@@ -28,7 +28,7 @@ async fn smoke_test_init_open_find() {
 
     assert!(!Repository::exists(path));
     {
-        let _repo = Repository::init(path).unwrap();
+        Repository::init(path).unwrap();
     }
     assert!(Repository::exists(path));
     assert!(path.join(".noa").exists());
@@ -282,14 +282,6 @@ async fn smoke_test_ref_cas_and_list() {
 
 #[tokio::test]
 async fn smoke_test_snapshot_diff() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let db = Arc::new(
-        redb::Database::builder()
-            .create(tmp.path().join("test.redb"))
-            .unwrap(),
-    );
-    let _obj_store = libnoa::object::RedbObjectStore::new(db).unwrap();
-
     let tree_a = libnoa::object::TreeEntries(vec![
         libnoa::object::TreeEntry {
             name: "a.rs".to_string(),

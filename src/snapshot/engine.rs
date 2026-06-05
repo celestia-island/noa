@@ -74,7 +74,7 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
         for entry in entries {
             match entry.op {
                 OpType::Write => {
-                    if let (Some(path), Some(_log_blob_id)) = (&entry.path, &entry.blob_id) {
+                    if let (Some(path), Some(log_blob_id)) = (&entry.path, &entry.blob_id) {
                         if let Some(ref matcher) = self.ignore_matcher {
                             if matcher.should_skip(path, false) {
                                 continue;
@@ -84,10 +84,10 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
                             let file_path = root.join(path);
                             match std::fs::read(&file_path) {
                                 Ok(content) => self.object_store.put_blob(&content).await?.0,
-                                Err(_) => _log_blob_id.clone(),
+                                Err(_) => log_blob_id.clone(),
                             }
                         } else {
-                            _log_blob_id.clone()
+                            log_blob_id.clone()
                         };
                         tree_map.insert(
                             path.clone(),

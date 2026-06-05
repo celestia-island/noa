@@ -83,7 +83,7 @@ fn test_bitbucket_url_format_handling() {
     let path = tmp.path();
 
     {
-        let _repo = libnoa::repo::Repository::init(path).unwrap();
+        libnoa::repo::Repository::init(path).unwrap();
     }
     let mut repo = libnoa::repo::Repository::open(path).unwrap();
 
@@ -118,7 +118,7 @@ fn test_multiple_remote_protocols() {
     let path = tmp.path();
 
     {
-        let _repo = libnoa::repo::Repository::init(path).unwrap();
+        libnoa::repo::Repository::init(path).unwrap();
     }
     let mut repo = libnoa::repo::Repository::open(path).unwrap();
 
