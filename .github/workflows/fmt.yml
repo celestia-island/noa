@@ -5,6 +5,7 @@ on:
       - '.github/workflows/fmt.yml'
       - 'src/**/*'
       - 'bin/**/*'
+      - 'scripts/**/*'
       - 'Cargo.toml'
       - 'Cargo.lock'
   push:
@@ -24,5 +25,11 @@ jobs:
           toolchain: nightly
           components: rustfmt
 
-      - name: Run fmt
+      - name: Check import group ordering
+        run: python3 scripts/utils/enforce_use_groups.py --test
+
+      - name: Check markdown formatting
+        run: python3 scripts/utils/format_markdown.py . --check
+
+      - name: Run cargo fmt
         run: cargo +nightly fmt --all -- --check --unstable-features

@@ -58,17 +58,17 @@ noa_empty (sentinel)
 ```
 1. AgentLog replay
    └── Read all write/delete/rename ops for workspace
-   
+
 2. Tree construction
    └── Start from parent snapshot's tree
    └── Apply ops in sequence order
    └── Store resulting tree → ObjectStore
-   
+
 3. Snapshot creation
    └── Build Snapshot struct with tree hash
    └── Compute ID from content
    └── Store in SnapshotStore (redb table)
-   
+
 4. Workspace update
    └── CAS update workspace head to new snapshot ID
 ```

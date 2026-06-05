@@ -1,12 +1,12 @@
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-
-use crate::error::Result;
-
 mod file_impl;
 mod format;
 
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+
 pub use file_impl::FileAgentLog;
+
+use crate::error::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

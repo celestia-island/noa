@@ -52,8 +52,7 @@ impl RepoConfig {
 
     pub fn load_from_dir(dir: &Path) -> Result<Self> {
         let config_path = dir.join("config");
-        let content = std::fs::read_to_string(&config_path)
-            .map_err(|e| NoaError::Io(e))?;
+        let content = std::fs::read_to_string(&config_path).map_err(NoaError::Io)?;
         Self::from_toml(&content)
     }
 
@@ -105,11 +104,16 @@ mod tests {
 
     #[test]
     fn test_noa_remote_roundtrip() {
-        let mut config = RepoConfig::default();
-        config.noa_remote = Some("https://noa.example.com/repo".to_string());
+        let config = RepoConfig {
+            noa_remote: Some("https://noa.example.com/repo".to_string()),
+            ..Default::default()
+        };
         let toml_str = config.to_toml().unwrap();
         let parsed = RepoConfig::from_toml(&toml_str).unwrap();
-        assert_eq!(parsed.noa_remote, Some("https://noa.example.com/repo".to_string()));
+        assert_eq!(
+            parsed.noa_remote,
+            Some("https://noa.example.com/repo".to_string())
+        );
     }
 
     #[test]
@@ -154,7 +158,10 @@ mod tests {
             protocol: "git".to_string(),
         });
         assert_eq!(config.remotes.len(), 1);
-        assert_eq!(config.get_remote("origin").unwrap().url, "https://new.example.com");
+        assert_eq!(
+            config.get_remote("origin").unwrap().url,
+            "https://new.example.com"
+        );
     }
 
     #[test]

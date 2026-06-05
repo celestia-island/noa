@@ -1,5 +1,6 @@
-use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use std::path::Path;
+
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 
 pub struct IgnoreMatcher {
     gi: Gitignore,

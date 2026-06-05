@@ -1,11 +1,12 @@
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::{collections::BTreeMap, path::PathBuf};
 
-use crate::error::{NoaError, Result};
-use crate::ignore::IgnoreMatcher;
-use crate::log::{AgentLog, LogEntry, OpType};
-use crate::object::{EntryKind, ObjectStore, TreeEntries, TreeEntry};
-use crate::snapshot::{generate_snapshot_id, Snapshot, SnapshotId, SnapshotStore};
+use crate::{
+    error::Result,
+    ignore::IgnoreMatcher,
+    log::{AgentLog, LogEntry, OpType},
+    object::{EntryKind, ObjectStore, TreeEntries, TreeEntry},
+    snapshot::{generate_snapshot_id, Snapshot, SnapshotId, SnapshotStore},
+};
 
 pub struct SnapshotEngine<L: AgentLog, S: SnapshotStore, O: ObjectStore> {
     pub log: L,
@@ -140,7 +141,10 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    async fn make_engine() -> (TempDir, SnapshotEngine<FileAgentLog, RedbSnapshotStore, RedbObjectStore>) {
+    async fn make_engine() -> (
+        TempDir,
+        SnapshotEngine<FileAgentLog, RedbSnapshotStore, RedbObjectStore>,
+    ) {
         let tmp = TempDir::new().unwrap();
         let db = Arc::new(
             redb::Database::builder()
@@ -185,10 +189,21 @@ mod tests {
     #[tokio::test]
     async fn test_compute_snapshot_basic() {
         let (_tmp, engine) = make_engine().await;
-        engine.log.append(&write_entry(1, "main.rs", "h1", 100)).await.unwrap();
-        engine.log.append(&write_entry(2, "lib.rs", "h2", 200)).await.unwrap();
+        engine
+            .log
+            .append(&write_entry(1, "main.rs", "h1", 100))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&write_entry(2, "lib.rs", "h2", 200))
+            .await
+            .unwrap();
 
-        let snap = engine.compute("default", vec![], "test", "initial").await.unwrap();
+        let snap = engine
+            .compute("default", vec![], "test", "initial")
+            .await
+            .unwrap();
         assert!(snap.id.0.starts_with("noa_"));
         assert_eq!(snap.workspace, "default");
         assert_eq!(snap.message, "initial");
@@ -200,13 +215,32 @@ mod tests {
     #[tokio::test]
     async fn test_compute_with_delete() {
         let (_tmp, engine) = make_engine().await;
-        engine.log.append(&write_entry(1, "a.rs", "h1", 100)).await.unwrap();
-        engine.log.append(&write_entry(2, "b.rs", "h2", 200)).await.unwrap();
-        engine.log.append(&delete_entry(3, "a.rs", 300)).await.unwrap();
+        engine
+            .log
+            .append(&write_entry(1, "a.rs", "h1", 100))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&write_entry(2, "b.rs", "h2", 200))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&delete_entry(3, "a.rs", 300))
+            .await
+            .unwrap();
 
-        let snap = engine.compute("ws1", vec![], "agent", "delete test").await.unwrap();
+        let snap = engine
+            .compute("ws1", vec![], "agent", "delete test")
+            .await
+            .unwrap();
 
-        let tree = engine.object_store.get_tree(&crate::object::TreeId(snap.tree_hash)).await.unwrap();
+        let tree = engine
+            .object_store
+            .get_tree(&crate::object::TreeId(snap.tree_hash))
+            .await
+            .unwrap();
         assert_eq!(tree.0.len(), 1);
         assert_eq!(tree.0[0].name, "b.rs");
     }
@@ -214,12 +248,26 @@ mod tests {
     #[tokio::test]
     async fn test_compute_with_parent() {
         let (_tmp, engine) = make_engine().await;
-        engine.log.append(&write_entry(1, "x.rs", "h1", 100)).await.unwrap();
+        engine
+            .log
+            .append(&write_entry(1, "x.rs", "h1", 100))
+            .await
+            .unwrap();
 
-        let parent = engine.compute("ws1", vec![], "test", "parent").await.unwrap();
+        let parent = engine
+            .compute("ws1", vec![], "test", "parent")
+            .await
+            .unwrap();
 
-        engine.log.append(&write_entry(2, "y.rs", "h2", 200)).await.unwrap();
-        let child = engine.compute("ws1", vec![parent.id.clone()], "test", "child").await.unwrap();
+        engine
+            .log
+            .append(&write_entry(2, "y.rs", "h2", 200))
+            .await
+            .unwrap();
+        let child = engine
+            .compute("ws1", vec![parent.id.clone()], "test", "child")
+            .await
+            .unwrap();
 
         assert_eq!(child.parents.len(), 1);
         assert_eq!(child.parents[0], parent.id);
@@ -241,12 +289,31 @@ mod tests {
         let matcher = IgnoreMatcher::from_repo_root(tmp.path());
         let engine = SnapshotEngine::new(log, snapshot_store, object_store).with_ignore(matcher);
 
-        engine.log.append(&write_entry(1, "main.rs", "h1", 100)).await.unwrap();
-        engine.log.append(&write_entry(2, ".noa/config", "h2", 200)).await.unwrap();
-        engine.log.append(&write_entry(3, ".noa/noa.redb", "h3", 300)).await.unwrap();
+        engine
+            .log
+            .append(&write_entry(1, "main.rs", "h1", 100))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&write_entry(2, ".noa/config", "h2", 200))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&write_entry(3, ".noa/noa.redb", "h3", 300))
+            .await
+            .unwrap();
 
-        let snap = engine.compute("default", vec![], "test", "ignore noa").await.unwrap();
-        let tree = engine.object_store.get_tree(&crate::object::TreeId(snap.tree_hash)).await.unwrap();
+        let snap = engine
+            .compute("default", vec![], "test", "ignore noa")
+            .await
+            .unwrap();
+        let tree = engine
+            .object_store
+            .get_tree(&crate::object::TreeId(snap.tree_hash))
+            .await
+            .unwrap();
         assert_eq!(tree.0.len(), 1);
         assert_eq!(tree.0[0].name, "main.rs");
     }
@@ -269,12 +336,31 @@ mod tests {
         let matcher = IgnoreMatcher::from_repo_root(tmp.path());
         let engine = SnapshotEngine::new(log, snapshot_store, object_store).with_ignore(matcher);
 
-        engine.log.append(&write_entry(1, "main.rs", "h1", 100)).await.unwrap();
-        engine.log.append(&write_entry(2, "debug.log", "h2", 200)).await.unwrap();
-        engine.log.append(&write_entry(3, "target/dep.rs", "h3", 300)).await.unwrap();
+        engine
+            .log
+            .append(&write_entry(1, "main.rs", "h1", 100))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&write_entry(2, "debug.log", "h2", 200))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&write_entry(3, "target/dep.rs", "h3", 300))
+            .await
+            .unwrap();
 
-        let snap = engine.compute("default", vec![], "test", "ignore gitignore").await.unwrap();
-        let tree = engine.object_store.get_tree(&crate::object::TreeId(snap.tree_hash)).await.unwrap();
+        let snap = engine
+            .compute("default", vec![], "test", "ignore gitignore")
+            .await
+            .unwrap();
+        let tree = engine
+            .object_store
+            .get_tree(&crate::object::TreeId(snap.tree_hash))
+            .await
+            .unwrap();
         assert_eq!(tree.0.len(), 1);
         assert_eq!(tree.0[0].name, "main.rs");
     }
@@ -297,11 +383,26 @@ mod tests {
         let matcher = IgnoreMatcher::from_repo_root(tmp.path());
         let engine = SnapshotEngine::new(log, snapshot_store, object_store).with_ignore(matcher);
 
-        engine.log.append(&write_entry(1, "important.log", "h1", 100)).await.unwrap();
-        engine.log.append(&write_entry(2, "debug.log", "h2", 200)).await.unwrap();
+        engine
+            .log
+            .append(&write_entry(1, "important.log", "h1", 100))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&write_entry(2, "debug.log", "h2", 200))
+            .await
+            .unwrap();
 
-        let snap = engine.compute("default", vec![], "test", "whitelist").await.unwrap();
-        let tree = engine.object_store.get_tree(&crate::object::TreeId(snap.tree_hash)).await.unwrap();
+        let snap = engine
+            .compute("default", vec![], "test", "whitelist")
+            .await
+            .unwrap();
+        let tree = engine
+            .object_store
+            .get_tree(&crate::object::TreeId(snap.tree_hash))
+            .await
+            .unwrap();
         assert_eq!(tree.0.len(), 1);
         assert_eq!(tree.0[0].name, "important.log");
     }

@@ -1,22 +1,11 @@
-use std::path::Path;
-use std::process::Command;
-use std::sync::Arc;
+use std::{path::Path, process::Command, sync::Arc};
 
-use crate::error::{NoaError, Result};
-use crate::object::ObjectStore;
-use crate::refs::{RedbRefStore, RefStore};
-use crate::snapshot::{RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore};
-
-fn is_lfs_pointer(content: &[u8]) -> bool {
-    if content.len() > 500 {
-        return false;
-    }
-    let s = match std::str::from_utf8(content) {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
-    s.starts_with("version https://git-lfs.github.com/spec/")
-}
+use crate::{
+    error::{NoaError, Result},
+    object::ObjectStore,
+    refs::{RedbRefStore, RefStore},
+    snapshot::{RedbSnapshotStore, SnapshotStore},
+};
 
 pub fn detect_lfs_available(repo_root: &Path) -> bool {
     Command::new("git")
@@ -58,10 +47,7 @@ pub fn has_lfs_tracking(repo_root: &Path) -> bool {
             .unwrap_or(false)
 }
 
-pub async fn export_noa_to_git(
-    repo_root: &Path,
-    db: Arc<redb::Database>,
-) -> Result<()> {
+pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Result<()> {
     let git_dir = repo_root.join(".git");
     if !git_dir.exists() {
         return Err(NoaError::Remote(".git directory not found".to_string()));
@@ -73,7 +59,7 @@ pub async fn export_noa_to_git(
     let obj_store = crate::object::RedbObjectStore::new(db)?;
 
     let head_ws = std::fs::read_to_string(repo_root.join(".noa").join("HEAD"))
-        .map_err(|e| NoaError::Io(e))?
+        .map_err(NoaError::Io)?
         .trim()
         .to_string();
 
@@ -99,7 +85,9 @@ pub async fn export_noa_to_git(
         if let Some(parent) = file_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let blob = obj_store.get_blob(&crate::object::BlobId(entry.id.clone())).await?;
+        let blob = obj_store
+            .get_blob(&crate::object::BlobId(entry.id.clone()))
+            .await?;
         std::fs::write(&file_path, &blob)?;
     }
 
@@ -142,10 +130,7 @@ pub async fn export_noa_to_git(
     Ok(())
 }
 
-pub async fn clone_git_to_noa(
-    url: &str,
-    target: &Path,
-) -> Result<()> {
+pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
     Command::new("git")
         .args(["clone", url, &target.to_string_lossy()])
         .status()
@@ -154,7 +139,9 @@ pub async fn clone_git_to_noa(
             if s.success() {
                 Ok(())
             } else {
-                Err(NoaError::Remote("git clone exited with non-zero status".to_string()))
+                Err(NoaError::Remote(
+                    "git clone exited with non-zero status".to_string(),
+                ))
             }
         })?;
 
@@ -168,7 +155,9 @@ pub async fn clone_git_to_noa(
     );
 
     {
-        let txn = db.begin_write().map_err(|e| NoaError::Redb(e.to_string()))?;
+        let txn = db
+            .begin_write()
+            .map_err(|e| NoaError::Redb(e.to_string()))?;
         {
             let _ = txn.open_table(redb::TableDefinition::<&[u8], &[u8]>::new("blobs"));
             let _ = txn.open_table(redb::TableDefinition::<&[u8], &[u8]>::new("trees"));
@@ -194,28 +183,34 @@ pub async fn clone_git_to_noa(
 
     super::import::import_git_to_noa(target, Arc::clone(&db)).await?;
 
-    let snap_store = crate::snapshot::RedbSnapshotStore::new(Arc::clone(&db))?;
     let ref_store = crate::refs::RedbRefStore::new(Arc::clone(&db))?;
     let head_ref = ref_store.get("HEAD").await.ok().flatten();
-    let head_snap_id = head_ref.unwrap_or_else(|| crate::snapshot::SnapshotId("noa_empty".to_string()));
+    let head_snap_id =
+        head_ref.unwrap_or_else(|| crate::snapshot::SnapshotId("noa_empty".to_string()));
 
     let ws_mgr = crate::workspace::WorkspaceManager::new(Arc::clone(&db))?;
     let now = chrono::Utc::now().timestamp_micros() as u64;
-    ws_mgr.create(&crate::workspace::Workspace {
-        name: "default".to_string(),
-        head: head_snap_id.clone(),
-        base: head_snap_id.clone(),
-        agent_id: None,
-        created_at: now,
-        updated_at: now,
-    }).await.ok();
+    ws_mgr
+        .create(&crate::workspace::Workspace {
+            name: "default".to_string(),
+            head: head_snap_id.clone(),
+            base: head_snap_id.clone(),
+            agent_id: None,
+            created_at: now,
+            updated_at: now,
+        })
+        .await
+        .ok();
 
     let gitignore_path = target.join(".gitignore");
     if !gitignore_path.exists() {
         std::fs::write(&gitignore_path, "# Added by noa\n.noa/\n")?;
     } else {
         let content = std::fs::read_to_string(&gitignore_path)?;
-        if !content.lines().any(|l| l.trim() == ".noa/" || l.trim() == ".noa") {
+        if !content
+            .lines()
+            .any(|l| l.trim() == ".noa/" || l.trim() == ".noa")
+        {
             std::fs::write(&gitignore_path, format!("{}\n.noa/\n", content.trim_end()))?;
         }
     }

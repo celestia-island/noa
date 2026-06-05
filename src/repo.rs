@@ -1,15 +1,19 @@
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use redb::Database;
 
-use crate::config::RepoConfig;
-use crate::error::{NoaError, Result};
-use crate::log::FileAgentLog;
-use crate::object::RedbObjectStore;
-use crate::refs::RedbRefStore;
-use crate::snapshot::{RedbSnapshotStore, SnapshotId};
-use crate::workspace::WorkspaceManager;
+use crate::{
+    config::RepoConfig,
+    error::{NoaError, Result},
+    log::FileAgentLog,
+    object::RedbObjectStore,
+    refs::RedbRefStore,
+    snapshot::{RedbSnapshotStore, SnapshotId},
+    workspace::WorkspaceManager,
+};
 
 pub const NOA_DIR_NAME: &str = ".noa";
 pub const DB_NAME: &str = "noa.redb";
@@ -33,9 +37,7 @@ impl Repository {
         let noa_dir = path.join(NOA_DIR_NAME);
 
         if noa_dir.exists() {
-            return Err(NoaError::RepoAlreadyExists(
-                noa_dir.display().to_string(),
-            ));
+            return Err(NoaError::RepoAlreadyExists(noa_dir.display().to_string()));
         }
 
         std::fs::create_dir_all(&noa_dir)?;
@@ -73,9 +75,7 @@ impl Repository {
         let noa_dir = path.join(NOA_DIR_NAME);
 
         if !noa_dir.exists() {
-            return Err(NoaError::RepoNotFound(
-                noa_dir.display().to_string(),
-            ));
+            return Err(NoaError::RepoNotFound(noa_dir.display().to_string()));
         }
 
         Self::validate(&noa_dir)?;
@@ -114,9 +114,7 @@ impl Repository {
 
     fn validate(noa_dir: &Path) -> Result<()> {
         if !noa_dir.join(DB_NAME).exists() {
-            return Err(NoaError::InvalidRepo(
-                "missing noa.redb".to_string(),
-            ));
+            return Err(NoaError::InvalidRepo("missing noa.redb".to_string()));
         }
         if !noa_dir.join(AGENT_LOGS_DIR).exists() {
             return Err(NoaError::InvalidRepo(
@@ -124,9 +122,7 @@ impl Repository {
             ));
         }
         if !noa_dir.join("config").exists() {
-            return Err(NoaError::InvalidRepo(
-                "missing config file".to_string(),
-            ));
+            return Err(NoaError::InvalidRepo("missing config file".to_string()));
         }
         Ok(())
     }
@@ -144,21 +140,11 @@ impl Repository {
             .map_err(|e| NoaError::Redb(e.to_string()))?;
 
         {
-            let _ = write_txn.open_table(
-                redb::TableDefinition::<&[u8], &[u8]>::new("blobs"),
-            );
-            let _ = write_txn.open_table(
-                redb::TableDefinition::<&[u8], &[u8]>::new("trees"),
-            );
-            let _ = write_txn.open_table(
-                redb::TableDefinition::<&str, &[u8]>::new("snapshots"),
-            );
-            let _ = write_txn.open_table(
-                redb::TableDefinition::<&str, &[u8]>::new("workspaces"),
-            );
-            let _ = write_txn.open_table(
-                redb::TableDefinition::<&str, &[u8]>::new("refs"),
-            );
+            let _ = write_txn.open_table(redb::TableDefinition::<&[u8], &[u8]>::new("blobs"));
+            let _ = write_txn.open_table(redb::TableDefinition::<&[u8], &[u8]>::new("trees"));
+            let _ = write_txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("snapshots"));
+            let _ = write_txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("workspaces"));
+            let _ = write_txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("refs"));
         }
 
         write_txn
@@ -167,7 +153,6 @@ impl Repository {
     }
 
     fn create_default_workspace(db: &Arc<Database>) -> Result<()> {
-        use redb::ReadableTable;
         let ws = crate::workspace::Workspace {
             name: "default".to_string(),
             head: SnapshotId("noa_empty".to_string()),
@@ -176,14 +161,16 @@ impl Repository {
             created_at: 0,
             updated_at: 0,
         };
-        let data = rmp_serde::to_vec(&ws)
-            .map_err(|e| NoaError::Serialization(e.to_string()))?;
-        let txn = db.begin_write().map_err(|e| NoaError::Redb(e.to_string()))?;
+        let data = rmp_serde::to_vec(&ws).map_err(|e| NoaError::Serialization(e.to_string()))?;
+        let txn = db
+            .begin_write()
+            .map_err(|e| NoaError::Redb(e.to_string()))?;
         {
-            let mut table = txn.open_table(
-                redb::TableDefinition::<&str, &[u8]>::new("workspaces"),
-            ).map_err(|e| NoaError::Redb(e.to_string()))?;
-            table.insert("default", data.as_slice())
+            let mut table = txn
+                .open_table(redb::TableDefinition::<&str, &[u8]>::new("workspaces"))
+                .map_err(|e| NoaError::Redb(e.to_string()))?;
+            table
+                .insert("default", data.as_slice())
                 .map_err(|e| NoaError::Redb(e.to_string()))?;
         }
         txn.commit().map_err(|e| NoaError::Redb(e.to_string()))
@@ -413,14 +400,19 @@ mod tests {
     #[test]
     fn test_init_with_noa_remote_creates_gitattributes() {
         let tmp = TempDir::new().unwrap();
-        let repo = Repository::init_with_noa_remote(tmp.path(), Some("https://noa.example.com/repo")).unwrap();
+        let repo =
+            Repository::init_with_noa_remote(tmp.path(), Some("https://noa.example.com/repo"))
+                .unwrap();
 
         let gitattributes = tmp.path().join(".gitattributes");
         assert!(gitattributes.exists());
         let content = std::fs::read_to_string(&gitattributes).unwrap();
         assert!(content.contains("noa-remote=https://noa.example.com/repo"));
 
-        assert_eq!(repo.config.noa_remote, Some("https://noa.example.com/repo".to_string()));
+        assert_eq!(
+            repo.config.noa_remote,
+            Some("https://noa.example.com/repo".to_string())
+        );
     }
 
     #[test]

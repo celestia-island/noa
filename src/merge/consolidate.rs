@@ -1,7 +1,9 @@
-use crate::error::Result;
-use crate::log::{AgentLog, LogEntry, OpType};
-use crate::object::ObjectStore;
-use crate::snapshot::{SnapshotEngine, SnapshotId, SnapshotStore};
+use crate::{
+    error::Result,
+    log::AgentLog,
+    object::ObjectStore,
+    snapshot::{SnapshotEngine, SnapshotId, SnapshotStore},
+};
 
 pub struct Consolidator<'a, L: AgentLog, S: SnapshotStore, O: ObjectStore> {
     engine: &'a SnapshotEngine<L, S, O>,
@@ -34,13 +36,16 @@ impl<'a, L: AgentLog, S: SnapshotStore, O: ObjectStore> Consolidator<'a, L, S, O
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::log::FileAgentLog;
+    use crate::log::{FileAgentLog, LogEntry, OpType};
     use crate::object::RedbObjectStore;
     use crate::snapshot::RedbSnapshotStore;
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    async fn make_engine() -> (TempDir, SnapshotEngine<FileAgentLog, RedbSnapshotStore, RedbObjectStore>) {
+    async fn make_engine() -> (
+        TempDir,
+        SnapshotEngine<FileAgentLog, RedbSnapshotStore, RedbObjectStore>,
+    ) {
         let tmp = TempDir::new().unwrap();
         let db = Arc::new(
             redb::Database::builder()

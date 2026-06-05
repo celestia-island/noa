@@ -106,7 +106,7 @@ Rationale:
     Agent-002 ─┤
     ...        ├→ single write lock queue ─⊕─ fsync(~1ms)
     Agent-100 ─┘
-    
+
     1000 writes/sec × 1ms commit = 100% lock contention
     Mitigation requires batching → adds latency + crash-loss window
 ```

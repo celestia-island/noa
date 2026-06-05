@@ -1,6 +1,4 @@
-use std::path::Path;
-use std::process::Command;
-use libnoa::snapshot::SnapshotStore;
+use std::{path::Path, process::Command};
 
 fn git_lfs_available() -> bool {
     Command::new("git")
@@ -108,7 +106,10 @@ fn test_bitbucket_url_format_handling() {
     assert_eq!(ssh_remote.url, "git@bitbucket.org:workspace/repo.git");
 
     let https_remote = loaded.get_remote("bitbucket-https").unwrap();
-    assert_eq!(https_remote.url, "https://user@bitbucket.org/workspace/repo.git");
+    assert_eq!(
+        https_remote.url,
+        "https://user@bitbucket.org/workspace/repo.git"
+    );
 }
 
 #[test]
@@ -180,10 +181,9 @@ async fn test_git_clone_and_push_roundtrip() {
         .output()
         .unwrap();
 
-    libnoa::git::clone_git_to_noa(
-        &remote_path.to_string_lossy(),
-        &cloned_path,
-    ).await.unwrap();
+    libnoa::git::clone_git_to_noa(&remote_path.to_string_lossy(), &cloned_path)
+        .await
+        .unwrap();
 
     assert!(cloned_path.join(".git").exists());
     assert!(cloned_path.join(".noa").exists());
@@ -222,10 +222,9 @@ fn test_export_noa_to_git_roundtrip() {
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        libnoa::git::clone_git_to_noa(
-            &remote_path.to_string_lossy(),
-            &work_path,
-        ).await.unwrap();
+        libnoa::git::clone_git_to_noa(&remote_path.to_string_lossy(), &work_path)
+            .await
+            .unwrap();
     });
 
     let new_content = "fn main() { println!(\"updated\"); }";
@@ -242,17 +241,25 @@ fn test_export_noa_to_git_roundtrip() {
         blob_id, ts
     );
     std::fs::write(
-        work_path.join(".noa").join("agent-logs").join("default.log"),
+        work_path
+            .join(".noa")
+            .join("agent-logs")
+            .join("default.log"),
         &log_entry,
-    ).unwrap();
+    )
+    .unwrap();
 
     let rt2 = tokio::runtime::Runtime::new().unwrap();
     rt2.block_on(async {
         let repo = libnoa::repo::Repository::open(&work_path).unwrap();
-        libnoa::cli::snapshot_cmd::run_create(&repo, "update main", "test").await.unwrap();
+        libnoa::cli::snapshot_cmd::run_create(&repo, "update main", "test")
+            .await
+            .unwrap();
         let db = std::sync::Arc::clone(&repo.db);
         drop(repo);
-        libnoa::git::export_noa_to_git(&work_path, db).await.unwrap();
+        libnoa::git::export_noa_to_git(&work_path, db)
+            .await
+            .unwrap();
     });
 
     let push_output = Command::new("git")
@@ -301,7 +308,11 @@ fn test_git_lfs_clone_roundtrip() {
         .output()
         .unwrap();
 
-    std::fs::write(source_path.join(".gitattributes"), "*.bin filter=lfs diff=lfs merge=lfs -text\n").unwrap();
+    std::fs::write(
+        source_path.join(".gitattributes"),
+        "*.bin filter=lfs diff=lfs merge=lfs -text\n",
+    )
+    .unwrap();
     let large_data: Vec<u8> = (0..10000).map(|i| (i % 256) as u8).collect();
     std::fs::write(source_path.join("data.bin"), &large_data).unwrap();
     std::fs::write(source_path.join("readme.txt"), "hello").unwrap();
@@ -333,10 +344,9 @@ fn test_git_lfs_clone_roundtrip() {
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        libnoa::git::clone_git_to_noa(
-            &remote_path.to_string_lossy(),
-            &cloned_path,
-        ).await.unwrap();
+        libnoa::git::clone_git_to_noa(&remote_path.to_string_lossy(), &cloned_path)
+            .await
+            .unwrap();
     });
 
     assert!(cloned_path.join("data.bin").exists());
@@ -427,9 +437,7 @@ fn test_svn_export_and_import() {
         libnoa::git::import::import_git_to_noa(&noa_path, {
             let db_path = noa_path.join(".noa").join("noa.redb");
             std::fs::create_dir_all(noa_path.join(".noa").join("agent-logs")).unwrap();
-            let db = std::sync::Arc::new(
-                redb::Database::builder().create(&db_path).unwrap()
-            );
+            let db = std::sync::Arc::new(redb::Database::builder().create(&db_path).unwrap());
             {
                 let txn = db.begin_write().unwrap();
                 {
@@ -442,7 +450,9 @@ fn test_svn_export_and_import() {
                 txn.commit().unwrap();
             }
             db
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
     });
 
     assert!(noa_path.join(".noa/noa.redb").exists());
