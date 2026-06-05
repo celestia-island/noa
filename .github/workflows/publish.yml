@@ -34,8 +34,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo login ${{ secrets.CRATES_IO_API_TOKEN }}
-      - run: cargo publish -p libnoa --allow-dirty -v
+      - name: Publish libnoa to crates.io
+        env:
+          CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
+        run: |
+          if [ -z "$CRATES_IO_API_TOKEN" ]; then
+            echo "::error::CRATES_IO_API_TOKEN secret is not configured"
+            echo "Please set it in: Settings > Secrets and variables > Actions > Repository secrets"
+            exit 1
+          fi
+          cargo login "$CRATES_IO_API_TOKEN"
+          cargo publish -p libnoa --allow-dirty -v
 
   build-release:
     name: Build ${{ matrix.target }}
@@ -48,15 +57,27 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             artifact: noa-linux-x86_64
+            ext: tar.gz
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             artifact: noa-linux-aarch64
+            ext: tar.gz
           - target: x86_64-apple-darwin
             os: macos-latest
             artifact: noa-macos-x86_64
+            ext: tar.gz
           - target: aarch64-apple-darwin
             os: macos-latest
             artifact: noa-macos-aarch64
+            ext: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact: noa-windows-x86_64
+            ext: zip
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            artifact: noa-windows-aarch64
+            ext: zip
 
     steps:
       - uses: actions/checkout@v4
@@ -79,31 +100,52 @@ jobs:
           linker = "aarch64-linux-gnu-gcc"
           EOF
 
+      - name: Install NASM (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/setup-nasm@v1
+
+      - name: Set up MSVC ARM64 target (Windows ARM64)
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_arm64
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Package binaries
+      - name: Package binaries (Unix)
+        if: runner.os != 'Windows'
         run: |
           mkdir -p dist
-          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
-            cp target/${{ matrix.target }}/release/noa dist/
-            cp target/${{ matrix.target }}/release/noa-server dist/
-          else
-            cp target/${{ matrix.target }}/release/noa dist/
-            cp target/${{ matrix.target }}/release/noa-server dist/ 2>/dev/null || true
-          fi
+          cp target/${{ matrix.target }}/release/noa dist/
+          cp target/${{ matrix.target }}/release/noa-server dist/ 2>/dev/null || true
           cd dist
           tar czf ${{ matrix.artifact }}.tar.gz noa noa-server
+
+      - name: Package binaries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          Copy-Item "target/${{ matrix.target }}/release/noa.exe" "dist/"
+          if (Test-Path "target/${{ matrix.target }}/release/noa-server.exe") {
+            Copy-Item "target/${{ matrix.target }}/release/noa-server.exe" "dist/"
+          }
+          $files = @("dist/noa.exe")
+          if (Test-Path "dist/noa-server.exe") {
+            $files += "dist/noa-server.exe"
+          }
+          Compress-Archive -Path $files -DestinationPath "dist/${{ matrix.artifact }}.zip"
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: dist/${{ matrix.artifact }}.tar.gz
+          path: dist/${{ matrix.artifact }}.${{ matrix.ext }}
 
   github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: build-release
+    needs: [build-release, publish-crates]
     permissions:
       contents: write
 
@@ -117,11 +159,13 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p release-assets
-          find artifacts -name '*.tar.gz' -exec cp {} release-assets/ \;
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} release-assets/ \;
           ls -la release-assets/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: release-assets/*.tar.gz
+          files: |
+            release-assets/*.tar.gz
+            release-assets/*.zip
