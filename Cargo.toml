@@ -11,7 +11,7 @@ repository = "https://github.com/celestia-island/noa"
 documentation = "https://docs.rs/libnoa"
 readme = "README.md"
 keywords = ["vcs", "version-control", "ai", "agent", "git"]
-categories = ["development-tools", "command-line-utilities", "version-control"]
+categories = ["artificial-intelligence", "development-tools", "command-line-utilities", "filesystem", "data-structures"]
 
 [[bin]]
 name = "noa"
