@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -63,6 +62,17 @@ pub async fn import_git_to_noa(
     ref_store.cas("HEAD", None, &snapshot.id).await?;
 
     Ok(())
+}
+
+pub fn is_lfs_pointer(content: &[u8]) -> bool {
+    if content.len() > 500 {
+        return false;
+    }
+    let s = match std::str::from_utf8(content) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    s.starts_with("version https://git-lfs.github.com/spec/")
 }
 
 fn import_tree_recursive(

@@ -1,9 +1,11 @@
-mod export;
+pub mod export;
 pub mod import;
 mod translate;
 
 pub use export::{clone_git_to_noa, export_noa_to_git};
+pub use export::{detect_lfs_available, has_lfs_tracking, lfs_install, lfs_pull, lfs_push_all};
 pub use import::import_git_to_noa;
+pub use import::is_lfs_pointer;
 pub use translate::GitTranslator;
 
 use async_trait::async_trait;

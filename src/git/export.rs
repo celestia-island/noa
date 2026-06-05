@@ -7,6 +7,57 @@ use crate::object::ObjectStore;
 use crate::refs::{RedbRefStore, RefStore};
 use crate::snapshot::{RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore};
 
+fn is_lfs_pointer(content: &[u8]) -> bool {
+    if content.len() > 500 {
+        return false;
+    }
+    let s = match std::str::from_utf8(content) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    s.starts_with("version https://git-lfs.github.com/spec/")
+}
+
+pub fn detect_lfs_available(repo_root: &Path) -> bool {
+    Command::new("git")
+        .args(["lfs", "version"])
+        .current_dir(repo_root)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+pub fn lfs_install(repo_root: &Path) {
+    let _ = Command::new("git")
+        .args(["lfs", "install"])
+        .current_dir(repo_root)
+        .status();
+}
+
+pub fn lfs_pull(repo_root: &Path) {
+    let _ = Command::new("git")
+        .args(["lfs", "pull"])
+        .current_dir(repo_root)
+        .status();
+}
+
+pub fn lfs_push_all(repo_root: &Path, remote_url: &str) {
+    let _ = Command::new("git")
+        .args(["lfs", "push", "--all", remote_url])
+        .current_dir(repo_root)
+        .status();
+}
+
+pub fn has_lfs_tracking(repo_root: &Path) -> bool {
+    repo_root.join(".gitattributes").exists()
+        || Command::new("git")
+            .args(["lfs", "track"])
+            .current_dir(repo_root)
+            .output()
+            .map(|o| !o.stdout.is_empty())
+            .unwrap_or(false)
+}
+
 pub async fn export_noa_to_git(
     repo_root: &Path,
     db: Arc<redb::Database>,
@@ -50,6 +101,13 @@ pub async fn export_noa_to_git(
         }
         let blob = obj_store.get_blob(&crate::object::BlobId(entry.id.clone())).await?;
         std::fs::write(&file_path, &blob)?;
+    }
+
+    if has_lfs_tracking(repo_root) && detect_lfs_available(repo_root) {
+        let _ = Command::new("git")
+            .args(["lfs", "install"])
+            .current_dir(repo_root)
+            .status();
     }
 
     let status_output = Command::new("git")
@@ -159,6 +217,13 @@ pub async fn clone_git_to_noa(
         let content = std::fs::read_to_string(&gitignore_path)?;
         if !content.lines().any(|l| l.trim() == ".noa/" || l.trim() == ".noa") {
             std::fs::write(&gitignore_path, format!("{}\n.noa/\n", content.trim_end()))?;
+        }
+    }
+
+    if detect_lfs_available(target) {
+        lfs_install(target);
+        if has_lfs_tracking(target) {
+            lfs_pull(target);
         }
     }
 

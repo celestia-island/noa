@@ -54,6 +54,8 @@ enum Commands {
         url: String,
         #[arg(short, long, default_value = ".")]
         path: String,
+        #[arg(long)]
+        svn: bool,
     },
 }
 
@@ -187,8 +189,12 @@ async fn main() -> anyhow::Result<()> {
         Commands::Fetch { remote } => {
             cli::pushpull::run_fetch(&remote).await?;
         }
-        Commands::Clone { url, path } => {
-            cli::pushpull::run_clone(&url, &path).await?;
+        Commands::Clone { url, path, svn } => {
+            if svn {
+                cli::pushpull::run_clone_svn(&url, &path).await?;
+            } else {
+                cli::pushpull::run_clone(&url, &path).await?;
+            }
         }
     }
 
