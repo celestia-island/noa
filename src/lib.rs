@@ -8,5 +8,6 @@ pub mod object;
 pub mod refs;
 pub mod remote;
 pub mod repo;
+pub mod server;
 pub mod snapshot;
 pub mod workspace;
