@@ -1,34 +1,61 @@
 [package]
-name = "noa"
+name = "libnoa"
 version = "0.1.0"
 edition = "2021"
 
-publish = true
 authors = ["langyo <langyo.china@gmail.com>"]
-description = "Next document generator for Rust crates"
+description = "AI-native distributed version control system — agent workspace isolation, snapshots, and multi-remote sync"
 license = "Apache-2.0"
 repository = "https://github.com/celestia-island/noa"
+documentation = "https://github.com/celestia-island/noa"
+keywords = ["vcs", "version-control", "ai", "agent", "git"]
+categories = ["development-tools", "command-line-utilities", "version-control"]
 
 [[bin]]
 name = "noa"
 path = "bin/main.rs"
 
+[[bin]]
+name = "noa-server"
+path = "bin/server.rs"
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-anyhow = "^1"
-async-trait = "^0.1"
-derive_more = { version = "^1", features = ["full"] }
+redb = "^2"
 
 serde = { version = "^1", features = ["derive"] }
 serde_json = "^1"
-strum = { version = "^0.26", features = ["derive"] }
-ron = "^0.8"
-yuuka = "^0.5"
+rmp-serde = "^1"
+toml = "^0.8"
 
-clap = "^4"
+clap = { version = "^4", features = ["derive"] }
 
-syn = { version = "^2", features = ["full"] }
-proc-macro2 = { version = "^1", features = ["span-locations"] }
-quote = "^1"
+sha2 = "^0.10"
+hex = "^0.4"
+base64 = "^0.22"
+
+tokio = { version = "^1", features = ["full"] }
+async-trait = "^0.1"
+
+gix = "^0.84"
+
+ignore = "^0.4"
+
+axum = "^0.8"
+tower = "^0.5"
+
+aws-sdk-s3 = "^1"
+aws-config = "^1"
+
+anyhow = "^1"
+thiserror = "^2"
+chrono = "^0.4"
+uuid = { version = "^1", features = ["v7"] }
+tracing = "^0.1"
+tracing-subscriber = "^0.3"
+
+[dev-dependencies]
+tempfile = "^3"
+sha2 = "^0.10"
