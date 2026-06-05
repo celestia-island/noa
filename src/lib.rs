@@ -1,10 +1,12 @@
 pub mod cli;
 pub mod config;
 pub mod error;
+pub mod git;
 pub mod log;
 pub mod merge;
 pub mod object;
 pub mod refs;
+pub mod remote;
 pub mod repo;
 pub mod snapshot;
 pub mod workspace;
