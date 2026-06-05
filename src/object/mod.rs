@@ -4,8 +4,10 @@ use serde::{Deserialize, Serialize};
 use crate::error::Result;
 
 mod redb_impl;
+pub mod minio_impl;
 
 pub use redb_impl::RedbObjectStore;
+pub use minio_impl::MinioObjectStore;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BlobId(pub String);
