@@ -1,12 +1,25 @@
 use std::sync::Arc;
 
 use redb::Database;
+use sha2::{Digest, Sha256};
 
-use super::{sha256_hex, BlobId, ObjectStore, TreeEntries, TreeId};
+use super::{BlobId, ObjectStore, TreeEntries, TreeId};
 use crate::error::{NoaError, Result};
 
 const BLOBS: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new("blobs");
 const TREES: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new("trees");
+
+fn sha256_hex(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hex::encode(hasher.finalize())
+}
+
+macro_rules! redb_err {
+    ($result:expr) => {
+        $result.map_err(|e| NoaError::Redb(e.to_string()))
+    };
+}
 
 #[derive(Clone)]
 pub struct RedbObjectStore {
@@ -21,98 +34,78 @@ impl RedbObjectStore {
     }
 
     fn ensure_tables(&self) -> Result<()> {
-        let txn = self.db.begin_write()?;
-        txn.open_table(BLOBS)?;
-        txn.open_table(TREES)?;
-        txn.commit()?;
-        Ok(())
+        let txn = redb_err!(self.db.begin_write())?;
+        {
+            let _ = redb_err!(txn.open_table(BLOBS));
+            let _ = redb_err!(txn.open_table(TREES));
+        }
+        redb_err!(txn.commit())
     }
 }
 
 #[async_trait::async_trait]
 impl ObjectStore for RedbObjectStore {
     async fn put_blob(&self, content: &[u8]) -> Result<BlobId> {
-        let db = self.db.clone();
-        let content = content.to_vec();
-        tokio::task::spawn_blocking(move || {
-            let hash = sha256_hex(&content);
-            let id = BlobId(hash);
-            let txn = db.begin_write()?;
-            {
-                let mut table = txn.open_table(BLOBS)?;
-                table.insert(id.as_bytes(), content.as_slice())?;
-            }
-            txn.commit()?;
-            Ok(id)
-        })
-        .await?
+        let hash = sha256_hex(content);
+        let id = BlobId(hash);
+
+        let txn = redb_err!(self.db.begin_write())?;
+        {
+            let mut table = redb_err!(txn.open_table(BLOBS))?;
+            redb_err!(table.insert(id.as_bytes(), content))?;
+        }
+        redb_err!(txn.commit())?;
+
+        Ok(id)
     }
 
     async fn get_blob(&self, id: &BlobId) -> Result<Vec<u8>> {
-        let db = self.db.clone();
-        let id = id.clone();
-        tokio::task::spawn_blocking(move || {
-            let txn = db.begin_read()?;
-            let table = txn.open_table(BLOBS)?;
-            match table.get(id.as_bytes())? {
-                Some(guard) => Ok(guard.value().to_vec()),
-                None => Err(NoaError::ObjectNotFound { id: id.0 }.into()),
-            }
-        })
-        .await?
+        let txn = redb_err!(self.db.begin_read())?;
+        let table = redb_err!(txn.open_table(BLOBS))?;
+
+        match redb_err!(table.get(id.as_bytes()))? {
+            Some(guard) => Ok(guard.value().to_vec()),
+            None => Err(NoaError::ObjectNotFound(id.to_string())),
+        }
     }
 
     async fn has_blob(&self, id: &BlobId) -> Result<bool> {
-        let db = self.db.clone();
-        let id = id.clone();
-        tokio::task::spawn_blocking(move || {
-            let txn = db.begin_read()?;
-            let table = txn.open_table(BLOBS)?;
-            Ok(table.get(id.as_bytes())?.is_some())
-        })
-        .await?
+        let txn = redb_err!(self.db.begin_read())?;
+        let table = redb_err!(txn.open_table(BLOBS))?;
+        Ok(redb_err!(table.get(id.as_bytes()))?.is_some())
     }
 
     async fn put_tree(&self, entries: &TreeEntries) -> Result<TreeId> {
-        let db = self.db.clone();
-        let data = rmp_serde::to_vec(entries)?;
-        tokio::task::spawn_blocking(move || {
-            let hash = sha256_hex(&data);
-            let id = TreeId(hash);
-            let txn = db.begin_write()?;
-            {
-                let mut table = txn.open_table(TREES)?;
-                table.insert(id.as_bytes(), data.as_slice())?;
-            }
-            txn.commit()?;
-            Ok(id)
-        })
-        .await?
+        let data = rmp_serde::to_vec(entries)
+            .map_err(|e| NoaError::Serialization(e.to_string()))?;
+        let hash = sha256_hex(&data);
+        let id = TreeId(hash);
+
+        let txn = redb_err!(self.db.begin_write())?;
+        {
+            let mut table = redb_err!(txn.open_table(TREES))?;
+            redb_err!(table.insert(id.as_bytes(), data.as_slice()))?;
+        }
+        redb_err!(txn.commit())?;
+
+        Ok(id)
     }
 
     async fn get_tree(&self, id: &TreeId) -> Result<TreeEntries> {
-        let db = self.db.clone();
-        let id = id.clone();
-        tokio::task::spawn_blocking(move || {
-            let txn = db.begin_read()?;
-            let table = txn.open_table(TREES)?;
-            match table.get(id.as_bytes())? {
-                Some(guard) => Ok(rmp_serde::from_slice::<TreeEntries>(guard.value())?),
-                None => Err(NoaError::ObjectNotFound { id: id.0 }.into()),
-            }
-        })
-        .await?
+        let txn = redb_err!(self.db.begin_read())?;
+        let table = redb_err!(txn.open_table(TREES))?;
+
+        match redb_err!(table.get(id.as_bytes()))? {
+            Some(guard) => rmp_serde::from_slice(guard.value())
+                .map_err(|e| NoaError::Serialization(e.to_string())),
+            None => Err(NoaError::ObjectNotFound(id.to_string())),
+        }
     }
 
     async fn has_tree(&self, id: &TreeId) -> Result<bool> {
-        let db = self.db.clone();
-        let id = id.clone();
-        tokio::task::spawn_blocking(move || {
-            let txn = db.begin_read()?;
-            let table = txn.open_table(TREES)?;
-            Ok(table.get(id.as_bytes())?.is_some())
-        })
-        .await?
+        let txn = redb_err!(self.db.begin_read())?;
+        let table = redb_err!(txn.open_table(TREES))?;
+        Ok(redb_err!(table.get(id.as_bytes()))?.is_some())
     }
 }
 
@@ -153,10 +146,7 @@ mod tests {
         let (_tmp, store) = make_store();
         let id = store.put_blob(b"data").await.unwrap();
         assert!(store.has_blob(&id).await.unwrap());
-        assert!(!store
-            .has_blob(&BlobId("nonexistent".to_string()))
-            .await
-            .unwrap());
+        assert!(!store.has_blob(&BlobId("nonexistent".to_string())).await.unwrap());
     }
 
     #[tokio::test]
@@ -205,10 +195,7 @@ mod tests {
         let entries = TreeEntries::new();
         let id = store.put_tree(&entries).await.unwrap();
         assert!(store.has_tree(&id).await.unwrap());
-        assert!(!store
-            .has_tree(&TreeId("nonexistent".to_string()))
-            .await
-            .unwrap());
+        assert!(!store.has_tree(&TreeId("nonexistent".to_string())).await.unwrap());
     }
 
     #[tokio::test]

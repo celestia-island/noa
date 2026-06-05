@@ -39,16 +39,7 @@ pub enum NoaError {
     Io(#[from] std::io::Error),
 
     #[error("database error: {0}")]
-    Redb(#[from] redb::DatabaseError),
-
-    #[error("database error: {0}")]
-    RedbTransaction(#[from] redb::TransactionError),
-
-    #[error("database error: {0}")]
-    RedbCommit(#[from] redb::CommitError),
-
-    #[error("database error: {0}")]
-    RedbStorage(#[from] redb::StorageError),
+    Redb(String),
 
     #[error("serialization error: {0}")]
     Serialization(String),

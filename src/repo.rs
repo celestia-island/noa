@@ -113,11 +113,13 @@ impl Repository {
         let db_path = noa_dir.join(DB_NAME);
         Database::builder()
             .create(&db_path)
-            .map_err(NoaError::Redb)
+            .map_err(|e| NoaError::Redb(e.to_string()))
     }
 
     fn init_tables(db: &Database) -> Result<()> {
-        let write_txn = db.begin_write().map_err(NoaError::RedbTransaction)?;
+        let write_txn = db
+            .begin_write()
+            .map_err(|e| NoaError::Redb(e.to_string()))?;
 
         {
             let _ = write_txn.open_table(
@@ -137,7 +139,9 @@ impl Repository {
             );
         }
 
-        write_txn.commit().map_err(NoaError::RedbCommit)
+        write_txn
+            .commit()
+            .map_err(|e| NoaError::Redb(e.to_string()))
     }
 
     pub fn read_head(&self) -> Result<String> {
