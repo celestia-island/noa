@@ -27,6 +27,16 @@
   </a>
 </div>
 
+<div align="center">
+
+**[English](../../README.md)** &bull; **[简体中文](../zh-hans/README.md)** &bull;
+**[繁體中文](../zh-hant/README.md)** &bull; **[日本語](../ja/README.md)** &bull;
+**[한국어](../ko/README.md)** &bull; **[Français](../fr/README.md)** &bull;
+**[Español](../es/README.md)** &bull; **[Русский](../ru/README.md)** &bull;
+**[العربية](../ar/README.md)**
+
+</div>
+
 noa es un sistema de control de versiones distribuido nativo para IA. Coexiste con `.git` — git gestiona el código fuente, noa gestiona los datos de iteración de agentes de IA — con registros JSONL sin bloqueo por agente, historial basado en instantáneas y compatibilidad total con el protocolo git.
 
 ## Tabla de Contenidos

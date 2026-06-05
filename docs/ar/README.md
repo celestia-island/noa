@@ -27,6 +27,16 @@
   </a>
 </div>
 
+<div align="center">
+
+**[English](../../README.md)** &bull; **[简体中文](../zh-hans/README.md)** &bull;
+**[繁體中文](../zh-hant/README.md)** &bull; **[日本語](../ja/README.md)** &bull;
+**[한국어](../ko/README.md)** &bull; **[Français](../fr/README.md)** &bull;
+**[Español](../es/README.md)** &bull; **[Русский](../ru/README.md)** &bull;
+**[العربية](../ar/README.md)**
+
+</div>
+
 noa هو نظام تحكم بالإصدارات موزّع ومبني على الذكاء الاصطناعي. يتعايش مع `.git` — حيث يدير git الشيفرة المصدرية، بينما يدير noa بيانات تكرار وكلاء الذكاء الاصطناعي — مع سجلات JSONL خالية من الأقفال لكل وكيل، وتاريخ قائم على اللقطات (snapshots)، وتوافق كامل مع بروتوكول git.
 
 ## جدول المحتويات

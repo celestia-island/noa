@@ -40,12 +40,36 @@ graph TD
 
 每个工作区恰好一个日志文件。文件名匹配工作区名称。
 
-## 关键属性
+## 写入路径
 
+```rust
+async fn append(&self, workspace: &str, entry: &LogEntry) -> Result<()> {
+    let file = self.get_or_create_file(workspace)?;
+    let line = serde_json::to_string(entry)? + "\n";
+    file.write_all(line.as_bytes())?;
+    file.sync_data()?;  // fdatasync 确保持久性
+    Ok(())
+}
+```
+
+关键属性：
 - **O_APPEND**：内核保证原子追加
 - **每次写入 fsync**：崩溃后确保持久性
 - **每工作区一个 fd**：内存缓存以提高性能
-- **零锁竞争**：每工作区一个文件
+
+## 读取路径
+
+```rust
+async fn read_all(&self, workspace: &str) -> Result<Vec<LogEntry>> {
+    let path = self.log_dir.join(format!("{}.log", workspace));
+    let content = tokio::fs::read_to_string(&path).await?;
+    content.lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| serde_json::from_str(l))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| NoaError::Serialization(e.to_string()))
+}
+```
 
 ## 快照计算
 
@@ -116,3 +140,13 @@ flowchart TD
 | 吞吐量（1 个工作区） | ~20,000 次写入/秒 |
 | 吞吐量（100 个工作区） | ~10,000+ 次写入/秒 |
 | 每 100 万条目文件大小 | ~200MB（平均 200 字节/条目） |
+
+## 崩溃恢复
+
+启动时扫描每个日志文件：
+1. 读取所有完整行（以 `\n` 结尾）
+2. 丢弃最后不完整的行（写入中断）
+3. 验证 `seq` 单调递增
+4. 从有效条目重建内存状态
+
+这确保不会使用部分或损坏的条目进行快照计算。

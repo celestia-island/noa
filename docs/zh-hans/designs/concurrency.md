@@ -34,6 +34,13 @@ graph LR
 - **有序性**：写入按文件序列化（按工作区）
 - **无锁**：不同文件之间无需 fcntl/flock
 
+```rust
+pub trait AgentLog: Send + Sync {
+    async fn append(&self, workspace: &str, entry: &LogEntry) -> Result<()>;
+    async fn read_all(&self, workspace: &str) -> Result<Vec<LogEntry>>;
+}
+```
+
 ### 第二层：快照存储（读取路径）
 
 快照存储在 redb 中，使用 MVCC（多版本并发控制）：
@@ -94,6 +101,53 @@ graph TD
 代理数：1000+
 吞吐量：S3 PUT 速率限制（~3,500/秒每前缀）
 瓶颈：网络 + S3 速率限制
+
+## 与其他方案的对比
+
+### Git + 文件锁
+
+```mermaid
+graph LR
+    A["问题：建议性锁，无强制执行"]
+    B["争用：高（每次推送单 ref 更新）"]
+    C["解决：需要手动合并"]
+```
+
+### SVN + svn:needs-lock
+
+```mermaid
+graph LR
+    A["问题：文件级锁阻塞所有其他写入者"]
+    B["争用：非常高（序列化提交）"]
+    C["解决：锁等待 → 超时 → 失败"]
+```
+
+### 操作转换（OT）
+
+```mermaid
+graph LR
+    A["问题：算法复杂，难以正确实现"]
+    B["争用：低（内存中转换）"]
+    C["解决：自动，但需要集中式服务器"]
+```
+
+### CRDT（无冲突复制数据类型）
+
+```mermaid
+graph LR
+    A["问题：元数据开销大，最终一致性"]
+    B["争用：无"]
+    C["解决：自动，但可能产生意外结果"]
+```
+
+### noa 的方法
+
+```mermaid
+graph LR
+    A["问题：代理写入是短暂的且可重新生成"]
+    B["方法：追加日志 + 异步合并"]
+    C["争用：写入无争用，快照序列化"]
+    D["解决：默认 upstream-wins + 代理重新应用"]
 ```
 
 ## fsync 策略

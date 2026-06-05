@@ -27,6 +27,16 @@
   </a>
 </div>
 
+<div align="center">
+
+**[English](../../README.md)** &bull; **[简体中文](../zh-hans/README.md)** &bull;
+**[繁體中文](../zh-hant/README.md)** &bull; **[日本語](../ja/README.md)** &bull;
+**[한국어](../ko/README.md)** &bull; **[Français](../fr/README.md)** &bull;
+**[Español](../es/README.md)** &bull; **[Русский](../ru/README.md)** &bull;
+**[العربية](../ar/README.md)**
+
+</div>
+
 noa는 AI 네이티브 분산 버전 관리 시스템입니다. `.git`과 공존하며 — git은 소스 코드를 관리하고, noa는 AI 에이전트 반복 데이터를 관리합니다 — 에이전트별 무잠금 JSONL 로그, 스냅샷 기반 히스토리, 그리고 완전한 git 프로토콜 호환성을 제공합니다.
 
 ## 목차

@@ -64,6 +64,16 @@ flowchart TD
     D --> D1["CAS 更新工作区 head 到新快照 ID"]
 ```
 
+## 快照存储
+
+快照存储在按 ID 索引的 redb 表中：
+
+```
+表：snapshots
+  键：  "noa_abc123" (SnapshotId as &str)
+  值：  msgpack(Snapshot) as &[u8]
+```
+
 ## 差异算法
 
 `diff_snapshots(base, other)` 产生文件级别的变更列表：

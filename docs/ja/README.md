@@ -27,6 +27,16 @@
   </a>
 </div>
 
+<div align="center">
+
+**[English](../../README.md)** &bull; **[简体中文](../zh-hans/README.md)** &bull;
+**[繁體中文](../zh-hant/README.md)** &bull; **[日本語](../ja/README.md)** &bull;
+**[한국어](../ko/README.md)** &bull; **[Français](../fr/README.md)** &bull;
+**[Español](../es/README.md)** &bull; **[Русский](../ru/README.md)** &bull;
+**[العربية](../ar/README.md)**
+
+</div>
+
 noaはAIネイティブな分散バージョン管理システムです。`.git`と共存し、gitはソースコードを管理し、noaはAIエージェントの反復データを管理します。エージェントごとのゼロロックJSONLログ、スナップショットベースの履歴、完全なGitプロトコル互換性を備えています。
 
 ## 目次

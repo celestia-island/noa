@@ -27,6 +27,16 @@
   </a>
 </div>
 
+<div align="center">
+
+**[English](../../README.md)** &bull; **[简体中文](../zh-hans/README.md)** &bull;
+**[繁體中文](../zh-hant/README.md)** &bull; **[日本語](../ja/README.md)** &bull;
+**[한국어](../ko/README.md)** &bull; **[Français](../fr/README.md)** &bull;
+**[Español](../es/README.md)** &bull; **[Русский](../ru/README.md)** &bull;
+**[العربية](../ar/README.md)**
+
+</div>
+
 noa 是一个 AI 原生分布式版本控制系统。它与 `.git` 共存 —— git 管理源代码，noa 管理 AI 代理迭代数据 —— 具有每代理零锁 JSONL 日志、基于快照的历史记录以及完整的 Git 协议兼容性。
 
 ## 目录

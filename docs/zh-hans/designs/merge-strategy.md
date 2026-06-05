@@ -26,6 +26,37 @@ graph TD
    - 仅在 B 中更改 → 应用 B
    - 对同一路径的不同更改 → **冲突**
 
+### 实现
+
+```rust
+pub fn three_way_merge(
+    base_tree: &Vec<TreeEntry>,
+    ours_tree: &Vec<TreeEntry>,
+    theirs_tree: &Vec<TreeEntry>,
+) -> (Vec<TreeEntry>, Vec<Conflict>)
+```
+
+Tree 条目被规范化为扁平的路径→哈希映射以进行比较：
+
+```mermaid
+graph TD
+    subgraph 基础
+        B1["base：{src/main.rs: hash1, src/lib.rs: hash2}"]
+    end
+    subgraph 我们
+        O1["ours：{src/main.rs: hash3, src/lib.rs: hash2}<br/>(修改了 main.rs)"]
+    end
+    subgraph 他们
+        T1["theirs：{src/main.rs: hash1, src/lib.rs: hash4}<br/>(修改了 lib.rs)"]
+    end
+    subgraph 结果
+        R1["结果：{src/main.rs: hash3, src/lib.rs: hash4}<br/>(两者都应用，无冲突)"]
+    end
+    B1 --> R1
+    O1 --> R1
+    T1 --> R1
+```
+
 ### 冲突检测
 
 ```rust
@@ -70,6 +101,23 @@ ConflictResolution::OursWins => ours_hash,
 ConflictResolution::Fail => return Err(MergeError::Conflict(conflicts)),
 ```
 
+## 工作区合并流程
+
+```bash
+noa workspace switch default          # 设置 ours = default
+noa workspace merge feature-1         # theirs = feature-1
+```
+
+内部步骤：
+1. 加载 ours 快照（default 的 head）
+2. 加载 theirs 快照（feature-1 的 head）
+3. 查找合并基础（DAG 中最近的共同祖先）
+4. 如果没有共同祖先，使用 `noa_empty` 作为基础
+5. 执行三路合并
+6. 应用冲突解决策略
+7. 创建合并快照，parents = [ours, theirs]
+8. 将 default 的 head 更新为合并快照
+
 ## 多父级合并
 
 noa 快照支持无限父节点，支持章鱼式合并：
@@ -82,7 +130,18 @@ graph TD
     WSN["ws-N"] --> M
 ```
 
-对于 N 路合并，算法执行成对合并。
+对于 N 路合并，算法执行成对合并：
+
+```mermaid
+flowchart LR
+    W1["ws-1"] --> I1["中间-1"]
+    W2["ws-2"] --> I1
+    I1 --> I2["中间-2"]
+    W3["ws-3"] --> I2
+    I2 --> DOT["..."]
+    DOT --> FINAL["最终结果"]
+    WN["ws-N"] --> FINAL
+```
 
 ## 与 Git 合并的对比
 

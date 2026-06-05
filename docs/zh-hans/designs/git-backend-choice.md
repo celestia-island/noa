@@ -55,6 +55,23 @@ gix (gitoxide) 是一个成熟的纯 Rust Git 实现，功能覆盖足以替换 
 
 所有 6 个当前 API 调用都有直接的 gix 等效项。
 
+## gix 对 noa 的功能覆盖
+
+| 所需功能 | git2 支持 | gix 支持 | 备注 |
+|----------|---------|---------|------|
+| 打开仓库 | ✅ | ✅ | `gix::open()` 或 `gix::ThreadSafeRepository::open()` |
+| 读取 HEAD ref | ✅ | ✅ | `gix.head_ref()` / `gix.head()` |
+| 通过 OID 查找 commit | ✅ | ✅ | `gix.find_object(id)?.try_into_commit()` |
+| 从 commit 读取 tree | ✅ | ✅ | `gix.find_object(commit.tree())?.try_into_tree()` |
+| 遍历 tree 条目 | ✅ | ✅ | `tree.iter()` 返回 `TreeRefIter` |
+| 读取 blob 内容 | ✅ | ✅ | `block.data` 在 `BlobRef` 上 |
+| 从远程拉取 | ✅ | ✅ | `gix::remote::connect()` |
+| 推送到远程 | ✅ | ✅ | `gix::remote::connect()` |
+| 克隆 | ✅ | ✅ | `gix::prepare_clone()` |
+| Pack 文件生成 | ✅ | ✅ | `gix-pack` crate |
+| SHA-256 支持 | ❌ | ✅（实验性） | 与 SHA-256 快照相关 |
+| 异步支持 | ❌ | ✅（可选） | 适合 tokio 集成 |
+
 ## 可行性
 
 所有当前和计划的 git 操作都有 gix 等效项。API 映射直接：

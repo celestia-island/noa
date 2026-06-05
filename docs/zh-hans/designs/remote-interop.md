@@ -77,6 +77,47 @@ graph LR
     ND --> GB2
 ```
 
+### Ref 映射
+
+```mermaid
+graph LR
+    subgraph "noa Refs"
+        NH["HEAD → default"]
+        ND2["default → noa_abc"]
+        NF["feature-1 → noa_def"]
+    end
+    subgraph "Git Refs"
+        GH["HEAD → refs/heads/main"]
+        GMAIN["refs/heads/main → git-sha1"]
+        GF1["refs/heads/feature-1 → git-sha2"]
+    end
+    NH -.-> GH
+    ND2 -.-> GMAIN
+    NF -.-> GF1
+```
+
+## 推送流程
+
+```mermaid
+flowchart TD
+    A["1. noa push --remote origin"] --> B["2. 加载从工作区 head 可到达的所有快照"]
+    B --> C["3. 将每个快照转换为 Git commit"]
+    C --> D["4. 将每个 blob/tree 转换为 Git object"]
+    D --> E["5. 通过 gix (gitoxide) 推送到 origin URL"]
+    E --> F["6. 更新远程 refs"]
+```
+
+## 拉取流程
+
+```mermaid
+flowchart TD
+    A["1. noa pull --remote origin"] --> B["2. 通过 gix 获取 refs"]
+    B --> C["3. 对每个新的 Git commit："]
+    C --> D["a. 转换为 noa 快照<br/>b. 将 blobs/trees 转换为 noa 对象<br/>c. 存储在本地 redb 中"]
+    D --> E["4. 创建合并快照（本地 head + 远程 head）"]
+    E --> F["5. 更新工作区 head"]
+```
+
 ## MinIO/S3 后端
 
 对于无需 Git 基础设施的部署：
@@ -101,3 +142,33 @@ flowchart TD
 | Git HTTPS | 从 `~/.git-credentials` 获取凭证或提示输入 |
 | Git SSH | SSH agent 或密钥文件 |
 | MinIO/S3 | 访问密钥 + 秘密密钥（环境变量或配置） |
+
+## 远程配置
+
+存储在 `.noa/config`（TOML）中：
+
+```toml
+[[remotes]]
+name = "origin"
+url = "https://github.com/example/repo.git"
+backend = "git"
+
+[[remotes]]
+name = "s3"
+url = "s3://my-bucket/noa-repo"
+backend = "minio"
+endpoint = "https://s3.amazonaws.com"
+region = "us-east-1"
+```
+
+## 远程互操作方案对比
+
+| 方案 | 使用者 | 优势 | 缺点 |
+|------|--------|------|------|
+| Git 桥接 (gix) | noa | 通用兼容性 | 转换开销，SHA-1/SHA-256 不匹配 |
+| 原生协议 | Git | 快速，无需转换 | 仅适用 Git |
+| WebDAV | SVN | HTTP 标准 | 有限，SVN 特定 |
+| REST API | Bitbucket | 现代，灵活 | 需要托管服务 |
+| S3 兼容存储 | noa | 可扩展，云原生 | 无桥接时无法与 Git 互操作 |
+
+noa 同时支持 Git 桥接（用于兼容性）和原生 S3（用于规模）。
