@@ -538,87 +538,50 @@ For a noa-native clone (`noa://` protocol), full noa-server (Phase 8) is require
 
 ---
 
-### Phase 7: Ignore System & Noa Remotes (NEW — next target)
+### Phase 7: Ignore System & Noa Remotes — COMPLETE
 
 **Goal**: noa automatically respects existing `.gitignore` files (and other ignore sources) when computing snapshots — no `.noaignore` needed. Additionally, `noa init` auto-manages `.gitignore` (adds `.noa/`) and `.gitattributes` (adds `noa-remote` attribute) for seamless coexistence with git.
 
 #### 7.1 Ignore System
 
-- [ ] `Cargo.toml` — add `ignore = "0.4"` (ripgrep's `.gitignore` engine)
-- [ ] `src/ignore.rs` — `IgnoreMatcher` module
+- [x] `Cargo.toml` — add `ignore = "0.4"` (ripgrep's `.gitignore` engine)
+- [x] `src/ignore.rs` — `IgnoreMatcher` module
   - `from_repo_root(root)` — collects all `.gitignore` files across directory levels
   - Also reads `.git/info/exclude` for full git compatibility
   - `should_skip(path, is_dir)` — unified check: `.noa/` internal paths always excluded + gitignore patterns
   - `is_ignored(path, is_dir)` — delegate to compiled `Gitignore` matcher
   - Caches compiled regex automata per directory (handled by `ignore` crate internals)
   - Handles nested `.gitignore`, negation patterns (`!`), directory-only patterns
+  - Parent directory checking: `target/dep.rs` correctly filtered by `target/` pattern
 
-**Why snapshot-time filtering (not ingestion-time)**:
-The snapshot engine is a log-replay engine — it never walks the filesystem. Files enter the system via `OpType::Write` log entries. Filtering in `build_tree_from_entries()` means:
-- Ignored files are never included in snapshot trees, even if accidentally logged
-- Rebuilding any snapshot automatically applies the latest ignore rules
-- Single point of change in `engine.rs` — no agent code modifications needed
-
-- [ ] `src/snapshot/engine.rs` — integrate ignore filter
+- [x] `src/snapshot/engine.rs` — integrate ignore filter
   - Add `ignore_matcher: Option<IgnoreMatcher>` field to `SnapshotEngine`
   - Add `with_ignore(matcher) -> Self` builder method
   - In `build_tree_from_entries()`, skip entries whose path matches ignore rules
-  - `compute()` unchanged — filtering is transparent to callers
 
-- [ ] `src/cli/snapshot_cmd.rs` — pass `IgnoreMatcher` to engine when creating snapshots
-  - Construct `IgnoreMatcher::from_repo_root(repo.root())` before building engine
-  - Call `engine.with_ignore(matcher)` to activate filtering
+- [x] `src/cli/snapshot_cmd.rs` — pass `IgnoreMatcher` to engine when creating snapshots
 
 #### 7.2 `.gitignore` Auto-Management
 
-- [ ] `src/repo.rs` — `manage_gitignore(root)` helper
-  - On `noa init`:
-    - If `.gitignore` doesn't exist → create it with `# Added by noa — keep agent iteration data out of git\n.noa/\n`
-    - If `.gitignore` exists but lacks `.noa/` → append `.noa/`
-    - If `.gitignore` already has `.noa/` → no-op
-  - Called at the end of `Repository::init()` after redb initialization
+- [x] `src/repo.rs` — `manage_gitignore(root)` helper
+  - On `noa init`: creates/appends `.noa/` to `.gitignore`
 
 #### 7.3 `.gitattributes` Noa Remote Link
 
-**Design**: Git `.gitattributes` supports arbitrary custom attributes. Git ignores unknown attributes but stores them — exactly like Git LFS uses `filter=lfs`. We add a `noa-remote` attribute to `.gitattributes`:
-
-```
-.noa/**   noa-remote=https://noa-host.example.com/repo
-```
-
-When noa encounters this attribute, it knows where to push/pull agent iteration data. This keeps the noa hosting URL visible in the source tree and versioned alongside the project — no hidden configuration.
-
-**Dual storage strategy**:
-- `.gitattributes` — visible, versioned alongside source code; git-compatible
-- `.noa/config` → `noa_remote` field — authoritative for noa CLI at runtime; parsed once on init, cached
-- On `noa init --noa-remote <url>`: write to both locations
-- On `noa push/pull` (future): read from `.noa/config` first, fallback to `.gitattributes`
-
-- [ ] `src/config.rs` — add `noa_remote: Option<String>` to `RepoConfig`
-- [ ] `src/repo.rs` — `manage_gitattributes(root, noa_remote_url)` helper
-  - On `noa init --noa-remote <url>`:
-    - If `.gitattributes` doesn't exist → create it with `# Added by noa — specifies where agent iteration data is hosted\n.noa/**   noa-remote=<url>\n`
-    - If `.gitattributes` exists but lacks `noa-remote=` → append the line
-  - Store `noa_remote_url` in `.noa/config` as well
-- [ ] `src/cli/init.rs` — add `--noa-remote <url>` argument
+- [x] `src/config.rs` — add `noa_remote: Option<String>` to `RepoConfig`
+- [x] `src/repo.rs` — `manage_gitattributes(root, noa_remote_url)` helper
+  - On `noa init --noa-remote <url>`: writes `.gitattributes` + `.noa/config`
+- [x] `src/cli/init.rs` — add `--noa-remote <url>` argument
 
 #### 7.4 Tests
 
-- [ ] `src/ignore.rs` — unit tests:
-  - `.noa/` paths are always skipped regardless of `.gitignore`
-  - Standard gitignore patterns (glob, directory, negation)
-  - Nested `.gitignore` in subdirectories
-  - `.git/info/exclude` integration
-- [ ] `src/snapshot/engine.rs` — integration tests:
-  - Snapshot filters out `.noa/` paths even if present in log
-  - Snapshot filters out gitignore'd paths
-  - Snapshot includes whitelisted (negation) paths
-- [ ] `src/repo.rs` — integration tests:
-  - `init` creates `.gitignore` if absent
-  - `init` appends `.noa/` to existing `.gitignore`
-  - `init --noa-remote <url>` writes `.gitattributes` and `.noa/config`
+- [x] `src/ignore.rs` — 10 unit tests (all patterns, nested, exclude, wildcards, etc.)
+- [x] `src/snapshot/engine.rs` — 3 integration tests (noa paths, gitignore, whitelist)
+- [x] `src/repo.rs` — 6 integration tests (gitignore creation, append, dedup, gitattributes)
+- [x] `tests/smoke.rs` — 13 end-to-end smoke tests
+- [x] `tests/server_api.rs` — 11 API integration tests
 
-**Deliverable**: noa transparently respects `.gitignore` for snapshot creation, auto-manages coexistence with git via `.gitignore` and `.gitattributes`, and supports `noa-remote` URL for future agent data hosting.
+**Deliverable**: noa transparently respects `.gitignore` for snapshot creation, auto-manages coexistence with git via `.gitignore` and `.gitattributes`, and supports `noa-remote` URL for future agent data hosting. 148 tests passing.
 
 ---
 
