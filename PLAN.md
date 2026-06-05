@@ -1,23 +1,19 @@
 # noa — Implementation Plan
 
 > **Last updated**: 2026-06-05
-> **Status**: Phases 0–5 complete; Phase 6+ in progress
+> **Status**: Phases 0–7 complete; Phase 8+ (network optimization, testing) in progress
 
 ---
 
 ## What is noa
 
-noa is an AI-native distributed version control system. It replaces `.git` with `.noa/`,
-using a `redb` embedded KV store for metadata + content-addressed objects, and per-agent
-JSONL append-only logs for zero-lock concurrent writes.
+noa is an AI-native distributed version control system. It coexists with `.git` — git manages source code, noa manages AI agent iteration data. Internally it uses a `redb` embedded KV store for content-addressed objects and per-agent JSONL append-only logs for zero-lock concurrent writes.
 
 **Three design goals:**
 
-1. **Local**: `.noa/` replaces `.git/`. Snapshot-based history. Tens to hundreds of AI agents
-   can write simultaneously via isolated incremental logs — zero lock contention.
-2. **Remote**: 100% compatible with Git protocol (GitHub / Bitbucket / GitLab).
-3. **Self-hosted**: `noa-server` provides a native remote with MinIO-backed blob storage,
-   merge queue, and agent workspace coordination.
+1. **Local**: `.noa/` alongside `.git/`. Snapshot-based history. Tens to hundreds of AI agents can write simultaneously via isolated incremental logs — zero lock contention.
+2. **Remote**: 100% compatible with Git protocol (GitHub / Bitbucket / GitLab). Also supports SVN import and native `noa-server` protocol.
+3. **Self-hosted**: `noa-server` provides a native remote with MinIO-backed blob storage, merge queue, and agent workspace coordination.
 
 ---
 
@@ -511,7 +507,7 @@ src/
 
 ---
 
-### Phase 6: Git Remote Compatibility (in progress)
+### ✅ Phase 6: Git Remote Compatibility — COMPLETE
 
 See design docs in `docs/designs/` for detailed analysis of approach choices.
 
@@ -519,19 +515,22 @@ See design docs in `docs/designs/` for detailed analysis of approach choices.
 - [x] `git/import.rs` — `.git` → `.noa` import (walk git tree via gix, import all blobs/trees)
 - [x] `git/translate.rs` — bidirectional noa ↔ git blob/tree translation, roundtrip tested
 - [x] `cli/remote_cmd.rs` — `noa remote add/remove/list`, persisted in `.noa/config`
-- [ ] `git/mod.rs` — `GitBackend` (impl `RemoteBackend` via gix protocol)
-- [ ] `git/export.rs` — noa snapshot → git packfile export
-- [ ] `noa clone <git-url>` — git clone (gix fallback to system git CLI) → auto import into noa
-- [ ] `noa push <remote>` — translate noa objects to git packfile, push via gix
-- [ ] `noa pull <remote>` — fetch git packfile, translate to noa objects
-- [ ] `noa fetch <remote>` — list + fetch remote refs
+- [x] `git/mod.rs` — `GitBackend` (impl `RemoteBackend` via system git CLI)
+- [x] `git/export.rs` — noa snapshot → git working tree write + `git add/commit`
+- [x] `noa clone <git-url>` — git clone (system git CLI) → auto import into noa, creates default workspace
+- [x] `noa push <remote>` — export noa snapshot to git commit, push via system git CLI
+- [x] `noa pull <remote>` — git pull → re-import into noa, update workspace head
+- [x] `noa fetch <remote>` — `git ls-remote` to list remote refs
+- [x] Git LFS support: auto-detect on clone/pull, `git lfs push --all` on push
+- [x] SVN import: `noa clone --svn <url>` (svn export trunk → git init → import)
+- [x] Compatibility verification: GitHub, Bitbucket (HTTPS/SSH), local bare repos
 
 **Deliverable**: Push/pull/clone to GitHub/Bitbucket/GitLab. Hybrid model where `.git/` and `.noa/` coexist in the same working tree, with source code managed by git and agent iteration data managed by noa.
 
 **Architectural note on clone**: `noa clone <git-url>` follows a two-step path:
-1. Clone via gix (preferred, pure Rust) or fallback to system `git` CLI for reliability
-2. Run `import_git_to_noa()` to import all git objects into noa's redb
-3. Create initial snapshot and workspace pointing to the imported tree
+1. Clone via system `git` CLI for reliability (native git protocol/submodule/LFS support)
+2. Run `import_git_to_noa()` to recursively import all git tree/blobs into noa's redb
+3. Create initial snapshot and default workspace pointing to the imported tree
 4. Result: `.git/` and `.noa/` coexist in the cloned directory — git handles source, noa handles agent data
 
 For a noa-native clone (`noa://` protocol), full noa-server (Phase 8) is required.
@@ -642,12 +641,24 @@ noa is consumed by entelecheia (the multi-agent orchestration platform). Integra
 | 3: Snapshot + Ref | 3 | ✅ Complete |
 | 4: Workspace Manager | 3 | ✅ Complete |
 | 5: Merge Engine | 3 | ✅ Complete |
-| 6: Git Remote (remaining) | 5 | In progress |
-| 7: Ignore System + Noa Remotes | 3 | **Next target** |
+| 6: Git Remote | 5 | ✅ Complete |
+| 7: Ignore System + Noa Remotes | 3 | ✅ Complete |
 | 8: noa-server MVP (remaining) | 4 | In progress |
 | 9: CLI Completion (remaining) | 2 | In progress |
 | 10: entelecheia Integration | 3 | Future |
-| **Total remaining** | **~17 days** | |
+| **Total remaining** | **~9 days** | |
+
+Single developer, includes testing.
+
+### Test Coverage
+
+| Suite | Count | Status |
+|-------|-------|--------|
+| Unit tests (lib) | 124 | ✅ Passing |
+| Smoke tests (E2E) | 13 | ✅ Passing |
+| Server API integration | 11 | ✅ Passing |
+| Compatibility (LFS/Bitbucket/SVN) | 8 | ✅ 6 passed, 2 ignored |
+| **Total** | **156** | **154 passed, 0 failed, 2 ignored** |
 
 Single developer, includes testing.
 
@@ -671,6 +682,12 @@ Single developer, includes testing.
 | 2026-06-05 | No `.noaignore` — piggyback on `.gitignore` | Projects already have `.gitignore`; no need to maintain duplicate ignore patterns. `ignore` crate handles full gitignore spec |
 | 2026-06-05 | `noa-remote` in `.gitattributes` (dual storage with `.noa/config`) | Visible in source tree, versioned, git-compatible; same pattern as Git LFS's `filter=lfs` |
 | 2026-06-05 | Both gix + system git CLI for clone | gix preferred (pure Rust), but fallback to system git CLI ensures reliability for edge cases |
+| 2026-06-05 | System git CLI for network ops (push/pull/fetch) | git protocol is complex; system CLI is battle-tested. gix used only for local tree traversal |
+| 2026-06-05 | `SnapshotEngine.with_repo_root()` to store actual blob content | Agent logs only record SHA-256 hashes; engine reads real files from working tree and stores blobs via `put_blob` |
+| 2026-06-05 | SVN: one-way import via `svn export` + `git init` | git-svn not available in conda; `svn export trunk` is simpler and sufficient for migration scenarios |
+| 2026-06-05 | Git LFS: use system `git lfs` CLI hooks | `git lfs install/pull/push` called after clone/pull/push; no need to reimplement LFS protocol |
+| 2026-06-05 | `noa pull` updates workspace head after import | Previously left head at `noa_empty`; now correctly points to imported snapshot |
+| 2026-06-05 | Package renamed to `libnoa` (crates.io: `noa` already taken) | Binary name unchanged (`noa`); `[[bin]] name` determines output filename, not package name |
 
 ---
 
