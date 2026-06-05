@@ -55,17 +55,17 @@ noa_empty（哨兵）
 ```
 1. AgentLog 重放
    └── 读取工作区所有 write/delete/rename 操作
-   
+
 2. Tree 构建
    └── 从父快照的 tree 开始
    └── 按顺序应用操作
    └── 存储结果 tree → ObjectStore
-   
+
 3. 快照创建
    └── 构建 Snapshot 结构，包含 tree_hash
    └── 从内容计算 ID
    └── 存储到 SnapshotStore（redb 表）
-   
+
 4. 工作区更新
    └── CAS 更新工作区 head 到新快照 ID
 ```

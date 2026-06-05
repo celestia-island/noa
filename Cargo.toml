@@ -4,11 +4,13 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 
+publish = true
 authors = ["langyo <langyo.china@gmail.com>"]
-description = "AI-native distributed version control system — agent workspace isolation, snapshots, and multi-remote sync"
+description = "AI-native distributed version control system with per-agent workspace isolation, JSONL append-only logs, snapshot-based history, and full git protocol compatibility"
 license = "Apache-2.0"
 repository = "https://github.com/celestia-island/noa"
-documentation = "https://github.com/celestia-island/noa"
+documentation = "https://docs.rs/libnoa"
+readme = "README.md"
 keywords = ["vcs", "version-control", "ai", "agent", "git"]
 categories = ["development-tools", "command-line-utilities", "version-control"]
 

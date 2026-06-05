@@ -1,11 +1,31 @@
-# noa — AI-native distributed version control system
+<div align="center"><img src="docs/logo.webp" alt="Noa" width="240" /></div>
+<h1 align="center">Noa</h1>
+<div align="center">
+ <strong>AI-native distributed version control system</strong>
+</div>
 
-<p align="center"><img src="docs/logo.webp" alt="Noa" width="240" /></p>
+<br />
 
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://rust-lang.org)
-![Tests](https://img.shields.io/badge/tests-154%20passed-brightgreen)
-[![GitHub release](https://img.shields.io/badge/dist-github%20releases-purple)](https://github.com/celestia-island/noa/releases)
+<div align="center">
+  <a href="https://github.com/celestia-island/noa/actions">
+    <img src="https://img.shields.io/github/actions/workflow/status/celestia-island/noa/test.yml?branch=dev" alt="Tests" />
+  </a>
+  <a href="https://github.com/celestia-island/noa/actions">
+    <img src="https://img.shields.io/github/actions/workflow/status/celestia-island/noa/clippy.yml?branch=dev" alt="Clippy" />
+  </a>
+  <a href="https://crates.io/crates/libnoa">
+    <img src="https://img.shields.io/crates/v/libnoa" alt="Crates.io" />
+  </a>
+  <a href="https://docs.rs/libnoa">
+    <img src="https://img.shields.io/docsrs/libnoa" alt="Docs.rs" />
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/License-Apache--2.0-blue.svg" alt="License" />
+  </a>
+  <a href="https://github.com/celestia-island/noa/releases">
+    <img src="https://img.shields.io/github/v/release/celestia-island/noa?label=release" alt="GitHub Release" />
+  </a>
+</div>
 
 noa is an AI-native distributed version control system. It coexists with `.git` — git manages source code, noa manages AI agent iteration data — with per-agent zero-lock JSONL logs, snapshot-based history, and full git protocol compatibility.
 
