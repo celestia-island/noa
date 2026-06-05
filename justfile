@@ -3,7 +3,6 @@
 set unstable
 set shell := ["bash", "-c"]
 set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
-set lists
 
 python_cmd := if os_family() == "windows" {
     "python"
@@ -12,8 +11,6 @@ python_cmd := if os_family() == "windows" {
 } else {
     "python"
 }
-
-import "./celestia-devtools.just"
 
 default:
     @just --list
@@ -27,9 +24,11 @@ init:
 
 # Build
 
-# Build noa. Release by default; `--dev` for debug, `--clean` to clean first.
-build *FLAGS='':
-    just _build ":" "cargo build" "cargo build --release" {{FLAGS}}
+build:
+    cargo build --release
+
+build-dev:
+    cargo build
 
 check:
     cargo check --workspace
@@ -40,12 +39,11 @@ clean:
 # Format & Lint
 
 fmt:
-    cargo clippy --workspace --lib --bins -- -D warnings
-    {{ python_cmd }} scripts/utils/enforce_use_groups.py
+    {{python_cmd}} scripts/utils/format_markdown.py .
     cargo fmt --all
 
 fmt-check:
-    {{python_cmd}} scripts/utils/enforce_use_groups.py --test
+    {{python_cmd}} scripts/utils/format_markdown.py . --check
     cargo fmt --all -- --check
 
 clippy:
