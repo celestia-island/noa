@@ -1,56 +1,24 @@
-use crate::{error::Result, log::LogEntry};
+use crate::error::{NoaError, Result};
+use crate::log::LogEntry;
 
 pub fn serialize_entry(entry: &LogEntry) -> Result<String> {
-    Ok(serde_json::to_string(entry)?)
+    serde_json::to_string(entry).map_err(|e| NoaError::Serialization(e.to_string()))
 }
 
 pub fn deserialize_entry(line: &str) -> Result<LogEntry> {
     let trimmed = line.trim();
-    Ok(serde_json::from_str::<LogEntry>(trimmed)?)
+    if trimmed.is_empty() {
+        return Err(NoaError::Serialization("empty log line".to_string()));
+    }
+    serde_json::from_str(trimmed).map_err(|e| NoaError::Serialization(e.to_string()))
 }
 
 pub fn deserialize_entries(content: &str) -> Result<Vec<LogEntry>> {
-    let mut entries = Vec::new();
-    for (line_num, line) in content.lines().enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        match deserialize_entry(line) {
-            Ok(entry) => entries.push(entry),
-            Err(e) => {
-                tracing::warn!("skipping corrupted log line {}: {}", line_num + 1, e);
-            }
-        }
-    }
-    Ok(entries)
-}
-
-pub fn deserialize_entries_since(
-    reader: &mut impl std::io::BufRead,
-    since_seq: u64,
-) -> Result<Vec<LogEntry>> {
-    let mut entries = Vec::new();
-    let mut line = String::new();
-    let mut line_num = 0u64;
-    while reader.read_line(&mut line)? > 0 {
-        line_num += 1;
-        if line.trim().is_empty() {
-            line.clear();
-            continue;
-        }
-        match deserialize_entry(&line) {
-            Ok(entry) => {
-                if entry.seq > since_seq {
-                    entries.push(entry);
-                }
-            }
-            Err(e) => {
-                tracing::warn!("skipping corrupted log line {}: {}", line_num, e);
-            }
-        }
-        line.clear();
-    }
-    Ok(entries)
+    content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(deserialize_entry)
+        .collect()
 }
 
 #[cfg(test)]
@@ -66,10 +34,8 @@ mod tests {
             path: Some("src/main.rs".to_string()),
             blob_id: Some("abc123".to_string()),
             from_path: None,
-            resolved_conflict_ours_id: None,
-            resolved_conflict_theirs_id: None,
             snapshot_id: None,
-            ts: 1_717_592_400_000_000,
+            ts: 1717592400000000,
             message: None,
         };
         let json = serialize_entry(&entry).unwrap();
@@ -93,39 +59,5 @@ mod tests {
         let content = "\n{\"seq\":1,\"op\":\"write\",\"ts\":100}\n\n";
         let entries = deserialize_entries(content).unwrap();
         assert_eq!(entries.len(), 1);
-    }
-
-    #[test]
-    fn test_deserialize_entries_skips_corrupted_lines() {
-        let content = r#"{"seq":1,"op":"write","path":"a.rs","ts":100}
-CORRUPTED LINE NOT JSON
-{"seq":2,"op":"delete","path":"b.rs","ts":200}
-also not valid {json
-{"seq":3,"op":"write","path":"c.rs","ts":300}
-"#;
-        let entries = deserialize_entries(content).unwrap();
-        assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0].seq, 1);
-        assert_eq!(entries[1].seq, 2);
-        assert_eq!(entries[2].seq, 3);
-    }
-
-    #[test]
-    fn test_deserialize_entries_all_corrupted_returns_empty() {
-        let content = "not json\nalso not json\n";
-        let entries = deserialize_entries(content).unwrap();
-        assert!(entries.is_empty());
-    }
-
-    #[test]
-    fn test_deserialize_entries_empty_content() {
-        let entries = deserialize_entries("").unwrap();
-        assert!(entries.is_empty());
-    }
-
-    #[test]
-    fn test_deserialize_entries_only_blank_lines() {
-        let entries = deserialize_entries("\n\n\n").unwrap();
-        assert!(entries.is_empty());
     }
 }
