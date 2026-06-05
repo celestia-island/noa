@@ -688,6 +688,7 @@ Single developer, includes testing.
 | 2026-06-05 | Git LFS: use system `git lfs` CLI hooks | `git lfs install/pull/push` called after clone/pull/push; no need to reimplement LFS protocol |
 | 2026-06-05 | `noa pull` updates workspace head after import | Previously left head at `noa_empty`; now correctly points to imported snapshot |
 | 2026-06-05 | Package renamed to `libnoa` (crates.io: `noa` already taken) | Binary name unchanged (`noa`); `[[bin]] name` determines output filename, not package name |
+| 2026-06-05 | Distribution via install scripts (bash + PowerShell) | `scripts/install.sh` and `scripts/install.ps1` for one-liner install from GitHub Releases or from-source fallback |
 
 ---
 

@@ -3,12 +3,15 @@ use std::path::PathBuf;
 
 use libnoa::cli;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[derive(Parser)]
 #[command(name = "noa")]
 #[command(about = "AI-native distributed version control system")]
+#[command(version = VERSION)]
 struct App {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -110,16 +113,17 @@ async fn main() -> anyhow::Result<()> {
     let app = App::parse();
 
     match app.command {
-        Commands::Init { path, noa_remote } => {
+        None => {}
+        Some(Commands::Init { path, noa_remote }) => {
             cli::init::run(&cli::init::InitArgs { path, noa_remote })?;
         }
-        Commands::Status => {
+        Some(Commands::Status) => {
             cli::status::run().await?;
         }
-        Commands::Log { workspace, limit } => {
+        Some(Commands::Log { workspace, limit }) => {
             cli::log_cmd::run(workspace.as_deref(), limit).await?;
         }
-        Commands::Snapshot { cmd } => match cmd {
+        Some(Commands::Snapshot { cmd }) => match cmd {
             SnapshotSub::Create { message, author } => {
                 let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
                 let repo = libnoa::repo::Repository::open(&root)?;
@@ -136,7 +140,7 @@ async fn main() -> anyhow::Result<()> {
                 cli::snapshot_cmd::run_diff(&repo, &a, &b).await?;
             }
         },
-        Commands::Workspace { cmd } => match cmd {
+        Some(Commands::Workspace { cmd }) => match cmd {
             WorkspaceSub::Create { name, agent } => {
                 let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
                 let repo = libnoa::repo::Repository::open(&root)?;
@@ -163,7 +167,7 @@ async fn main() -> anyhow::Result<()> {
                 cli::workspace_cmd::run_merge(&repo, &from).await?;
             }
         },
-        Commands::Remote { cmd } => match cmd {
+        Some(Commands::Remote { cmd }) => match cmd {
             RemoteSub::Add { name, url } => {
                 let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
                 let mut repo = libnoa::repo::Repository::open(&root)?;
@@ -180,16 +184,16 @@ async fn main() -> anyhow::Result<()> {
                 cli::remote_cmd::run_list(&repo).await?;
             }
         },
-        Commands::Push { remote } => {
+        Some(Commands::Push { remote }) => {
             cli::pushpull::run_push(&remote).await?;
         }
-        Commands::Pull { remote } => {
+        Some(Commands::Pull { remote }) => {
             cli::pushpull::run_pull(&remote).await?;
         }
-        Commands::Fetch { remote } => {
+        Some(Commands::Fetch { remote }) => {
             cli::pushpull::run_fetch(&remote).await?;
         }
-        Commands::Clone { url, path, svn } => {
+        Some(Commands::Clone { url, path, svn }) => {
             if svn {
                 cli::pushpull::run_clone_svn(&url, &path).await?;
             } else {
