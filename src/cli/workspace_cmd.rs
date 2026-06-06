@@ -111,17 +111,21 @@ pub async fn run_merge(repo: &Repository, from: &str) -> Result<()> {
     let snap_store = repo.snapshot_store()?;
     let obj_store = repo.object_store()?;
 
-    let base_snap = snap_store.get(&cur_ws.head).await?;
+    let base_snap = snap_store.get(&cur_ws.base).await?;
+    let ours_snap = snap_store.get(&cur_ws.head).await?;
     let their_snap = snap_store.get(&from_ws.head).await?;
 
     let base_tree = obj_store
         .get_tree(&crate::object::TreeId(base_snap.tree_hash))
         .await?;
+    let ours_tree = obj_store
+        .get_tree(&crate::object::TreeId(ours_snap.tree_hash))
+        .await?;
     let theirs_tree = obj_store
         .get_tree(&crate::object::TreeId(their_snap.tree_hash))
         .await?;
 
-    let result = crate::merge::three_way_merge(&base_tree, &base_tree, &theirs_tree)?;
+    let result = crate::merge::three_way_merge(&base_tree, &ours_tree, &theirs_tree)?;
 
     let conflicts = extract_conflicts(&result.output);
     if !conflicts.is_empty() {
@@ -129,6 +133,10 @@ pub async fn run_merge(repo: &Repository, from: &str) -> Result<()> {
         for c in &conflicts {
             println!("  CONFLICT: {}", c.path);
         }
+        println!(
+            "{} conflict(s) found. Resolving with --strategy=ours by default.",
+            conflicts.len()
+        );
     }
 
     let resolved_tree = result.into_tree_entries(&ConflictResolution::Ours);
@@ -152,6 +160,33 @@ pub async fn run_merge(repo: &Repository, from: &str) -> Result<()> {
     snap_store.store(&merge_snapshot).await?;
     ws_mgr.update_head(&current, &merge_snapshot.id).await?;
 
-    println!("Merged {} into {} -> {}", from, current, merge_snapshot.id);
+    let log = repo.agent_log(&current)?;
+    let now = chrono::Utc::now().timestamp_micros() as u64;
+    let first_conflict = conflicts.first();
+    log.append(&crate::log::LogEntry {
+        seq: 0,
+        op: crate::log::OpType::Merge,
+        path: None,
+        blob_id: None,
+        from_path: None,
+        resolved_conflict_ours_id: first_conflict.and_then(|c| c.ours_id.clone()),
+        resolved_conflict_theirs_id: first_conflict.and_then(|c| c.theirs_id.clone()),
+        snapshot_id: Some(merge_snapshot.id.0.clone()),
+        ts: now,
+        message: Some(format!("merge {} into {}", from, current)),
+    })
+    .await?;
+
+    if conflicts.is_empty() {
+        println!("Merged {} into {} -> {}", from, current, merge_snapshot.id);
+    } else {
+        println!(
+            "Merged {} into {} -> {} ({} conflict(s) auto-resolved with ours)",
+            from,
+            current,
+            merge_snapshot.id,
+            conflicts.len()
+        );
+    }
     Ok(())
 }

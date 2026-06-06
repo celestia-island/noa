@@ -60,6 +60,12 @@ enum Commands {
         #[arg(long)]
         svn: bool,
     },
+    Resolve {
+        #[arg(short, long, default_value = "ours")]
+        strategy: String,
+        #[arg(short, long)]
+        path: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -194,6 +200,11 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 cli::pushpull::run_clone(&url, &path).await?;
             }
+        }
+        Some(Commands::Resolve { strategy, path }) => {
+            let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
+            let repo = libnoa::repo::Repository::open(&root)?;
+            cli::resolve_cmd::run_resolve(&repo, &strategy, path.as_deref()).await?;
         }
     }
 
