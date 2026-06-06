@@ -101,7 +101,7 @@ async fn test_list_snapshots() {
 #[tokio::test]
 async fn test_create_workspace() {
     let (_tmp, app) = make_app().await;
-    let body = r#"{"workspace": {"name": "test-ws", "head": "noa_base", "base": "noa_base", "agent_id": null, "created_at": 1000, "updated_at": 1000}}"#.to_string();
+    let body = r#"{"workspace": {"name": "test-ws", "head": "noa_base", "base": "noa_base", "agent_id": null, "last_seq": 0, "created_at": 1000, "updated_at": 1000}}"#.to_string();
     let req = make_request(Method::POST, "/api/v1/workspaces", Some(body));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);

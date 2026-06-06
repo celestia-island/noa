@@ -12,6 +12,7 @@ pub async fn create(
         head: base_snapshot.clone(),
         base: base_snapshot.clone(),
         agent_id,
+        last_seq: 0,
         created_at: now,
         updated_at: now,
     };

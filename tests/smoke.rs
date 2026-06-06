@@ -15,6 +15,8 @@ fn make_log_entry(seq: u64, op: OpType, path: &str, blob_id: Option<&str>, ts: u
         path: Some(path.to_string()),
         blob_id: blob_id.map(|s| s.to_string()),
         from_path: None,
+        resolved_conflict_ours_id: None,
+        resolved_conflict_theirs_id: None,
         snapshot_id: None,
         ts,
         message: None,
@@ -28,7 +30,7 @@ async fn smoke_test_init_open_find() {
 
     assert!(!Repository::exists(path));
     {
-        let _repo = Repository::init(path).unwrap();
+        Repository::init(path).unwrap();
     }
     assert!(Repository::exists(path));
     assert!(path.join(".noa").exists());
@@ -82,7 +84,7 @@ async fn smoke_test_full_snapshot_workflow() {
 
     let engine = SnapshotEngine::new(agent_log, snap_store, obj_store);
     let snapshot = engine
-        .compute("default", vec![], "test-author", "initial commit")
+        .compute("default", vec![], 0, "test-author", "initial commit")
         .await
         .unwrap();
 
@@ -122,7 +124,7 @@ async fn smoke_test_workspace_create_switch_merge() {
         .unwrap();
     let engine = SnapshotEngine::new(agent_log, snap_store.clone(), obj_store.clone());
     let base_snap = engine
-        .compute("default", vec![], "author", "base")
+        .compute("default", vec![], 0, "author", "base")
         .await
         .unwrap();
     ws_mgr.update_head("default", &base_snap.id).await.unwrap();
@@ -132,6 +134,7 @@ async fn smoke_test_workspace_create_switch_merge() {
         head: base_snap.id.clone(),
         base: base_snap.id.clone(),
         agent_id: Some("agent-001".to_string()),
+        last_seq: 0,
         created_at: 1000,
         updated_at: 1000,
     };
@@ -153,6 +156,7 @@ async fn smoke_test_workspace_create_switch_merge() {
         .compute(
             "feature",
             vec![base_snap.id.clone()],
+            0,
             "agent-001",
             "add feature",
         )
@@ -177,8 +181,9 @@ async fn smoke_test_workspace_create_switch_merge() {
         .unwrap();
     let result =
         libnoa::merge::three_way_merge(&default_tree, &default_tree, &feature_tree).unwrap();
-    assert!(result.conflicts.is_empty());
-    assert!(result.tree.0.iter().any(|e| e.name == "feature.rs"));
+    assert!(!result.has_conflicts());
+    let tree = result.into_tree_entries(&libnoa::merge::ConflictResolution::Ours);
+    assert!(tree.0.iter().any(|e| e.name == "feature.rs"));
 }
 
 #[tokio::test]
@@ -241,7 +246,7 @@ async fn smoke_test_ignore_filtering_in_snapshot() {
     let matcher = libnoa::ignore::IgnoreMatcher::from_repo_root(root);
     let engine = SnapshotEngine::new(agent_log, snap_store, obj_store).with_ignore(matcher);
     let snap = engine
-        .compute("default", vec![], "test", "filtered")
+        .compute("default", vec![], 0, "test", "filtered")
         .await
         .unwrap();
 
@@ -282,14 +287,6 @@ async fn smoke_test_ref_cas_and_list() {
 
 #[tokio::test]
 async fn smoke_test_snapshot_diff() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let db = Arc::new(
-        redb::Database::builder()
-            .create(tmp.path().join("test.redb"))
-            .unwrap(),
-    );
-    let _obj_store = libnoa::object::RedbObjectStore::new(db).unwrap();
-
     let tree_a = libnoa::object::TreeEntries(vec![
         libnoa::object::TreeEntry {
             name: "a.rs".to_string(),
@@ -343,6 +340,7 @@ async fn smoke_test_concurrent_agent_logs() {
             head: SnapshotId("noa_empty".to_string()),
             base: SnapshotId("noa_empty".to_string()),
             agent_id: Some(format!("agent-{}", i)),
+            last_seq: 0,
             created_at: 0,
             updated_at: 0,
         };
@@ -406,6 +404,8 @@ async fn smoke_test_log_entry_all_ops() {
             path: Some("a.rs".to_string()),
             blob_id: Some("h1".to_string()),
             from_path: None,
+            resolved_conflict_ours_id: None,
+            resolved_conflict_theirs_id: None,
             snapshot_id: None,
             ts: 100,
             message: None,
@@ -416,6 +416,8 @@ async fn smoke_test_log_entry_all_ops() {
             path: Some("b.rs".to_string()),
             blob_id: None,
             from_path: None,
+            resolved_conflict_ours_id: None,
+            resolved_conflict_theirs_id: None,
             snapshot_id: None,
             ts: 200,
             message: None,
@@ -426,6 +428,8 @@ async fn smoke_test_log_entry_all_ops() {
             path: Some("c.rs".to_string()),
             blob_id: None,
             from_path: Some("old_c.rs".to_string()),
+            resolved_conflict_ours_id: None,
+            resolved_conflict_theirs_id: None,
             snapshot_id: None,
             ts: 300,
             message: None,
@@ -436,6 +440,8 @@ async fn smoke_test_log_entry_all_ops() {
             path: None,
             blob_id: None,
             from_path: None,
+            resolved_conflict_ours_id: None,
+            resolved_conflict_theirs_id: None,
             snapshot_id: Some("noa_snap1".to_string()),
             ts: 400,
             message: Some("my snapshot".to_string()),
@@ -446,6 +452,8 @@ async fn smoke_test_log_entry_all_ops() {
             path: None,
             blob_id: None,
             from_path: None,
+            resolved_conflict_ours_id: None,
+            resolved_conflict_theirs_id: None,
             snapshot_id: Some("noa_snap2".to_string()),
             ts: 500,
             message: Some("merge from ws-2".to_string()),
@@ -485,8 +493,9 @@ async fn smoke_test_three_way_merge_no_conflict() {
     ]);
 
     let result = libnoa::merge::three_way_merge(&base, &ours, &theirs).unwrap();
-    assert!(result.conflicts.is_empty());
-    assert_eq!(result.tree.0.len(), 3);
+    assert!(!result.has_conflicts());
+    let tree = result.into_tree_entries(&libnoa::merge::ConflictResolution::Ours);
+    assert_eq!(tree.0.len(), 3);
 }
 
 #[tokio::test]

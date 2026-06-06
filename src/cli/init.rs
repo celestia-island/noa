@@ -11,6 +11,9 @@ pub struct InitArgs {
 
     #[arg(long)]
     pub noa_remote: Option<String>,
+
+    #[arg(long)]
+    pub no_git: bool,
 }
 
 pub fn run(args: &InitArgs) -> Result<()> {
@@ -31,8 +34,41 @@ pub fn run(args: &InitArgs) -> Result<()> {
         None => Repository::init(&path)?,
     };
 
+    if !args.no_git {
+        let git_dir = path.join(".git");
+        if !git_dir.exists() {
+            let output = std::process::Command::new("git")
+                .args(["init"])
+                .current_dir(&path)
+                .output()?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("git init failed: {}", stderr);
+            }
+        }
+
+        let gitignore = path.join(".gitignore");
+        let content = if gitignore.exists() {
+            std::fs::read_to_string(&gitignore)?
+        } else {
+            String::new()
+        };
+        if !content
+            .lines()
+            .any(|l| l.trim() == ".noa/" || l.trim() == ".noa")
+        {
+            let updated = if content.is_empty() {
+                ".noa/\n".to_string()
+            } else {
+                format!("{}\n.noa/\n", content.trim_end())
+            };
+            std::fs::write(&gitignore, updated)?;
+        }
+    }
+
     println!(
-        "Initialized empty noa repository in {}",
+        "Initialized empty noa{} repository in {}",
+        if args.no_git { "" } else { "+git" },
         repo.noa_dir.display()
     );
 

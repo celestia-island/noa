@@ -158,6 +158,7 @@ impl Repository {
             head: SnapshotId("noa_empty".to_string()),
             base: SnapshotId("noa_empty".to_string()),
             agent_id: None,
+            last_seq: 0,
             created_at: 0,
             updated_at: 0,
         };

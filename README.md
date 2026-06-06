@@ -27,7 +27,30 @@
   </a>
 </div>
 
+<div align="center">
+
+**[English]** &bull; **[简体中文](docs/zh-hans/README.md)** &bull;
+**[繁體中文](docs/zh-hant/README.md)** &bull; **[日本語](docs/ja/README.md)** &bull;
+**[한국어](docs/ko/README.md)** &bull; **[Français](docs/fr/README.md)** &bull;
+**[Español](docs/es/README.md)** &bull; **[Русский](docs/ru/README.md)** &bull;
+**[العربية](docs/ar/README.md)**
+
+</div>
+
+<br />
+
 noa is an AI-native distributed version control system. It coexists with `.git` — git manages source code, noa manages AI agent iteration data — with per-agent zero-lock JSONL logs, snapshot-based history, and full git protocol compatibility.
+
+## Why noa
+
+| Challenge | Git | noa |
+|-----------|-----|-----|
+| **Concurrent writes** | Lock files, merge conflicts | Per-agent JSONL append-only logs |
+| **Agent identity** | user.name/email per repo | Workspace-scoped agent_id |
+| **Partial contributions** | All changes in working tree | Agent logs only touched files |
+| **Iteration tracking** | Rebase/squash destroys history | Immutable snapshot chain per workspace |
+| **Multi-agent merge** | Three-way text merge | Merge snapshots, file-level conflicts |
+| **Git compatibility** | N/A | System git CLI bridge |
 
 ## Table of Contents
 
@@ -43,38 +66,34 @@ noa is an AI-native distributed version control system. It coexists with `.git` 
 - [Related Projects](#related-projects)
 - [License](#license)
 
-## Why noa
-
-Traditional git treats all contributors the same — human or AI. But AI agents have fundamentally different needs:
-
-| Challenge | Git's answer | noa's answer |
-|-----------|-------------|--------------|
-| **Concurrent writes** | Lock files, merge conflicts | Per-agent JSONL append-only logs |
-| **Agent identity** | Config user.name/email per repo | Workspace-scoped agent_id with per-agent partitions |
-| **Partial contributions** | One commit = all changes in working tree | Agent logs only the files it actually touched |
-| **Iteration tracking** | Rebase/squash destroys history | Immutable snapshots chain per workspace |
-| **Multi-agent merge** | Three-way merge on text | Merge snapshots, detect file-level conflicts |
-| **Git protocol compatibility** | N/A | System git CLI bridge for clone/push/pull/fetch |
-
 ## Architecture
 
-```
-┌─────────────────────────────────────────────┐
-│  Working Tree  (.git/ + .noa/ coexist)      │
-│                                              │
-│  .noa/                                       │
-│  ├── noa.redb        ← embedded KV store     │
-│  │   ├── blobs        (content-addressed)    │
-│  │   ├── trees        (directory snapshots)  │
-│  │   ├── snapshots    (metadata + hash chain)│
-│  │   ├── workspaces   (agent partitions)     │
-│  │   └── refs         (symbolic pointers)    │
-│  ├── agent-logs/                              │
-│  │   ├── default.log  (main workspace)       │
-│  │   └── feat-*.log   (feature workspaces)   │
-│  ├── HEAD            ← active workspace      │
-│  └── config           ← remotes, settings    │
-└─────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph WT["Working Tree (.git + .noa coexist)"]
+        direction LR
+        subgraph NOA[".noa/"]
+            DB["noa.redb<br/>(embedded KV store)"]
+            LOGS["agent-logs/"]
+            HEAD["HEAD"]
+            CFG["config"]
+        end
+    end
+
+    subgraph DB["noa.redb Tables"]
+        direction LR
+        BLOBS["blobs<br/>(content-addressed)"]
+        TREES["trees<br/>(directory snapshots)"]
+        SNAPS["snapshots<br/>(metadata + hash chain)"]
+        WS["workspaces<br/>(agent partitions)"]
+        REFS["refs<br/>(symbolic pointers)"]
+    end
+
+    subgraph LOGS["agent-logs/"]
+        direction LR
+        DL["default.log<br/>(main workspace)"]
+        F1["feat-*.log<br/>(feature workspaces)"]
+    end
 ```
 
 **Core concepts:**
@@ -197,20 +216,32 @@ noa uses the system `git` CLI for all network operations. This ensures 100% comp
 
 ### Push Workflow
 
-```
-noa snapshot → build tree → export files to working tree → git add -A → git commit → git push
+```mermaid
+flowchart LR
+    A["noa snapshot"] --> B["build tree"]
+    B --> C["export files to working tree"]
+    C --> D["git add -A"]
+    D --> E["git commit"]
+    E --> F["git push"]
 ```
 
 ### Pull Workflow
 
-```
-git pull → read HEAD commit → import tree into noa (via gix) → create snapshot → update workspace head
+```mermaid
+flowchart LR
+    A["git pull"] --> B["read HEAD commit"]
+    B --> C["import tree into noa (via gix)"]
+    C --> D["create snapshot"]
+    D --> E["update workspace head"]
 ```
 
 ### Clone Workflow
 
-```
-git clone → import tree into noa → create default workspace → setup .gitignore
+```mermaid
+flowchart LR
+    A["git clone"] --> B["import tree into noa"]
+    B --> C["create default workspace"]
+    C --> D["setup .gitignore"]
 ```
 
 ### Key Design Decisions
