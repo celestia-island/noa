@@ -1,4 +1,10 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppMode {
+    Log,
+    Branches,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     Branches,
     Log,
@@ -6,24 +12,39 @@ pub enum Focus {
 }
 
 impl Focus {
-    pub fn cycle(self) -> Self {
-        match self {
-            Focus::Branches => Focus::Log,
-            Focus::Log => Focus::Detail,
-            Focus::Detail => Focus::Branches,
+    pub fn cycle(self, mode: AppMode) -> Self {
+        match mode {
+            AppMode::Branches => match self {
+                Focus::Branches => Focus::Log,
+                Focus::Log => Focus::Detail,
+                Focus::Detail => Focus::Branches,
+            },
+            AppMode::Log => match self {
+                Focus::Log => Focus::Detail,
+                Focus::Detail => Focus::Log,
+                _ => Focus::Log,
+            },
         }
     }
 
-    pub fn cycle_back(self) -> Self {
-        match self {
-            Focus::Branches => Focus::Detail,
-            Focus::Log => Focus::Branches,
-            Focus::Detail => Focus::Log,
+    pub fn cycle_back(self, mode: AppMode) -> Self {
+        match mode {
+            AppMode::Branches => match self {
+                Focus::Branches => Focus::Detail,
+                Focus::Log => Focus::Branches,
+                Focus::Detail => Focus::Log,
+            },
+            AppMode::Log => match self {
+                Focus::Log => Focus::Detail,
+                Focus::Detail => Focus::Log,
+                _ => Focus::Detail,
+            },
         }
     }
 }
 
 pub struct App {
+    pub mode: AppMode,
     pub focus: Focus,
     pub branches: Vec<crate::workspace::Workspace>,
     pub snapshots: Vec<crate::snapshot::Snapshot>,
@@ -34,7 +55,21 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(
+    pub fn for_log(snapshots: Vec<crate::snapshot::Snapshot>, current_branch: String) -> Self {
+        let count = snapshots.len();
+        Self {
+            mode: AppMode::Log,
+            focus: Focus::Log,
+            branches: vec![],
+            snapshots,
+            current_branch,
+            branch_scroll: super::VirtualScroll::new(0),
+            log_scroll: super::VirtualScroll::new(count),
+            should_quit: false,
+        }
+    }
+
+    pub fn for_branches(
         branches: Vec<crate::workspace::Workspace>,
         snapshots: Vec<crate::snapshot::Snapshot>,
         current_branch: String,
@@ -42,7 +77,8 @@ impl App {
         let branch_count = branches.len();
         let log_count = snapshots.len();
         Self {
-            focus: Focus::Log,
+            mode: AppMode::Branches,
+            focus: Focus::Branches,
             branches,
             snapshots,
             current_branch,
@@ -61,16 +97,22 @@ impl App {
                 return true;
             }
             (_, KeyCode::Tab) => {
-                self.focus = self.focus.cycle();
+                self.focus = self.focus.cycle(self.mode);
             }
             (KeyModifiers::SHIFT, KeyCode::BackTab) => {
-                self.focus = self.focus.cycle_back();
+                self.focus = self.focus.cycle_back(self.mode);
             }
             (_, KeyCode::Up | KeyCode::Char('k')) => self.scroll_up(),
             (_, KeyCode::Down | KeyCode::Char('j')) => self.scroll_down(),
-            (_, KeyCode::Char('1')) => self.focus = Focus::Branches,
-            (_, KeyCode::Char('2')) => self.focus = Focus::Log,
-            (_, KeyCode::Char('3')) => self.focus = Focus::Detail,
+            (KeyModifiers::CONTROL, KeyCode::Char('b')) => {
+                if self.mode == AppMode::Log {
+                    self.mode = AppMode::Branches;
+                    self.focus = Focus::Branches;
+                } else {
+                    self.mode = AppMode::Log;
+                    self.focus = Focus::Log;
+                }
+            }
             _ => {}
         }
         false
@@ -90,11 +132,6 @@ impl App {
             Focus::Log => self.log_scroll.scroll_down(1),
             Focus::Detail => {}
         }
-    }
-
-    pub fn selected_branch(&self) -> Option<&crate::workspace::Workspace> {
-        let idx = self.branch_scroll.selected_index()?;
-        self.branches.get(idx)
     }
 
     pub fn selected_snapshot(&self) -> Option<&crate::snapshot::Snapshot> {

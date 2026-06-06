@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use super::app::{App, Focus};
+use super::app::{App, AppMode, Focus};
 
 pub fn render(f: &mut Frame, app: &App) {
     let size = f.area();
@@ -20,16 +20,24 @@ pub fn render(f: &mut Frame, app: &App) {
         .split(size);
 
     render_header(f, chunks[0], app);
-    render_content(f, chunks[1], app);
-    render_footer(f, chunks[2]);
+    match app.mode {
+        AppMode::Log => render_log_mode(f, chunks[1], app),
+        AppMode::Branches => render_branches_mode(f, chunks[1], app),
+    }
+    render_footer(f, chunks[2], app);
 }
 
 fn render_header(f: &mut Frame, area: Rect, app: &App) {
+    let mode_label = match app.mode {
+        AppMode::Log => "log",
+        AppMode::Branches => "branches",
+    };
     let title = format!(
-        " noa v{}  |  branch: {}  |  {} snapshots",
+        " noa v{}  |  {}  |  branch: {}  |  {} snapshots",
         env!("CARGO_PKG_VERSION"),
+        mode_label,
         app.current_branch,
-        app.snapshots.len()
+        app.snapshots.len(),
     );
     let header = Paragraph::new(title)
         .style(Style::default().fg(Color::Cyan).bold())
@@ -37,22 +45,40 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(header, area);
 }
 
-fn render_footer(f: &mut Frame, area: Rect) {
-    let help = Line::from(vec![
+fn render_footer(f: &mut Frame, area: Rect, app: &App) {
+    let mut spans = vec![
         Span::styled(" q/Esc", Style::default().fg(Color::Yellow).bold()),
         Span::raw(" quit "),
         Span::styled(" Tab", Style::default().fg(Color::Yellow).bold()),
-        Span::raw(" switch panel "),
+        Span::raw(" panel "),
         Span::styled(" j/k", Style::default().fg(Color::Yellow).bold()),
         Span::raw(" scroll "),
-        Span::styled(" 1/2/3", Style::default().fg(Color::Yellow).bold()),
-        Span::raw(" branches/log/detail "),
-    ]);
+        Span::styled(" Ctrl+B", Style::default().fg(Color::Yellow).bold()),
+        Span::raw(" toggle mode "),
+    ];
+    if app.mode == AppMode::Log {
+        spans.push(Span::styled(
+            " Enter",
+            Style::default().fg(Color::Yellow).bold(),
+        ));
+        spans.push(Span::raw(" detail "));
+    }
+    let help = Line::from(spans);
     let footer = Paragraph::new(help).style(Style::default().on_dark_gray());
     f.render_widget(footer, area);
 }
 
-fn render_content(f: &mut Frame, area: Rect, app: &App) {
+fn render_log_mode(f: &mut Frame, area: Rect, app: &App) {
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .split(area);
+
+    render_log(f, columns[0], app);
+    render_detail(f, columns[1], app);
+}
+
+fn render_branches_mode(f: &mut Frame, area: Rect, app: &App) {
     let columns = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -109,7 +135,7 @@ fn render_branches(f: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
-    let list = List::new(items);
+    let list = List::new(items).highlight_style(Style::default().bg(Color::DarkGray).bold());
     let mut state = ListState::default();
     if focused {
         if let Some(idx) = app.branch_scroll.selected_index() {
@@ -290,7 +316,24 @@ mod tests {
         }
     }
 
-    fn make_app() -> App {
+    fn make_log_app() -> App {
+        let snapshots = vec![
+            make_snap("noa_s1", "default", "initial commit", 1000000000_000000),
+            make_snap("noa_s2", "feature", "add feature module", 1000001000_000000),
+        ];
+        App {
+            mode: AppMode::Log,
+            focus: Focus::Log,
+            branches: vec![],
+            snapshots,
+            current_branch: "default".to_string(),
+            branch_scroll: VirtualScroll::new(0),
+            log_scroll: VirtualScroll::new(2),
+            should_quit: false,
+        }
+    }
+
+    fn make_branches_app() -> App {
         let branches = vec![
             crate::workspace::Workspace {
                 name: "default".to_string(),
@@ -313,10 +356,11 @@ mod tests {
         ];
         let snapshots = vec![
             make_snap("noa_s1", "default", "initial commit", 1000000000_000000),
-            make_snap("noa_s2", "feature", "add feature module", 1000001000_000000),
+            make_snap("noa_s2", "feature", "add feature", 1000001000_000000),
         ];
         App {
-            focus: Focus::Log,
+            mode: AppMode::Branches,
+            focus: Focus::Branches,
             branches,
             snapshots,
             current_branch: "default".to_string(),
@@ -327,26 +371,58 @@ mod tests {
     }
 
     #[test]
-    fn test_render_80x24() {
-        let app = make_app();
+    fn test_log_mode_80x24() {
+        let app = make_log_app();
         let backend = ratatui::backend::TestBackend::new(80, 24);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app)).unwrap();
-        let buffer = terminal.backend().buffer().clone();
-        assert!(!buffer.content.is_empty());
+        assert!(!terminal.backend().buffer().content.is_empty());
     }
 
     #[test]
-    fn test_render_small_terminal() {
-        let app = make_app();
-        let backend = ratatui::backend::TestBackend::new(40, 12);
+    fn test_branches_mode_80x24() {
+        let app = make_branches_app();
+        let backend = ratatui::backend::TestBackend::new(80, 24);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app)).unwrap();
+        assert!(!terminal.backend().buffer().content.is_empty());
     }
 
     #[test]
-    fn test_render_no_snapshots() {
-        let mut app = make_app();
+    fn test_log_mode_deterministic() {
+        let app = make_log_app();
+        let b1 = ratatui::backend::TestBackend::new(80, 24);
+        let mut t1 = ratatui::Terminal::new(b1).unwrap();
+        t1.draw(|f| render(f, &app)).unwrap();
+        let buf1 = t1.backend().buffer().clone();
+
+        let b2 = ratatui::backend::TestBackend::new(80, 24);
+        let mut t2 = ratatui::Terminal::new(b2).unwrap();
+        t2.draw(|f| render(f, &app)).unwrap();
+        let buf2 = t2.backend().buffer().clone();
+
+        assert_eq!(buf1, buf2);
+    }
+
+    #[test]
+    fn test_branches_mode_deterministic() {
+        let app = make_branches_app();
+        let b1 = ratatui::backend::TestBackend::new(80, 24);
+        let mut t1 = ratatui::Terminal::new(b1).unwrap();
+        t1.draw(|f| render(f, &app)).unwrap();
+        let buf1 = t1.backend().buffer().clone();
+
+        let b2 = ratatui::backend::TestBackend::new(80, 24);
+        let mut t2 = ratatui::Terminal::new(b2).unwrap();
+        t2.draw(|f| render(f, &app)).unwrap();
+        let buf2 = t2.backend().buffer().clone();
+
+        assert_eq!(buf1, buf2);
+    }
+
+    #[test]
+    fn test_empty_snapshots() {
+        let mut app = make_log_app();
         app.snapshots.clear();
         app.log_scroll.set_total(0);
         let backend = ratatui::backend::TestBackend::new(80, 24);
@@ -355,17 +431,16 @@ mod tests {
     }
 
     #[test]
-    fn test_render_focus_branches() {
-        let mut app = make_app();
-        app.focus = Focus::Branches;
-        let backend = ratatui::backend::TestBackend::new(80, 24);
+    fn test_small_terminal() {
+        let app = make_log_app();
+        let backend = ratatui::backend::TestBackend::new(40, 12);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app)).unwrap();
     }
 
     #[test]
-    fn test_render_many_snapshots() {
-        let mut app = make_app();
+    fn test_many_snapshots_scroll() {
+        let mut app = make_log_app();
         let mut snaps = Vec::new();
         for i in 0..50 {
             snaps.push(make_snap(
@@ -378,25 +453,25 @@ mod tests {
         app.snapshots = snaps;
         app.log_scroll.set_total(50);
         app.log_scroll.scroll_down(10);
-
         let backend = ratatui::backend::TestBackend::new(80, 24);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app)).unwrap();
     }
 
     #[test]
-    fn test_render_deterministic_output() {
-        let app = make_app();
-        let backend1 = ratatui::backend::TestBackend::new(80, 24);
-        let mut terminal1 = ratatui::Terminal::new(backend1).unwrap();
-        terminal1.draw(|f| render(f, &app)).unwrap();
-        let buf1 = terminal1.backend().buffer().clone();
+    fn test_log_mode_and_branches_mode_produce_different_output() {
+        let log_app = make_log_app();
+        let b1 = ratatui::backend::TestBackend::new(80, 24);
+        let mut t1 = ratatui::Terminal::new(b1).unwrap();
+        t1.draw(|f| render(f, &log_app)).unwrap();
+        let buf1 = t1.backend().buffer().clone();
 
-        let backend2 = ratatui::backend::TestBackend::new(80, 24);
-        let mut terminal2 = ratatui::Terminal::new(backend2).unwrap();
-        terminal2.draw(|f| render(f, &app)).unwrap();
-        let buf2 = terminal2.backend().buffer().clone();
+        let branches_app = make_branches_app();
+        let b2 = ratatui::backend::TestBackend::new(80, 24);
+        let mut t2 = ratatui::Terminal::new(b2).unwrap();
+        t2.draw(|f| render(f, &branches_app)).unwrap();
+        let buf2 = t2.backend().buffer().clone();
 
-        assert_eq!(buf1, buf2);
+        assert_ne!(buf1, buf2);
     }
 }

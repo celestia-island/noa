@@ -29,6 +29,8 @@ enum Commands {
         workspace: Option<String>,
         #[arg(short, long, default_value_t = 20)]
         limit: usize,
+        #[arg(short, long)]
+        tui: bool,
     },
     Snapshot {
         #[command(subcommand)]
@@ -67,7 +69,6 @@ enum Commands {
         #[arg(short, long)]
         path: Option<String>,
     },
-    Tui,
 }
 
 #[derive(Subcommand)]
@@ -95,7 +96,10 @@ enum WorkspaceSub {
     Switch {
         name: String,
     },
-    List,
+    List {
+        #[arg(short, long)]
+        tui: bool,
+    },
     Delete {
         name: String,
     },
@@ -123,8 +127,24 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Status) => {
             cli::status::run().await?;
         }
-        Some(Commands::Log { workspace, limit }) => {
-            cli::log_cmd::run(workspace.as_deref(), limit).await?;
+        Some(Commands::Log {
+            workspace,
+            limit,
+            tui,
+        }) => {
+            if tui {
+                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
+                let repo = libnoa::repo::Repository::open(&root)?;
+                let snap_store = repo.snapshot_store()?;
+                let snapshots = snap_store.list_all().await?;
+                let current = repo.read_head()?;
+                let app = libnoa::tui::App::for_log(snapshots, current);
+                let mut terminal = libnoa::tui::setup_terminal()?;
+                libnoa::tui::run_interactive(&mut terminal, app)?;
+                libnoa::tui::cleanup_terminal(&mut terminal)?;
+            } else {
+                cli::log_cmd::run(workspace.as_deref(), limit).await?;
+            }
         }
         Some(Commands::Snapshot { cmd }) => match cmd {
             SnapshotSub::Create { message, author } => {
@@ -154,10 +174,22 @@ async fn main() -> anyhow::Result<()> {
                 let repo = libnoa::repo::Repository::open(&root)?;
                 cli::workspace_cmd::run_switch(&repo, &name).await?;
             }
-            WorkspaceSub::List => {
+            WorkspaceSub::List { tui } => {
                 let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
                 let repo = libnoa::repo::Repository::open(&root)?;
-                cli::workspace_cmd::run_list(&repo).await?;
+                if tui {
+                    let ws_mgr = repo.workspace_manager()?;
+                    let branches = ws_mgr.list().await?;
+                    let snap_store = repo.snapshot_store()?;
+                    let snapshots = snap_store.list_all().await?;
+                    let current = repo.read_head()?;
+                    let app = libnoa::tui::App::for_branches(branches, snapshots, current);
+                    let mut terminal = libnoa::tui::setup_terminal()?;
+                    libnoa::tui::run_interactive(&mut terminal, app)?;
+                    libnoa::tui::cleanup_terminal(&mut terminal)?;
+                } else {
+                    cli::workspace_cmd::run_list(&repo).await?;
+                }
             }
             WorkspaceSub::Delete { name } => {
                 let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
@@ -207,21 +239,6 @@ async fn main() -> anyhow::Result<()> {
             let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
             let repo = libnoa::repo::Repository::open(&root)?;
             cli::resolve_cmd::run_resolve(&repo, &strategy, path.as_deref()).await?;
-        }
-        Some(Commands::Tui) => {
-            let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
-            let repo = libnoa::repo::Repository::open(&root)?;
-
-            let ws_mgr = repo.workspace_manager()?;
-            let branches = ws_mgr.list().await?;
-            let snap_store = repo.snapshot_store()?;
-            let snapshots = snap_store.list_all().await?;
-            let current = repo.read_head()?;
-
-            let app = libnoa::tui::App::new(branches, snapshots, current);
-            let mut terminal = libnoa::tui::setup_terminal()?;
-            libnoa::tui::run_interactive(&mut terminal, app)?;
-            libnoa::tui::cleanup_terminal(&mut terminal)?;
         }
     }
 

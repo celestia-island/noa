@@ -3,7 +3,7 @@ mod render;
 mod terminal;
 mod virtual_scroll;
 
-pub use app::{App, Focus};
+pub use app::{App, AppMode, Focus};
 pub use terminal::{cleanup_terminal, setup_terminal};
 pub use virtual_scroll::VirtualScroll;
 
