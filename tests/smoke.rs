@@ -84,7 +84,7 @@ async fn smoke_test_full_snapshot_workflow() {
 
     let engine = SnapshotEngine::new(agent_log, snap_store, obj_store);
     let snapshot = engine
-        .compute("default", vec![], "test-author", "initial commit")
+        .compute("default", vec![], 0, "test-author", "initial commit")
         .await
         .unwrap();
 
@@ -124,7 +124,7 @@ async fn smoke_test_workspace_create_switch_merge() {
         .unwrap();
     let engine = SnapshotEngine::new(agent_log, snap_store.clone(), obj_store.clone());
     let base_snap = engine
-        .compute("default", vec![], "author", "base")
+        .compute("default", vec![], 0, "author", "base")
         .await
         .unwrap();
     ws_mgr.update_head("default", &base_snap.id).await.unwrap();
@@ -134,6 +134,7 @@ async fn smoke_test_workspace_create_switch_merge() {
         head: base_snap.id.clone(),
         base: base_snap.id.clone(),
         agent_id: Some("agent-001".to_string()),
+        last_seq: 0,
         created_at: 1000,
         updated_at: 1000,
     };
@@ -155,6 +156,7 @@ async fn smoke_test_workspace_create_switch_merge() {
         .compute(
             "feature",
             vec![base_snap.id.clone()],
+            0,
             "agent-001",
             "add feature",
         )
@@ -244,7 +246,7 @@ async fn smoke_test_ignore_filtering_in_snapshot() {
     let matcher = libnoa::ignore::IgnoreMatcher::from_repo_root(root);
     let engine = SnapshotEngine::new(agent_log, snap_store, obj_store).with_ignore(matcher);
     let snap = engine
-        .compute("default", vec![], "test", "filtered")
+        .compute("default", vec![], 0, "test", "filtered")
         .await
         .unwrap();
 
@@ -338,6 +340,7 @@ async fn smoke_test_concurrent_agent_logs() {
             head: SnapshotId("noa_empty".to_string()),
             base: SnapshotId("noa_empty".to_string()),
             agent_id: Some(format!("agent-{}", i)),
+            last_seq: 0,
             created_at: 0,
             updated_at: 0,
         };

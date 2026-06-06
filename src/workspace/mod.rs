@@ -14,6 +14,7 @@ pub struct Workspace {
     pub head: SnapshotId,
     pub base: SnapshotId,
     pub agent_id: Option<String>,
+    pub last_seq: u64,
     pub created_at: u64,
     pub updated_at: u64,
 }
@@ -109,6 +110,22 @@ impl WorkspaceManager {
         ws.updated_at = chrono::Utc::now().timestamp_micros() as u64;
         self.put(&ws).await
     }
+
+    pub async fn update_head_and_seq(
+        &self,
+        name: &str,
+        new_head: &SnapshotId,
+        last_seq: u64,
+    ) -> Result<()> {
+        let mut ws = self
+            .get(name)
+            .await?
+            .ok_or_else(|| NoaError::WorkspaceNotFound(name.to_string()))?;
+        ws.head = new_head.clone();
+        ws.last_seq = last_seq;
+        ws.updated_at = chrono::Utc::now().timestamp_micros() as u64;
+        self.put(&ws).await
+    }
 }
 
 #[cfg(test)]
@@ -133,6 +150,7 @@ mod tests {
             head: SnapshotId("noa_base".to_string()),
             base: SnapshotId("noa_base".to_string()),
             agent_id: None,
+            last_seq: 0,
             created_at: 1000,
             updated_at: 1000,
         }
@@ -217,6 +235,7 @@ mod tests {
             head: SnapshotId("noa_base".to_string()),
             base: SnapshotId("noa_base".to_string()),
             agent_id: Some("agent-007".to_string()),
+            last_seq: 0,
             created_at: 1000,
             updated_at: 1000,
         };
@@ -258,6 +277,7 @@ mod tests {
             head: SnapshotId("noa_head".to_string()),
             base: SnapshotId("noa_base".to_string()),
             agent_id: Some("agent-001".to_string()),
+            last_seq: 5,
             created_at: 12345,
             updated_at: 67890,
         };

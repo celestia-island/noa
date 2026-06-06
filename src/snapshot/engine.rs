@@ -48,6 +48,7 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
         &self,
         workspace: &str,
         parent_ids: Vec<SnapshotId>,
+        since_seq: u64,
         author: &str,
         message: &str,
     ) -> Result<Snapshot> {
@@ -57,7 +58,11 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
                 .object_store
                 .get_tree(&crate::object::TreeId(parent.tree_hash))
                 .await?;
-            let entries = self.log.read_all().await?;
+            let entries = if since_seq > 0 {
+                self.log.read_since(since_seq).await?
+            } else {
+                self.log.read_all().await?
+            };
             self.build_tree_from_entries_with_base(&parent_tree.0, &entries)
                 .await?
         } else {
@@ -255,7 +260,7 @@ mod tests {
             .unwrap();
 
         let snap = engine
-            .compute("default", vec![], "test", "initial")
+            .compute("default", vec![], 0, "test", "initial")
             .await
             .unwrap();
         assert!(snap.id.0.starts_with("noa_"));
@@ -286,7 +291,7 @@ mod tests {
             .unwrap();
 
         let snap = engine
-            .compute("ws1", vec![], "agent", "delete test")
+            .compute("ws1", vec![], 0, "agent", "delete test")
             .await
             .unwrap();
 
@@ -309,7 +314,7 @@ mod tests {
             .unwrap();
 
         let parent = engine
-            .compute("ws1", vec![], "test", "parent")
+            .compute("ws1", vec![], 0, "test", "parent")
             .await
             .unwrap();
 
@@ -319,7 +324,7 @@ mod tests {
             .await
             .unwrap();
         let child = engine
-            .compute("ws1", vec![parent.id.clone()], "test", "child")
+            .compute("ws1", vec![parent.id.clone()], 0, "test", "child")
             .await
             .unwrap();
 
@@ -360,7 +365,7 @@ mod tests {
             .unwrap();
 
         let snap = engine
-            .compute("default", vec![], "test", "ignore noa")
+            .compute("default", vec![], 0, "test", "ignore noa")
             .await
             .unwrap();
         let tree = engine
@@ -407,7 +412,7 @@ mod tests {
             .unwrap();
 
         let snap = engine
-            .compute("default", vec![], "test", "ignore gitignore")
+            .compute("default", vec![], 0, "test", "ignore gitignore")
             .await
             .unwrap();
         let tree = engine
@@ -449,7 +454,7 @@ mod tests {
             .unwrap();
 
         let snap = engine
-            .compute("default", vec![], "test", "whitelist")
+            .compute("default", vec![], 0, "test", "whitelist")
             .await
             .unwrap();
         let tree = engine

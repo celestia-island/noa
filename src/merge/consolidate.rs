@@ -22,7 +22,7 @@ impl<'a, L: AgentLog, S: SnapshotStore, O: ObjectStore> Consolidator<'a, L, S, O
         message: &str,
     ) -> Result<crate::snapshot::Snapshot> {
         self.engine
-            .compute(workspace, parent_ids, author, message)
+            .compute(workspace, parent_ids, 0, author, message)
             .await
     }
 }

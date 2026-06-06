@@ -22,6 +22,7 @@ pub async fn run_create(repo: &Repository, name: &str, agent: Option<&str>) -> R
         head: base_snapshot.clone(),
         base: base_snapshot.clone(),
         agent_id: agent.map(|s| s.to_string()),
+        last_seq: 0,
         created_at: now,
         updated_at: now,
     };

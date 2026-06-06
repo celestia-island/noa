@@ -15,9 +15,9 @@ pub async fn run_create(repo: &Repository, message: &str, author: &str) -> Resul
     let obj_store = repo.object_store()?;
     let agent_log = repo.agent_log(&head_ws)?;
 
-    let parent_ids = match ws_mgr.get(&head_ws).await? {
-        Some(ws) => vec![ws.head],
-        None => vec![],
+    let (parent_ids, since_seq) = match ws_mgr.get(&head_ws).await? {
+        Some(ws) => (vec![ws.head], ws.last_seq),
+        None => (vec![], 0),
     };
 
     let matcher = IgnoreMatcher::from_repo_root(&repo.root);
@@ -26,10 +26,13 @@ pub async fn run_create(repo: &Repository, message: &str, author: &str) -> Resul
         .with_repo_root(repo.root.clone())
         .with_compact_on_snapshot();
     let snapshot = engine
-        .compute(&head_ws, parent_ids, author, message)
+        .compute(&head_ws, parent_ids, since_seq, author, message)
         .await?;
 
-    ws_mgr.update_head(&head_ws, &snapshot.id).await?;
+    let new_seq = crate::log::AgentLog::next_seq(&engine.log).await?;
+    ws_mgr
+        .update_head_and_seq(&head_ws, &snapshot.id, new_seq)
+        .await?;
 
     let ref_store = repo.ref_store()?;
     ref_store.cas(&head_ws, None, &snapshot.id).await.ok();
@@ -100,7 +103,6 @@ pub async fn run_diff(repo: &Repository, a: &str, b: &str) -> Result<()> {
             crate::snapshot::DiffKind::Added => "added",
             crate::snapshot::DiffKind::Modified => "modified",
             crate::snapshot::DiffKind::Deleted => "deleted",
-
         };
         println!("  {:<10} {}", kind, diff.path);
     }

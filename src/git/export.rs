@@ -196,6 +196,7 @@ pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
             head: head_snap_id.clone(),
             base: head_snap_id.clone(),
             agent_id: None,
+            last_seq: 0,
             created_at: now,
             updated_at: now,
         })

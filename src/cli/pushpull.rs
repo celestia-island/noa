@@ -238,6 +238,7 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
             head: head_snap_id.clone(),
             base: head_snap_id.clone(),
             agent_id: None,
+            last_seq: 0,
             created_at: now,
             updated_at: now,
         })
