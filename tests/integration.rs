@@ -1,7 +1,5 @@
-use std::sync::Arc;
-
 use libnoa::{
-    log::{AgentLog, FileAgentLog, LogEntry, OpType},
+    log::{AgentLog, LogEntry, OpType},
     object::ObjectStore,
     repo::Repository,
     snapshot::{content_addressed_snapshot_id, SnapshotEngine, SnapshotId, SnapshotStore},

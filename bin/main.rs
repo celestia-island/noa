@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 use libnoa::cli;
+use libnoa::snapshot::SnapshotStore;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -66,6 +67,7 @@ enum Commands {
         #[arg(short, long)]
         path: Option<String>,
     },
+    Tui,
 }
 
 #[derive(Subcommand)]
@@ -205,6 +207,21 @@ async fn main() -> anyhow::Result<()> {
             let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
             let repo = libnoa::repo::Repository::open(&root)?;
             cli::resolve_cmd::run_resolve(&repo, &strategy, path.as_deref()).await?;
+        }
+        Some(Commands::Tui) => {
+            let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
+            let repo = libnoa::repo::Repository::open(&root)?;
+
+            let ws_mgr = repo.workspace_manager()?;
+            let branches = ws_mgr.list().await?;
+            let snap_store = repo.snapshot_store()?;
+            let snapshots = snap_store.list_all().await?;
+            let current = repo.read_head()?;
+
+            let app = libnoa::tui::App::new(branches, snapshots, current);
+            let mut terminal = libnoa::tui::setup_terminal()?;
+            libnoa::tui::run_interactive(&mut terminal, app)?;
+            libnoa::tui::cleanup_terminal(&mut terminal)?;
         }
     }
 

@@ -6,12 +6,11 @@ pub struct VirtualScroll {
 }
 
 impl VirtualScroll {
-    #[must_use]
     pub fn new(total_items: usize) -> Self {
         Self {
             total_items,
             scroll_offset: 0,
-            visible_height: 20,
+            visible_height: 0,
         }
     }
 
@@ -38,7 +37,6 @@ impl VirtualScroll {
         self.scroll_offset = index.min(self.max_offset());
     }
 
-    #[must_use]
     pub fn selected_index(&self) -> Option<usize> {
         if self.total_items == 0 {
             None
@@ -47,19 +45,16 @@ impl VirtualScroll {
         }
     }
 
-    #[must_use]
     pub fn visible_range(&self) -> std::ops::Range<usize> {
         let start = self.scroll_offset;
         let end = (start + self.visible_height).min(self.total_items);
         start..end
     }
 
-    #[must_use]
     pub fn is_at_top(&self) -> bool {
         self.scroll_offset == 0
     }
 
-    #[must_use]
     pub fn is_at_bottom(&self) -> bool {
         self.scroll_offset >= self.max_offset()
     }
