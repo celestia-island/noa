@@ -1,7 +1,5 @@
 # 架构
 
-完整实现计划见 [PLAN.md](../../PLAN.md)。
-
 ## 核心组件
 
 ### ObjectStore（对象存储）
@@ -64,7 +62,7 @@ Snapshot = {
 
 ```mermaid
 graph TD
-    NOA[".nao/"] --> DB["noa.redb<br/>（redb 数据库：blobs, trees, snapshots, workspaces, refs）"]
+    NOA[".noa/"] --> DB["noa.redb<br/>（redb 数据库：blobs, trees, snapshots, workspaces, refs）"]
     NOA --> LOGS["agent-logs/"]
     LOGS --> LOG1["&lt;ws&gt;.log<br/>（每个工作区的 JSONL 文件）"]
     NOA --> HEAD["HEAD<br/>（当前工作区名称）"]

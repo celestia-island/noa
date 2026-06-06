@@ -29,7 +29,7 @@
 
 <div align="center">
 
-**[English](../../README.md)** &bull; **[简体中文](../zh-hans/README.md)** &bull;
+**[English](../en/README.md)** &bull; **[简体中文]** &bull;
 **[繁體中文](../zh-hant/README.md)** &bull; **[日本語](../ja/README.md)** &bull;
 **[한국어](../ko/README.md)** &bull; **[Français](../fr/README.md)** &bull;
 **[Español](../es/README.md)** &bull; **[Русский](../ru/README.md)** &bull;
