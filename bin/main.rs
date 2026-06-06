@@ -22,6 +22,8 @@ enum Commands {
         path: PathBuf,
         #[arg(long)]
         noa_remote: Option<String>,
+        #[arg(long)]
+        git: bool,
     },
     Status,
     Log {
@@ -121,8 +123,16 @@ async fn main() -> anyhow::Result<()> {
 
     match app.command {
         None => {}
-        Some(Commands::Init { path, noa_remote }) => {
-            cli::init::run(&cli::init::InitArgs { path, noa_remote })?;
+        Some(Commands::Init {
+            path,
+            noa_remote,
+            git,
+        }) => {
+            cli::init::run(&cli::init::InitArgs {
+                path,
+                noa_remote,
+                git,
+            })?;
         }
         Some(Commands::Status) => {
             cli::status::run().await?;
