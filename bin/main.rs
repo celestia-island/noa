@@ -1,15 +1,32 @@
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use std::path::PathBuf;
 
 use libnoa::cli;
 use libnoa::snapshot::SnapshotStore;
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+static VERSION_TEXT: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    "\n\n",
+    "An AI-native distributed version control system with per-agent workspace\n",
+    "isolation, JSONL append-only logs, snapshot-based history, and full git\n",
+    "protocol compatibility.\n\n",
+    "Authors:  ",
+    env!("CARGO_PKG_AUTHORS"),
+    "\n",
+    "License:  ",
+    env!("CARGO_PKG_LICENSE"),
+    "\n",
+    "Repository: ",
+    env!("CARGO_PKG_REPOSITORY"),
+    "\n",
+    "Documentation: https://docs.rs/libnoa",
+);
 
 #[derive(Parser)]
 #[command(name = "noa")]
 #[command(about = "AI-native distributed version control system")]
-#[command(version = VERSION)]
+#[command(version = VERSION_TEXT)]
+#[command(after_help = "Run 'noa <COMMAND> --help' for more information on a command.")]
 struct App {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -122,7 +139,10 @@ async fn main() -> anyhow::Result<()> {
     let app = App::parse();
 
     match app.command {
-        None => {}
+        None => {
+            let mut cmd = App::command();
+            cmd.print_help()?;
+        }
         Some(Commands::Init {
             path,
             noa_remote,
