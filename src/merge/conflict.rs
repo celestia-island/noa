@@ -6,7 +6,6 @@ use crate::object::TreeEntry;
 pub enum ConflictResolution {
     Ours,
     Theirs,
-    Manual { resolved_id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,16 +74,9 @@ impl MergeOutput {
             .iter()
             .filter_map(|entry| match entry {
                 MergedEntry::Clean(e) => Some(e.clone()),
-                MergedEntry::Conflict { ours, theirs, base } => match resolution {
+                MergedEntry::Conflict { ours, theirs, .. } => match resolution {
                     ConflictResolution::Ours => ours.clone(),
                     ConflictResolution::Theirs => theirs.clone(),
-                    ConflictResolution::Manual { resolved_id } => {
-                        base.as_ref().map(|b| TreeEntry {
-                            name: b.name.clone(),
-                            kind: b.kind,
-                            id: resolved_id.clone(),
-                        })
-                    }
                 },
             })
             .collect()

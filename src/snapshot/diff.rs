@@ -5,7 +5,6 @@ pub enum DiffKind {
     Added,
     Modified,
     Deleted,
-    Renamed { from: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

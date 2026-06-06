@@ -23,7 +23,8 @@ pub async fn run_create(repo: &Repository, message: &str, author: &str) -> Resul
     let matcher = IgnoreMatcher::from_repo_root(&repo.root);
     let engine = SnapshotEngine::new(agent_log, snap_store, obj_store)
         .with_ignore(matcher)
-        .with_repo_root(repo.root.clone());
+        .with_repo_root(repo.root.clone())
+        .with_compact_on_snapshot();
     let snapshot = engine
         .compute(&head_ws, parent_ids, author, message)
         .await?;
@@ -99,7 +100,7 @@ pub async fn run_diff(repo: &Repository, a: &str, b: &str) -> Result<()> {
             crate::snapshot::DiffKind::Added => "added",
             crate::snapshot::DiffKind::Modified => "modified",
             crate::snapshot::DiffKind::Deleted => "deleted",
-            crate::snapshot::DiffKind::Renamed { .. } => "renamed",
+
         };
         println!("  {:<10} {}", kind, diff.path);
     }
