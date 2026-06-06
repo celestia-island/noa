@@ -111,19 +111,32 @@ pub async fn run_merge(repo: &Repository, from: &str) -> Result<()> {
     let snap_store = repo.snapshot_store()?;
     let obj_store = repo.object_store()?;
 
-    let base_snap = snap_store.get(&cur_ws.base).await?;
-    let ours_snap = snap_store.get(&cur_ws.head).await?;
-    let their_snap = snap_store.get(&from_ws.head).await?;
+    let empty_tree = crate::object::TreeEntries(vec![]);
 
-    let base_tree = obj_store
-        .get_tree(&crate::object::TreeId(base_snap.tree_hash))
-        .await?;
-    let ours_tree = obj_store
-        .get_tree(&crate::object::TreeId(ours_snap.tree_hash))
-        .await?;
-    let theirs_tree = obj_store
-        .get_tree(&crate::object::TreeId(their_snap.tree_hash))
-        .await?;
+    let base_tree = if cur_ws.base.0 == "noa_empty" {
+        empty_tree.clone()
+    } else {
+        let base_snap = snap_store.get(&cur_ws.base).await?;
+        obj_store
+            .get_tree(&crate::object::TreeId(base_snap.tree_hash))
+            .await?
+    };
+    let ours_tree = if cur_ws.head.0 == "noa_empty" {
+        empty_tree.clone()
+    } else {
+        let ours_snap = snap_store.get(&cur_ws.head).await?;
+        obj_store
+            .get_tree(&crate::object::TreeId(ours_snap.tree_hash))
+            .await?
+    };
+    let theirs_tree = if from_ws.head.0 == "noa_empty" {
+        empty_tree
+    } else {
+        let their_snap = snap_store.get(&from_ws.head).await?;
+        obj_store
+            .get_tree(&crate::object::TreeId(their_snap.tree_hash))
+            .await?
+    };
 
     let result = crate::merge::three_way_merge(&base_tree, &ours_tree, &theirs_tree)?;
 
