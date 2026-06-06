@@ -979,3 +979,703 @@ async fn integration_multiple_merge_rounds() {
     assert!(names.contains(&"a.rs"));
     assert!(names.contains(&"b.rs"));
 }
+
+// ============================================================
+// Batch 1: Multi-branch lifecycle (Git t3200 patterns)
+// ============================================================
+
+#[tokio::test]
+async fn branch_create_fails_on_duplicate() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = Repository::init(tmp.path()).unwrap();
+    let ws_mgr = repo.workspace_manager().unwrap();
+    let ws = Workspace {
+        name: "feature".to_string(),
+        head: SnapshotId("noa_empty".to_string()),
+        base: SnapshotId("noa_empty".to_string()),
+        agent_id: None,
+        last_seq: 0,
+        created_at: 1000,
+        updated_at: 1000,
+    };
+    ws_mgr.create(&ws).await.unwrap();
+    assert!(ws_mgr.create(&ws).await.is_err());
+}
+
+#[tokio::test]
+async fn branch_delete_default_succeeds_at_data_layer() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = Repository::init(tmp.path()).unwrap();
+    let ws_mgr = repo.workspace_manager().unwrap();
+    ws_mgr.delete("default").await.unwrap();
+    assert!(ws_mgr.get("default").await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn branch_delete_nonexistent_is_ok() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = Repository::init(tmp.path()).unwrap();
+    let ws_mgr = repo.workspace_manager().unwrap();
+    let result = ws_mgr.delete("ghost").await;
+    assert!(result.is_ok());
+    assert!(ws_mgr.get("ghost").await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn branch_create_many() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = Repository::init(tmp.path()).unwrap();
+    let ws_mgr = repo.workspace_manager().unwrap();
+    let base = ws_mgr.get("default").await.unwrap().unwrap();
+    for i in 0..20 {
+        ws_mgr
+            .create(&Workspace {
+                name: format!("b-{}", i),
+                head: base.head.clone(),
+                base: base.head.clone(),
+                agent_id: None,
+                last_seq: 0,
+                created_at: 1000 + i,
+                updated_at: 1000 + i,
+            })
+            .await
+            .unwrap();
+    }
+    assert_eq!(ws_mgr.list().await.unwrap().len(), 21);
+}
+
+#[tokio::test]
+async fn branch_create_delete_all() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = Repository::init(tmp.path()).unwrap();
+    let ws_mgr = repo.workspace_manager().unwrap();
+    let base = ws_mgr.get("default").await.unwrap().unwrap();
+    for i in 0..5 {
+        ws_mgr
+            .create(&Workspace {
+                name: format!("t-{}", i),
+                head: base.head.clone(),
+                base: base.head.clone(),
+                agent_id: None,
+                last_seq: 0,
+                created_at: 1000,
+                updated_at: 1000,
+            })
+            .await
+            .unwrap();
+    }
+    for i in 0..5 {
+        ws_mgr.delete(&format!("t-{}", i)).await.unwrap();
+    }
+    let rem = ws_mgr.list().await.unwrap();
+    assert_eq!(rem.len(), 1);
+    assert_eq!(rem[0].name, "default");
+}
+
+#[tokio::test]
+async fn branch_switch_roundtrip() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = Repository::init(tmp.path()).unwrap();
+    let ws_mgr = repo.workspace_manager().unwrap();
+    let base = ws_mgr.get("default").await.unwrap().unwrap();
+    ws_mgr
+        .create(&Workspace {
+            name: "feature".to_string(),
+            head: base.head.clone(),
+            base: base.head.clone(),
+            agent_id: None,
+            last_seq: 0,
+            created_at: 1000,
+            updated_at: 1000,
+        })
+        .await
+        .unwrap();
+    repo.write_head("feature").unwrap();
+    assert_eq!(repo.read_head().unwrap(), "feature");
+    repo.write_head("default").unwrap();
+    assert_eq!(repo.read_head().unwrap(), "default");
+}
+
+#[tokio::test]
+async fn branch_fork_inherits_base() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = Repository::init(tmp.path()).unwrap();
+    let ws_mgr = repo.workspace_manager().unwrap();
+    let obj_store = repo.object_store().unwrap();
+    let snap_store = repo.snapshot_store().unwrap();
+    let log = repo.agent_log("default").unwrap();
+    log.append(&make_log_entry(1, OpType::Write, "a.rs", Some("b"), 100))
+        .await
+        .unwrap();
+    let engine = SnapshotEngine::new(log, snap_store.clone(), obj_store);
+    let snap = engine
+        .compute("default", vec![], 0, "a", "base")
+        .await
+        .unwrap();
+    ws_mgr.update_head("default", &snap.id).await.unwrap();
+    ws_mgr
+        .create(&Workspace {
+            name: "f1".to_string(),
+            head: snap.id.clone(),
+            base: snap.id.clone(),
+            agent_id: None,
+            last_seq: 0,
+            created_at: 2000,
+            updated_at: 2000,
+        })
+        .await
+        .unwrap();
+    ws_mgr
+        .create(&Workspace {
+            name: "f2".to_string(),
+            head: snap.id.clone(),
+            base: snap.id.clone(),
+            agent_id: None,
+            last_seq: 0,
+            created_at: 2000,
+            updated_at: 2000,
+        })
+        .await
+        .unwrap();
+    assert_eq!(ws_mgr.get("f1").await.unwrap().unwrap().base, snap.id);
+    assert_eq!(ws_mgr.get("f2").await.unwrap().unwrap().base, snap.id);
+}
+
+#[tokio::test]
+async fn branch_with_agent_id() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = Repository::init(tmp.path()).unwrap();
+    let ws_mgr = repo.workspace_manager().unwrap();
+    ws_mgr
+        .create(&Workspace {
+            name: "a".to_string(),
+            head: SnapshotId("noa_empty".to_string()),
+            base: SnapshotId("noa_empty".to_string()),
+            agent_id: Some("agent-007".to_string()),
+            last_seq: 0,
+            created_at: 1000,
+            updated_at: 1000,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        ws_mgr.get("a").await.unwrap().unwrap().agent_id,
+        Some("agent-007".to_string())
+    );
+}
+
+// ============================================================
+// Batch 2: Merge conflict matrix (Git t7600/t7605 patterns)
+// ============================================================
+
+fn te(name: &str, id: &str) -> libnoa::object::TreeEntry {
+    make_entry(name, id)
+}
+fn tr(entries: Vec<libnoa::object::TreeEntry>) -> libnoa::object::TreeEntries {
+    libnoa::object::TreeEntries(entries)
+}
+
+#[test]
+fn merge_modify_modify_conflict() {
+    let base = tr(vec![te("a.rs", "h0")]);
+    let r = libnoa::merge::three_way_merge(
+        &base,
+        &tr(vec![te("a.rs", "h1")]),
+        &tr(vec![te("a.rs", "h2")]),
+    )
+    .unwrap();
+    assert!(r.has_conflicts());
+    let c = libnoa::merge::extract_conflicts(&r.output);
+    assert_eq!(c.len(), 1);
+    assert_eq!(
+        c[0],
+        libnoa::merge::FileConflict {
+            path: "a.rs".into(),
+            ours_id: Some("h1".into()),
+            theirs_id: Some("h2".into()),
+            base_id: Some("h0".into())
+        }
+    );
+}
+
+#[test]
+fn merge_modify_same_content_no_conflict() {
+    let base = tr(vec![te("a.rs", "h0")]);
+    let r = libnoa::merge::three_way_merge(
+        &base,
+        &tr(vec![te("a.rs", "h1")]),
+        &tr(vec![te("a.rs", "h1")]),
+    )
+    .unwrap();
+    assert!(!r.has_conflicts());
+}
+
+#[test]
+fn merge_add_add_conflict() {
+    let base = tr(vec![]);
+    let r = libnoa::merge::three_way_merge(
+        &base,
+        &tr(vec![te("n.rs", "h1")]),
+        &tr(vec![te("n.rs", "h2")]),
+    )
+    .unwrap();
+    assert!(r.has_conflicts());
+    let c = libnoa::merge::extract_conflicts(&r.output);
+    assert_eq!(c[0].base_id, None);
+}
+
+#[test]
+fn merge_add_add_same_no_conflict() {
+    let base = tr(vec![]);
+    let r = libnoa::merge::three_way_merge(
+        &base,
+        &tr(vec![te("n.rs", "h1")]),
+        &tr(vec![te("n.rs", "h1")]),
+    )
+    .unwrap();
+    assert!(!r.has_conflicts());
+}
+
+#[test]
+fn merge_delete_modify_conflict() {
+    let base = tr(vec![te("a.rs", "h0"), te("b.rs", "h1")]);
+    let r = libnoa::merge::three_way_merge(
+        &base,
+        &tr(vec![te("a.rs", "h0")]),
+        &tr(vec![te("a.rs", "h0"), te("b.rs", "h2")]),
+    )
+    .unwrap();
+    assert!(r.has_conflicts());
+    let c = libnoa::merge::extract_conflicts(&r.output);
+    assert_eq!(c[0].ours_id, None);
+    assert_eq!(c[0].theirs_id, Some("h2".into()));
+}
+
+#[test]
+fn merge_modify_delete_conflict() {
+    let base = tr(vec![te("a.rs", "h0")]);
+    let r =
+        libnoa::merge::three_way_merge(&base, &tr(vec![te("a.rs", "h1")]), &tr(vec![])).unwrap();
+    assert!(r.has_conflicts());
+    let c = libnoa::merge::extract_conflicts(&r.output);
+    assert_eq!(c[0].ours_id, Some("h1".into()));
+    assert_eq!(c[0].theirs_id, None);
+}
+
+#[test]
+fn merge_both_delete_no_conflict() {
+    let base = tr(vec![te("a.rs", "h0"), te("b.rs", "h1")]);
+    let r = libnoa::merge::three_way_merge(
+        &base,
+        &tr(vec![te("a.rs", "h0")]),
+        &tr(vec![te("a.rs", "h0")]),
+    )
+    .unwrap();
+    assert!(!r.has_conflicts());
+}
+
+#[test]
+fn merge_different_files_no_conflict() {
+    let base = tr(vec![te("a.rs", "h0")]);
+    let r = libnoa::merge::three_way_merge(
+        &base,
+        &tr(vec![te("a.rs", "h0"), te("b.rs", "h1")]),
+        &tr(vec![te("a.rs", "h0"), te("c.rs", "h2")]),
+    )
+    .unwrap();
+    assert!(!r.has_conflicts());
+    let t = r.into_tree_entries(&libnoa::merge::ConflictResolution::Ours);
+    let n: Vec<&str> = t.0.iter().map(|e| e.name.as_str()).collect();
+    assert!(n.contains(&"b.rs"));
+    assert!(n.contains(&"c.rs"));
+}
+
+#[test]
+fn merge_empty_all_no_conflict() {
+    let e = tr(vec![]);
+    let r = libnoa::merge::three_way_merge(&e, &e, &e).unwrap();
+    assert!(!r.has_conflicts());
+    assert!(r
+        .into_tree_entries(&libnoa::merge::ConflictResolution::Ours)
+        .0
+        .is_empty());
+}
+
+#[test]
+fn merge_ours_strategy() {
+    let base = tr(vec![te("a.rs", "h0")]);
+    let r = libnoa::merge::three_way_merge(
+        &base,
+        &tr(vec![te("a.rs", "h1")]),
+        &tr(vec![te("a.rs", "h2")]),
+    )
+    .unwrap();
+    assert_eq!(
+        r.into_tree_entries(&libnoa::merge::ConflictResolution::Ours)
+            .0[0]
+            .id,
+        "h1"
+    );
+}
+
+#[test]
+fn merge_theirs_strategy() {
+    let base = tr(vec![te("a.rs", "h0")]);
+    let r = libnoa::merge::three_way_merge(
+        &base,
+        &tr(vec![te("a.rs", "h1")]),
+        &tr(vec![te("a.rs", "h2")]),
+    )
+    .unwrap();
+    assert_eq!(
+        r.into_tree_entries(&libnoa::merge::ConflictResolution::Theirs)
+            .0[0]
+            .id,
+        "h2"
+    );
+}
+
+#[test]
+fn merge_multi_conflict() {
+    let base = tr(vec![te("a.rs", "h0"), te("b.rs", "h1"), te("c.rs", "h2")]);
+    let r = libnoa::merge::three_way_merge(
+        &base,
+        &tr(vec![te("a.rs", "x"), te("b.rs", "y"), te("c.rs", "h2")]),
+        &tr(vec![te("a.rs", "z"), te("b.rs", "w"), te("c.rs", "h2")]),
+    )
+    .unwrap();
+    assert_eq!(libnoa::merge::extract_conflicts(&r.output).len(), 2);
+}
+
+#[test]
+fn merge_stress_100_files() {
+    let mut b = Vec::new();
+    let mut o = Vec::new();
+    let mut t = Vec::new();
+    for i in 0..100 {
+        b.push(te(&format!("f{}.rs", i), &format!("b{}", i)));
+        if i % 4 == 0 {
+            o.push(te(&format!("f{}.rs", i), &format!("o{}", i)));
+        } else {
+            o.push(te(&format!("f{}.rs", i), &format!("b{}", i)));
+        }
+        if i % 4 == 0 {
+            t.push(te(&format!("f{}.rs", i), &format!("t{}", i)));
+        } else {
+            t.push(te(&format!("f{}.rs", i), &format!("b{}", i)));
+        }
+    }
+    let r = libnoa::merge::three_way_merge(&tr(b), &tr(o), &tr(t)).unwrap();
+    assert_eq!(libnoa::merge::extract_conflicts(&r.output).len(), 25);
+}
+
+#[test]
+fn merge_idempotent() {
+    let base = tr(vec![te("a.rs", "h0")]);
+    let ours = tr(vec![te("a.rs", "h1")]);
+    let theirs = tr(vec![te("a.rs", "h2")]);
+    let r1 = libnoa::merge::three_way_merge(&base, &ours, &theirs).unwrap();
+    let r2 = libnoa::merge::three_way_merge(&base, &ours, &theirs).unwrap();
+    assert_eq!(
+        libnoa::merge::extract_conflicts(&r1.output),
+        libnoa::merge::extract_conflicts(&r2.output)
+    );
+}
+
+// ============================================================
+// Batch 3: Snapshot, compaction, diff edge cases
+// ============================================================
+
+#[tokio::test]
+async fn snapshot_empty_tree() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = Repository::init(tmp.path()).unwrap();
+    let log = repo.agent_log("default").unwrap();
+    let engine = SnapshotEngine::new(
+        log,
+        repo.snapshot_store().unwrap(),
+        repo.object_store().unwrap(),
+    );
+    let s = engine
+        .compute("default", vec![], 0, "a", "empty")
+        .await
+        .unwrap();
+    let t = engine
+        .object_store
+        .get_tree(&libnoa::object::TreeId(s.tree_hash.clone()))
+        .await
+        .unwrap();
+    assert!(t.0.is_empty());
+}
+
+#[tokio::test]
+async fn snapshot_delete_removes_file() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = Repository::init(tmp.path()).unwrap();
+    let log = repo.agent_log("default").unwrap();
+    let obj = repo.object_store().unwrap();
+    let engine = SnapshotEngine::new(log, repo.snapshot_store().unwrap(), obj);
+    engine
+        .log
+        .append(&make_log_entry(1, OpType::Write, "a.rs", Some("ba"), 100))
+        .await
+        .unwrap();
+    engine
+        .log
+        .append(&make_log_entry(2, OpType::Write, "b.rs", Some("bb"), 200))
+        .await
+        .unwrap();
+    let s1 = engine
+        .compute("default", vec![], 0, "a", "w/b")
+        .await
+        .unwrap();
+    engine
+        .log
+        .append(&make_log_entry(3, OpType::Delete, "b.rs", None, 300))
+        .await
+        .unwrap();
+    let s2 = engine
+        .compute("default", vec![s1.id], 0, "a", "del b")
+        .await
+        .unwrap();
+    let t = engine
+        .object_store
+        .get_tree(&libnoa::object::TreeId(s2.tree_hash.clone()))
+        .await
+        .unwrap();
+    assert!(t.0.iter().any(|e| e.name == "a.rs"));
+    assert!(!t.0.iter().any(|e| e.name == "b.rs"));
+}
+
+#[tokio::test]
+async fn snapshot_rename() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = Repository::init(tmp.path()).unwrap();
+    let log = repo.agent_log("default").unwrap();
+    let obj = repo.object_store().unwrap();
+    let engine = SnapshotEngine::new(log, repo.snapshot_store().unwrap(), obj);
+    engine
+        .log
+        .append(&make_log_entry(1, OpType::Write, "old.rs", Some("b1"), 100))
+        .await
+        .unwrap();
+    let s1 = engine
+        .compute("default", vec![], 0, "a", "init")
+        .await
+        .unwrap();
+    engine
+        .log
+        .append(&LogEntry {
+            seq: 2,
+            op: OpType::Rename,
+            path: Some("new.rs".into()),
+            blob_id: None,
+            from_path: Some("old.rs".into()),
+            resolved_conflict_ours_id: None,
+            resolved_conflict_theirs_id: None,
+            snapshot_id: None,
+            ts: 200,
+            message: None,
+        })
+        .await
+        .unwrap();
+    let s2 = engine
+        .compute("default", vec![s1.id], 0, "a", "mv")
+        .await
+        .unwrap();
+    let t = engine
+        .object_store
+        .get_tree(&libnoa::object::TreeId(s2.tree_hash.clone()))
+        .await
+        .unwrap();
+    assert!(!t.0.iter().any(|e| e.name == "old.rs"));
+    assert!(t.0.iter().any(|e| e.name == "new.rs"));
+}
+
+#[tokio::test]
+async fn compaction_removes_old() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = Repository::init(tmp.path()).unwrap();
+    let log = repo.agent_log("default").unwrap();
+    for i in 0..20 {
+        log.append(&make_log_entry(
+            i + 1,
+            OpType::Write,
+            &format!("f{}.rs", i),
+            Some(&format!("b{}", i)),
+            (i + 1) as u64 * 100,
+        ))
+        .await
+        .unwrap();
+    }
+    log.compact_to(10).await.unwrap();
+    let rem = log.read_all().await.unwrap();
+    assert!(rem.len() < 20);
+    assert!(rem.iter().all(|e| e.seq > 10));
+}
+
+#[tokio::test]
+async fn incremental_reads_new_only() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = Repository::init(tmp.path()).unwrap();
+    let ws_mgr = repo.workspace_manager().unwrap();
+    let log = repo.agent_log("default").unwrap();
+    let obj = repo.object_store().unwrap();
+    let engine = SnapshotEngine::new(log, repo.snapshot_store().unwrap(), obj);
+    engine
+        .log
+        .append(&make_log_entry(1, OpType::Write, "a.rs", Some("ba"), 100))
+        .await
+        .unwrap();
+    let s1 = engine
+        .compute("default", vec![], 0, "a", "1st")
+        .await
+        .unwrap();
+    ws_mgr
+        .update_head_and_seq("default", &s1.id, 1)
+        .await
+        .unwrap();
+    engine
+        .log
+        .append(&make_log_entry(2, OpType::Write, "b.rs", Some("bb"), 200))
+        .await
+        .unwrap();
+    engine
+        .log
+        .append(&make_log_entry(3, OpType::Write, "c.rs", Some("bc"), 300))
+        .await
+        .unwrap();
+    let ws = ws_mgr.get("default").await.unwrap().unwrap();
+    let s2 = engine
+        .compute("default", vec![s1.id], ws.last_seq, "a", "inc")
+        .await
+        .unwrap();
+    let t = engine
+        .object_store
+        .get_tree(&libnoa::object::TreeId(s2.tree_hash.clone()))
+        .await
+        .unwrap();
+    let n: Vec<&str> = t.0.iter().map(|e| e.name.as_str()).collect();
+    assert!(n.contains(&"a.rs") && n.contains(&"b.rs") && n.contains(&"c.rs"));
+}
+
+#[tokio::test]
+async fn parent_chain_children_of() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = Repository::init(tmp.path()).unwrap();
+    let log = repo.agent_log("default").unwrap();
+    let ss = repo.snapshot_store().unwrap();
+    let engine = SnapshotEngine::new(log, ss.clone(), repo.object_store().unwrap());
+    engine
+        .log
+        .append(&make_log_entry(1, OpType::Write, "a.rs", Some("b"), 100))
+        .await
+        .unwrap();
+    let s1 = engine
+        .compute("default", vec![], 0, "a", "1")
+        .await
+        .unwrap();
+    engine
+        .log
+        .append(&make_log_entry(2, OpType::Write, "b.rs", Some("b"), 200))
+        .await
+        .unwrap();
+    let s2 = engine
+        .compute("default", vec![s1.id.clone()], 0, "a", "2")
+        .await
+        .unwrap();
+    engine
+        .log
+        .append(&make_log_entry(3, OpType::Write, "c.rs", Some("b"), 300))
+        .await
+        .unwrap();
+    let s3 = engine
+        .compute("default", vec![s2.id.clone()], 0, "a", "3")
+        .await
+        .unwrap();
+    assert_eq!(ss.children_of(&s1.id).await.unwrap().len(), 1);
+    assert_eq!(ss.children_of(&s2.id).await.unwrap().len(), 1);
+    assert!(ss.children_of(&s3.id).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn merge_parent_in_children_of() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = Repository::init(tmp.path()).unwrap();
+    let log = repo.agent_log("default").unwrap();
+    let ss = repo.snapshot_store().unwrap();
+    let engine = SnapshotEngine::new(log, ss.clone(), repo.object_store().unwrap());
+    engine
+        .log
+        .append(&make_log_entry(1, OpType::Write, "a.rs", Some("b"), 100))
+        .await
+        .unwrap();
+    let s1 = engine
+        .compute("default", vec![], 0, "a", "base")
+        .await
+        .unwrap();
+    let ms = engine
+        .compute(
+            "default",
+            vec![s1.id.clone(), SnapshotId("noa_other".into())],
+            0,
+            "a",
+            "merge",
+        )
+        .await
+        .unwrap();
+    assert_eq!(ms.parents.len(), 2);
+    assert_eq!(ss.children_of(&s1.id).await.unwrap()[0], ms.id);
+}
+
+#[test]
+fn diff_added_modified_deleted() {
+    let a = tr(vec![te("a.rs", "h1"), te("b.rs", "h2")]);
+    let b = tr(vec![te("a.rs", "h1c"), te("c.rs", "h3")]);
+    let d = libnoa::snapshot::diff_snapshots(&a.0, &b.0);
+    assert_eq!(d.len(), 3);
+    assert!(d
+        .iter()
+        .any(|x| x.path == "a.rs" && matches!(x.kind, libnoa::snapshot::DiffKind::Modified)));
+    assert!(d
+        .iter()
+        .any(|x| x.path == "b.rs" && matches!(x.kind, libnoa::snapshot::DiffKind::Deleted)));
+    assert!(d
+        .iter()
+        .any(|x| x.path == "c.rs" && matches!(x.kind, libnoa::snapshot::DiffKind::Added)));
+}
+
+#[tokio::test]
+async fn log_read_since_filters() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = Repository::init(tmp.path()).unwrap();
+    let log = repo.agent_log("default").unwrap();
+    for i in 0..10 {
+        log.append(&make_log_entry(
+            i + 1,
+            OpType::Write,
+            &format!("f{}.rs", i),
+            Some(&format!("b{}", i)),
+            (i + 1) as u64 * 100,
+        ))
+        .await
+        .unwrap();
+    }
+    let s5 = log.read_since(5).await.unwrap();
+    assert!(s5.iter().all(|e| e.seq >= 5));
+}
+
+#[tokio::test]
+async fn workspace_update_head_and_seq() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = Repository::init(tmp.path()).unwrap();
+    let ws_mgr = repo.workspace_manager().unwrap();
+    assert_eq!(ws_mgr.get("default").await.unwrap().unwrap().last_seq, 0);
+    ws_mgr
+        .update_head_and_seq("default", &SnapshotId("noa_x".into()), 42)
+        .await
+        .unwrap();
+    let u = ws_mgr.get("default").await.unwrap().unwrap();
+    assert_eq!(u.head, SnapshotId("noa_x".into()));
+    assert_eq!(u.last_seq, 42);
+}
