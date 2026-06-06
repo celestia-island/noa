@@ -1,6 +1,6 @@
+use clap::Parser;
 use std::sync::Arc;
 
-use clap::Parser;
 use libnoa::server::{router, AppState};
 
 static VERSION_TEXT: &str = concat!(
@@ -24,9 +24,15 @@ static VERSION_TEXT: &str = concat!(
 #[command(name = "noa-server")]
 #[command(about = "Server for the noa distributed version control system")]
 #[command(version = VERSION_TEXT)]
-#[command(after_help = "Environment variables NOA_DB_PATH and NOA_PORT are still supported as legacy defaults.")]
+#[command(
+    after_help = "Environment variables NOA_DB_PATH and NOA_PORT are still supported as legacy defaults."
+)]
 struct ServerApp {
-    #[arg(long, default_value = "noa-server.redb", help = "Path to the database file")]
+    #[arg(
+        long,
+        default_value = "noa-server.redb",
+        help = "Path to the database file"
+    )]
     db_path: String,
     #[arg(short, long, default_value_t = 3000, help = "Port to listen on")]
     port: u16,

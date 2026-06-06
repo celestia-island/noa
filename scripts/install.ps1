@@ -160,7 +160,7 @@ function Verify-Path {
 # --- Main ---
 Write-Host ""
 Write-Host "╔══════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║  noa installer  (v0.1.0-alpha)  ║" -ForegroundColor Cyan
+Write-Host "║  noa installer  (v0.1.1-alpha)  ║" -ForegroundColor Cyan
 Write-Host "╚══════════════════════════════════╝" -ForegroundColor Cyan
 Write-Host ""
 

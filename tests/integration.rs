@@ -639,7 +639,7 @@ async fn integration_log_compaction_after_snapshot() {
                 OpType::Write,
                 &format!("file{}.rs", i),
                 Some(&format!("blob{}", i)),
-                (i + 1) as u64 * 100,
+                (i + 1) * 100,
             ))
             .await
             .unwrap();
@@ -1503,7 +1503,7 @@ async fn compaction_removes_old() {
             OpType::Write,
             &format!("f{}.rs", i),
             Some(&format!("b{}", i)),
-            (i + 1) as u64 * 100,
+            (i + 1) * 100,
         ))
         .await
         .unwrap();
@@ -1656,7 +1656,7 @@ async fn log_read_since_filters() {
             OpType::Write,
             &format!("f{}.rs", i),
             Some(&format!("b{}", i)),
-            (i + 1) as u64 * 100,
+            (i + 1) * 100,
         ))
         .await
         .unwrap();

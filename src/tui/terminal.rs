@@ -1,6 +1,6 @@
+use anyhow::Result;
 use std::io;
 
-use anyhow::Result;
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     execute,

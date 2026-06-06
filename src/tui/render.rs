@@ -318,8 +318,13 @@ mod tests {
 
     fn make_log_app() -> App {
         let snapshots = vec![
-            make_snap("noa_s1", "default", "initial commit", 1000000000_000000),
-            make_snap("noa_s2", "feature", "add feature module", 1000001000_000000),
+            make_snap("noa_s1", "default", "initial commit", 1_000_000_000_000_000),
+            make_snap(
+                "noa_s2",
+                "feature",
+                "add feature module",
+                1_000_001_000_000_000,
+            ),
         ];
         App {
             mode: AppMode::Log,
@@ -355,8 +360,8 @@ mod tests {
             },
         ];
         let snapshots = vec![
-            make_snap("noa_s1", "default", "initial commit", 1000000000_000000),
-            make_snap("noa_s2", "feature", "add feature", 1000001000_000000),
+            make_snap("noa_s1", "default", "initial commit", 1_000_000_000_000_000),
+            make_snap("noa_s2", "feature", "add feature", 1_000_001_000_000_000),
         ];
         App {
             mode: AppMode::Branches,

@@ -3,13 +3,13 @@ mod render;
 mod terminal;
 mod virtual_scroll;
 
+use anyhow::Result;
+use std::time::Duration;
+
 pub use app::{App, AppMode, Focus};
+use crossterm::event::{self, Event};
 pub use terminal::{cleanup_terminal, setup_terminal};
 pub use virtual_scroll::VirtualScroll;
-
-use anyhow::Result;
-use crossterm::event::{self, Event};
-use std::time::Duration;
 
 pub fn run_interactive(
     terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,

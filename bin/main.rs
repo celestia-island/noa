@@ -1,8 +1,7 @@
 use clap::{CommandFactory, Parser, Subcommand};
 use std::path::PathBuf;
 
-use libnoa::cli;
-use libnoa::snapshot::SnapshotStore;
+use libnoa::{cli, snapshot::SnapshotStore};
 
 static VERSION_TEXT: &str = concat!(
     env!("CARGO_PKG_VERSION"),
