@@ -11,6 +11,7 @@ use crate::error::{NoaError, Result};
 
 pub struct FileAgentLog {
     file: Mutex<File>,
+    next_seq: std::sync::atomic::AtomicU64,
 }
 
 impl FileAgentLog {
@@ -24,9 +25,11 @@ impl FileAgentLog {
             .read(true)
             .open(path)
             .map_err(NoaError::Io)?;
-        Ok(FileAgentLog {
+        let log = FileAgentLog {
             file: Mutex::new(file),
-        })
+            next_seq: std::sync::atomic::AtomicU64::new(1),
+        };
+        Ok(log)
     }
 
     pub fn open(path: &Path) -> Result<Self> {
@@ -41,23 +44,45 @@ impl FileAgentLog {
             .read(true)
             .open(path)
             .map_err(NoaError::Io)?;
-        Ok(FileAgentLog {
+        let log = FileAgentLog {
             file: Mutex::new(file),
-        })
+            next_seq: std::sync::atomic::AtomicU64::new(1),
+        };
+        let max_seq = log.compute_max_seq()?;
+        log.next_seq
+            .store(max_seq + 1, std::sync::atomic::Ordering::SeqCst);
+        Ok(log)
+    }
+
+    fn compute_max_seq(&self) -> Result<u64> {
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|e| NoaError::Io(std::io::Error::other(e.to_string())))?;
+        file.seek(SeekFrom::Start(0))?;
+        let mut content = String::new();
+        file.read_to_string(&mut content)?;
+        let entries = format::deserialize_entries(&content)?;
+        Ok(entries.iter().map(|e| e.seq).max().unwrap_or(0))
     }
 }
 
 #[async_trait]
 impl AgentLog for FileAgentLog {
     async fn append(&self, entry: &LogEntry) -> Result<u64> {
-        let line = format::serialize_entry(entry)?;
+        let seq = self
+            .next_seq
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut assigned_entry = entry.clone();
+        assigned_entry.seq = seq;
+        let line = format::serialize_entry(&assigned_entry)?;
         let mut file = self
             .file
             .lock()
             .map_err(|e| NoaError::Io(std::io::Error::other(e.to_string())))?;
         writeln!(file, "{}", line)?;
         file.sync_all()?;
-        Ok(entry.seq)
+        Ok(seq)
     }
 
     async fn read_since(&self, seq: u64) -> Result<Vec<LogEntry>> {
@@ -75,6 +100,31 @@ impl AgentLog for FileAgentLog {
         file.read_to_string(&mut content)?;
         format::deserialize_entries(&content)
     }
+
+    async fn next_seq(&self) -> Result<u64> {
+        Ok(self.next_seq.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
+    async fn compact_to(&self, up_to_seq: u64) -> Result<()> {
+        let entries = self.read_all().await?;
+        let remaining: Vec<LogEntry> = entries.into_iter().filter(|e| e.seq > up_to_seq).collect();
+
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|e| NoaError::Io(std::io::Error::other(e.to_string())))?;
+
+        file.seek(SeekFrom::Start(0))?;
+        file.set_len(0)?;
+
+        for entry in &remaining {
+            let line = format::serialize_entry(entry)?;
+            writeln!(file, "{}", line)?;
+        }
+        file.sync_all()?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -90,6 +140,8 @@ mod tests {
             path: Some(path.to_string()),
             blob_id: None,
             from_path: None,
+            resolved_conflict_ours_id: None,
+            resolved_conflict_theirs_id: None,
             snapshot_id: None,
             ts,
             message: None,

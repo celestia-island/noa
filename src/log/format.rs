@@ -36,6 +36,8 @@ mod tests {
             path: Some("src/main.rs".to_string()),
             blob_id: Some("abc123".to_string()),
             from_path: None,
+            resolved_conflict_ours_id: None,
+            resolved_conflict_theirs_id: None,
             snapshot_id: None,
             ts: 1717592400000000,
             message: None,

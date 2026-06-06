@@ -188,7 +188,7 @@ verify_path() {
 
 # --- Main ---
 echo "╔══════════════════════════════════╗"
-echo "║  noa installer  (v0.1.0-alpha)  ║"
+echo "║  noa installer  (v0.1.1-alpha)  ║"
 echo "╚══════════════════════════════════╝"
 echo ""
 
