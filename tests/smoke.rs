@@ -15,6 +15,8 @@ fn make_log_entry(seq: u64, op: OpType, path: &str, blob_id: Option<&str>, ts: u
         path: Some(path.to_string()),
         blob_id: blob_id.map(|s| s.to_string()),
         from_path: None,
+        resolved_conflict_ours_id: None,
+        resolved_conflict_theirs_id: None,
         snapshot_id: None,
         ts,
         message: None,
@@ -177,8 +179,9 @@ async fn smoke_test_workspace_create_switch_merge() {
         .unwrap();
     let result =
         libnoa::merge::three_way_merge(&default_tree, &default_tree, &feature_tree).unwrap();
-    assert!(result.conflicts.is_empty());
-    assert!(result.tree.0.iter().any(|e| e.name == "feature.rs"));
+    assert!(!result.has_conflicts());
+    let tree = result.into_tree_entries(&libnoa::merge::ConflictResolution::Ours);
+    assert!(tree.0.iter().any(|e| e.name == "feature.rs"));
 }
 
 #[tokio::test]
@@ -398,6 +401,8 @@ async fn smoke_test_log_entry_all_ops() {
             path: Some("a.rs".to_string()),
             blob_id: Some("h1".to_string()),
             from_path: None,
+            resolved_conflict_ours_id: None,
+            resolved_conflict_theirs_id: None,
             snapshot_id: None,
             ts: 100,
             message: None,
@@ -408,6 +413,8 @@ async fn smoke_test_log_entry_all_ops() {
             path: Some("b.rs".to_string()),
             blob_id: None,
             from_path: None,
+            resolved_conflict_ours_id: None,
+            resolved_conflict_theirs_id: None,
             snapshot_id: None,
             ts: 200,
             message: None,
@@ -418,6 +425,8 @@ async fn smoke_test_log_entry_all_ops() {
             path: Some("c.rs".to_string()),
             blob_id: None,
             from_path: Some("old_c.rs".to_string()),
+            resolved_conflict_ours_id: None,
+            resolved_conflict_theirs_id: None,
             snapshot_id: None,
             ts: 300,
             message: None,
@@ -428,6 +437,8 @@ async fn smoke_test_log_entry_all_ops() {
             path: None,
             blob_id: None,
             from_path: None,
+            resolved_conflict_ours_id: None,
+            resolved_conflict_theirs_id: None,
             snapshot_id: Some("noa_snap1".to_string()),
             ts: 400,
             message: Some("my snapshot".to_string()),
@@ -438,6 +449,8 @@ async fn smoke_test_log_entry_all_ops() {
             path: None,
             blob_id: None,
             from_path: None,
+            resolved_conflict_ours_id: None,
+            resolved_conflict_theirs_id: None,
             snapshot_id: Some("noa_snap2".to_string()),
             ts: 500,
             message: Some("merge from ws-2".to_string()),
@@ -477,8 +490,9 @@ async fn smoke_test_three_way_merge_no_conflict() {
     ]);
 
     let result = libnoa::merge::three_way_merge(&base, &ours, &theirs).unwrap();
-    assert!(result.conflicts.is_empty());
-    assert_eq!(result.tree.0.len(), 3);
+    assert!(!result.has_conflicts());
+    let tree = result.into_tree_entries(&libnoa::merge::ConflictResolution::Ours);
+    assert_eq!(tree.0.len(), 3);
 }
 
 #[tokio::test]

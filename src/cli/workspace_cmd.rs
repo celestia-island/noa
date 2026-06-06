@@ -2,9 +2,10 @@ use anyhow::Result;
 
 use crate::{
     log::AgentLog,
+    merge::{extract_conflicts, ConflictResolution},
     object::ObjectStore,
     repo::Repository,
-    snapshot::{generate_snapshot_id, SnapshotStore},
+    snapshot::{content_addressed_snapshot_id, SnapshotStore},
 };
 
 pub async fn run_create(repo: &Repository, name: &str, agent: Option<&str>) -> Result<()> {
@@ -33,6 +34,8 @@ pub async fn run_create(repo: &Repository, name: &str, agent: Option<&str>) -> R
         path: None,
         blob_id: None,
         from_path: None,
+        resolved_conflict_ours_id: None,
+        resolved_conflict_theirs_id: None,
         snapshot_id: Some(base_snapshot.0.clone()),
         ts: now,
         message: Some(format!("workspace {} created", name)),
@@ -119,17 +122,24 @@ pub async fn run_merge(repo: &Repository, from: &str) -> Result<()> {
 
     let result = crate::merge::three_way_merge(&base_tree, &base_tree, &theirs_tree)?;
 
-    if !result.conflicts.is_empty() {
+    let conflicts = extract_conflicts(&result.output);
+    if !conflicts.is_empty() {
         println!("Conflicts detected:");
-        for c in &result.conflicts {
+        for c in &conflicts {
             println!("  CONFLICT: {}", c.path);
         }
     }
 
-    let new_tree_id = obj_store.put_tree(&result.tree).await?;
+    let resolved_tree = result.into_tree_entries(&ConflictResolution::Ours);
+
+    let new_tree_id = obj_store.put_tree(&resolved_tree).await?;
 
     let merge_snapshot = crate::snapshot::Snapshot {
-        id: generate_snapshot_id(),
+        id: content_addressed_snapshot_id(
+            &new_tree_id.0,
+            &[cur_ws.head.clone(), from_ws.head.clone()],
+            &current,
+        ),
         tree_hash: new_tree_id.0,
         parents: vec![cur_ws.head.clone(), from_ws.head.clone()],
         workspace: current.clone(),

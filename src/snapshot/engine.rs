@@ -5,7 +5,7 @@ use crate::{
     ignore::IgnoreMatcher,
     log::{AgentLog, LogEntry, OpType},
     object::{EntryKind, ObjectStore, TreeEntries, TreeEntry},
-    snapshot::{generate_snapshot_id, Snapshot, SnapshotId, SnapshotStore},
+    snapshot::{content_addressed_snapshot_id, Snapshot, SnapshotId, SnapshotStore},
 };
 
 pub struct SnapshotEngine<L: AgentLog, S: SnapshotStore, O: ObjectStore> {
@@ -14,6 +14,7 @@ pub struct SnapshotEngine<L: AgentLog, S: SnapshotStore, O: ObjectStore> {
     pub object_store: O,
     ignore_matcher: Option<IgnoreMatcher>,
     repo_root: Option<PathBuf>,
+    compact_on_snapshot: bool,
 }
 
 impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
@@ -24,6 +25,7 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
             object_store,
             ignore_matcher: None,
             repo_root: None,
+            compact_on_snapshot: false,
         }
     }
 
@@ -37,6 +39,11 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
         self
     }
 
+    pub fn with_compact_on_snapshot(mut self) -> Self {
+        self.compact_on_snapshot = true;
+        self
+    }
+
     pub async fn compute(
         &self,
         workspace: &str,
@@ -44,8 +51,19 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
         author: &str,
         message: &str,
     ) -> Result<Snapshot> {
-        let entries = self.log.read_all().await?;
-        let tree = self.build_tree_from_entries(&entries).await?;
+        let tree = if let Some(parent_id) = parent_ids.first() {
+            let parent = self.snapshot_store.get(parent_id).await?;
+            let parent_tree = self
+                .object_store
+                .get_tree(&crate::object::TreeId(parent.tree_hash))
+                .await?;
+            let entries = self.log.read_all().await?;
+            self.build_tree_from_entries_with_base(&parent_tree.0, &entries)
+                .await?
+        } else {
+            let entries = self.log.read_all().await?;
+            self.build_tree_from_entries(&entries).await?
+        };
 
         let mut sorted = tree;
         sorted.sort();
@@ -54,8 +72,10 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
 
         let timestamp = chrono::Utc::now().timestamp_micros() as u64;
 
+        let id = content_addressed_snapshot_id(&tree_id.0, &parent_ids, workspace);
+
         let snapshot = Snapshot {
-            id: generate_snapshot_id(),
+            id,
             tree_hash: tree_id.0,
             parents: parent_ids,
             workspace: workspace.to_string(),
@@ -65,11 +85,29 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
         };
 
         self.snapshot_store.store(&snapshot).await?;
+
+        if self.compact_on_snapshot {
+            if let Ok(all) = self.log.read_all().await {
+                if let Some(max_seq) = all.iter().map(|e| e.seq).max() {
+                    let _ = self.log.compact_to(max_seq).await;
+                }
+            }
+        }
+
         Ok(snapshot)
     }
 
     async fn build_tree_from_entries(&self, entries: &[LogEntry]) -> Result<TreeEntries> {
-        let mut tree_map: BTreeMap<String, TreeEntry> = BTreeMap::new();
+        self.build_tree_from_entries_with_base(&[], entries).await
+    }
+
+    async fn build_tree_from_entries_with_base(
+        &self,
+        base: &[TreeEntry],
+        entries: &[LogEntry],
+    ) -> Result<TreeEntries> {
+        let mut tree_map: BTreeMap<String, TreeEntry> =
+            base.iter().map(|e| (e.name.clone(), e.clone())).collect();
 
         for entry in entries {
             match entry.op {
@@ -125,6 +163,18 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
                     }
                 }
                 OpType::Snapshot | OpType::Merge => {}
+                OpType::Resolve => {
+                    if let (Some(path), Some(blob_id)) = (&entry.path, &entry.blob_id) {
+                        tree_map.insert(
+                            path.clone(),
+                            TreeEntry {
+                                name: path.clone(),
+                                kind: EntryKind::Blob,
+                                id: blob_id.clone(),
+                            },
+                        );
+                    }
+                }
             }
         }
 
@@ -167,6 +217,8 @@ mod tests {
             path: Some(path.to_string()),
             blob_id: Some(blob_id.to_string()),
             from_path: None,
+            resolved_conflict_ours_id: None,
+            resolved_conflict_theirs_id: None,
             snapshot_id: None,
             ts,
             message: None,
@@ -180,6 +232,8 @@ mod tests {
             path: Some(path.to_string()),
             blob_id: None,
             from_path: None,
+            resolved_conflict_ours_id: None,
+            resolved_conflict_theirs_id: None,
             snapshot_id: None,
             ts,
             message: None,

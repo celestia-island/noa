@@ -26,29 +26,21 @@ impl std::fmt::Display for SnapshotId {
     }
 }
 
-pub fn generate_snapshot_id() -> SnapshotId {
-    let raw = uuid::Uuid::now_v7();
-    let bytes = raw.as_bytes();
-    let encoded = base62_encode(bytes);
-    SnapshotId(format!("noa_{}", &encoded[..12]))
-}
-
-fn base62_encode(data: &[u8]) -> String {
-    const CHARSET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-    let mut result = Vec::with_capacity(data.len() * 2);
-    let mut num = 0u128;
-    for &byte in data {
-        num = (num << 8) | byte as u128;
+pub fn content_addressed_snapshot_id(
+    tree_hash: &str,
+    parent_ids: &[SnapshotId],
+    workspace: &str,
+) -> SnapshotId {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(tree_hash.as_bytes());
+    for p in parent_ids {
+        hasher.update(p.0.as_bytes());
     }
-    while num > 0 {
-        result.push(CHARSET[(num % 62) as usize]);
-        num /= 62;
-    }
-    while result.len() < 16 {
-        result.push(CHARSET[0]);
-    }
-    result.reverse();
-    String::from_utf8(result).unwrap()
+    hasher.update(workspace.as_bytes());
+    let hash = hasher.finalize();
+    let hex_str = hex::encode(hash);
+    SnapshotId(format!("noa_{}", &hex_str[..16]))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

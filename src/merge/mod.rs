@@ -1,7 +1,7 @@
 mod conflict;
 mod consolidate;
 
-pub use conflict::{ConflictDetector, ConflictResolution, FileConflict};
+pub use conflict::{ConflictDetector, ConflictResolution, FileConflict, MergeOutput, MergedEntry};
 pub use consolidate::Consolidator;
 
 use crate::{
@@ -11,8 +11,17 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MergeResult {
-    pub tree: TreeEntries,
-    pub conflicts: Vec<FileConflict>,
+    pub output: MergeOutput,
+}
+
+impl MergeResult {
+    pub fn has_conflicts(&self) -> bool {
+        self.output.has_conflicts
+    }
+
+    pub fn into_tree_entries(&self, resolution: &ConflictResolution) -> TreeEntries {
+        TreeEntries(self.output.resolve_with_strategy(resolution))
+    }
 }
 
 pub fn three_way_merge(
@@ -27,9 +36,9 @@ pub fn three_way_merge(
     let theirs_map: std::collections::HashMap<&str, &TreeEntry> =
         theirs.0.iter().map(|e| (e.name.as_str(), e)).collect();
 
-    let mut result_map: std::collections::BTreeMap<String, TreeEntry> =
+    let mut entries: std::collections::BTreeMap<String, MergedEntry> =
         std::collections::BTreeMap::new();
-    let mut conflicts = Vec::new();
+    let mut has_conflicts = false;
 
     let all_paths: std::collections::BTreeSet<&str> = base_map
         .keys()
@@ -65,57 +74,76 @@ pub fn three_way_merge(
             (Some(_), None) => Change::Deleted,
         };
 
-        match (ours_change, theirs_change) {
+        let merged = match (ours_change, theirs_change) {
             (Change::Unchanged, Change::Unchanged) => {
-                if let Some(entry) = base_entry {
-                    result_map.insert(entry.name.clone(), (*entry).clone());
-                }
+                base_entry.map(|entry| MergedEntry::Clean((*entry).clone()))
             }
-            (Change::Modified(o), Change::Unchanged) => {
-                result_map.insert(o.name.clone(), (*o).clone());
-            }
-            (Change::Unchanged, Change::Modified(t)) => {
-                result_map.insert(t.name.clone(), (*t).clone());
-            }
-            (Change::Deleted, Change::Unchanged) => {}
-            (Change::Unchanged, Change::Deleted) => {}
+            (Change::Modified(o), Change::Unchanged) => Some(MergedEntry::Clean((*o).clone())),
+            (Change::Unchanged, Change::Modified(t)) => Some(MergedEntry::Clean((*t).clone())),
+            (Change::Deleted, Change::Unchanged) => None,
+            (Change::Unchanged, Change::Deleted) => None,
             (Change::Modified(o), Change::Deleted) => {
-                conflicts.push(FileConflict {
-                    path: path.to_string(),
-                    ours_id: o.id.clone(),
-                    theirs_id: String::new(),
-                    base_id: base_entry.map(|b| b.id.clone()),
-                });
+                has_conflicts = true;
+                Some(MergedEntry::Conflict {
+                    ours: Some((*o).clone()),
+                    theirs: None,
+                    base: base_entry.map(|b| (*b).clone()),
+                })
             }
             (Change::Deleted, Change::Modified(t)) => {
-                conflicts.push(FileConflict {
-                    path: path.to_string(),
-                    ours_id: String::new(),
-                    theirs_id: t.id.clone(),
-                    base_id: base_entry.map(|b| b.id.clone()),
-                });
+                has_conflicts = true;
+                Some(MergedEntry::Conflict {
+                    ours: None,
+                    theirs: Some((*t).clone()),
+                    base: base_entry.map(|b| (*b).clone()),
+                })
             }
             (Change::Modified(o), Change::Modified(t)) => {
                 if o.id == t.id {
-                    result_map.insert(o.name.clone(), (*o).clone());
+                    Some(MergedEntry::Clean((*o).clone()))
                 } else {
-                    conflicts.push(FileConflict {
-                        path: path.to_string(),
-                        ours_id: o.id.clone(),
-                        theirs_id: t.id.clone(),
-                        base_id: base_entry.map(|b| b.id.clone()),
-                    });
-                    result_map.insert(o.name.clone(), (*o).clone());
+                    has_conflicts = true;
+                    Some(MergedEntry::Conflict {
+                        ours: Some((*o).clone()),
+                        theirs: Some((*t).clone()),
+                        base: base_entry.map(|b| (*b).clone()),
+                    })
                 }
             }
-            (Change::Deleted, Change::Deleted) => {}
+            (Change::Deleted, Change::Deleted) => None,
+        };
+
+        if let Some(m) = merged {
+            entries.insert(path.to_string(), m);
         }
     }
 
     Ok(MergeResult {
-        tree: TreeEntries(result_map.into_values().collect()),
-        conflicts,
+        output: MergeOutput {
+            entries: entries.into_values().collect(),
+            has_conflicts,
+        },
     })
+}
+
+pub fn extract_conflicts(output: &MergeOutput) -> Vec<FileConflict> {
+    output
+        .entries
+        .iter()
+        .filter_map(|entry| match entry {
+            MergedEntry::Conflict { ours, theirs, base } => Some(FileConflict {
+                path: ours
+                    .as_ref()
+                    .or(theirs.as_ref())
+                    .or(base.as_ref())
+                    .map(|e| e.name.clone())?,
+                ours_id: ours.as_ref().map(|e| e.id.clone()),
+                theirs_id: theirs.as_ref().map(|e| e.id.clone()),
+                base_id: base.as_ref().map(|e| e.id.clone()),
+            }),
+            _ => None,
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -137,8 +165,9 @@ mod tests {
         let ours = TreeEntries(vec![entry("a.rs", "h2")]);
         let theirs = TreeEntries(vec![entry("a.rs", "h2")]);
         let result = three_way_merge(&base, &ours, &theirs).unwrap();
-        assert!(result.conflicts.is_empty());
-        assert_eq!(result.tree.0[0].id, "h2");
+        assert!(!result.has_conflicts());
+        let tree = result.into_tree_entries(&ConflictResolution::Ours);
+        assert_eq!(tree.0[0].id, "h2");
     }
 
     #[test]
@@ -147,7 +176,7 @@ mod tests {
         let ours = TreeEntries(vec![entry("a.rs", "h2")]);
         let theirs = TreeEntries(vec![entry("a.rs", "h1"), entry("b.rs", "h3")]);
         let result = three_way_merge(&base, &ours, &theirs).unwrap();
-        assert!(result.conflicts.is_empty());
+        assert!(!result.has_conflicts());
     }
 
     #[test]
@@ -156,8 +185,10 @@ mod tests {
         let ours = TreeEntries(vec![entry("a.rs", "h2")]);
         let theirs = TreeEntries(vec![entry("a.rs", "h3")]);
         let result = three_way_merge(&base, &ours, &theirs).unwrap();
-        assert_eq!(result.conflicts.len(), 1);
-        assert_eq!(result.conflicts[0].path, "a.rs");
+        assert!(result.has_conflicts());
+        let conflicts = extract_conflicts(&result.output);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].path, "a.rs");
     }
 
     #[test]
@@ -166,7 +197,7 @@ mod tests {
         let ours = TreeEntries(vec![]);
         let theirs = TreeEntries(vec![entry("a.rs", "h2")]);
         let result = three_way_merge(&base, &ours, &theirs).unwrap();
-        assert_eq!(result.conflicts.len(), 1);
+        assert!(result.has_conflicts());
     }
 
     #[test]
@@ -175,8 +206,9 @@ mod tests {
         let ours = TreeEntries(vec![entry("a.rs", "h1")]);
         let theirs = TreeEntries(vec![entry("b.rs", "h2")]);
         let result = three_way_merge(&base, &ours, &theirs).unwrap();
-        assert!(result.conflicts.is_empty());
-        assert_eq!(result.tree.0.len(), 2);
+        assert!(!result.has_conflicts());
+        let tree = result.into_tree_entries(&ConflictResolution::Ours);
+        assert_eq!(tree.0.len(), 2);
     }
 
     #[test]
@@ -185,7 +217,7 @@ mod tests {
         let ours = TreeEntries(vec![entry("a.rs", "h1")]);
         let theirs = TreeEntries(vec![entry("a.rs", "h2")]);
         let result = three_way_merge(&base, &ours, &theirs).unwrap();
-        assert_eq!(result.conflicts.len(), 1);
+        assert!(result.has_conflicts());
     }
 
     #[test]
@@ -194,16 +226,18 @@ mod tests {
         let ours = TreeEntries(vec![]);
         let theirs = TreeEntries(vec![]);
         let result = three_way_merge(&base, &ours, &theirs).unwrap();
-        assert!(result.conflicts.is_empty());
-        assert!(result.tree.0.is_empty());
+        assert!(!result.has_conflicts());
+        let tree = result.into_tree_entries(&ConflictResolution::Ours);
+        assert!(tree.0.is_empty());
     }
 
     #[test]
     fn test_unchanged_preserves_base() {
         let base = TreeEntries(vec![entry("a.rs", "h1"), entry("b.rs", "h2")]);
         let result = three_way_merge(&base, &base, &base).unwrap();
-        assert!(result.conflicts.is_empty());
-        assert_eq!(result.tree.0.len(), 2);
+        assert!(!result.has_conflicts());
+        let tree = result.into_tree_entries(&ConflictResolution::Ours);
+        assert_eq!(tree.0.len(), 2);
     }
 
     #[test]
@@ -221,8 +255,9 @@ mod tests {
         let theirs = TreeEntries(theirs_entries);
 
         let result = three_way_merge(&base, &ours, &theirs).unwrap();
-        assert!(result.conflicts.is_empty());
-        assert_eq!(result.tree.0.len(), 52);
+        assert!(!result.has_conflicts());
+        let tree = result.into_tree_entries(&ConflictResolution::Ours);
+        assert_eq!(tree.0.len(), 52);
     }
 
     #[test]
@@ -231,12 +266,41 @@ mod tests {
         let ours = TreeEntries(vec![entry("a.rs", "h1"), entry("b.rs", "h2_changed")]);
         let theirs = base.clone();
         let result = three_way_merge(&base, &ours, &theirs).unwrap();
-        assert!(result.conflicts.is_empty());
-        assert_eq!(result.tree.0.len(), 2);
-        assert!(result
-            .tree
+        assert!(!result.has_conflicts());
+        let tree = result.into_tree_entries(&ConflictResolution::Ours);
+        assert_eq!(tree.0.len(), 2);
+        assert!(tree
             .0
             .iter()
             .any(|e| e.name == "b.rs" && e.id == "h2_changed"));
+    }
+
+    #[test]
+    fn test_conflict_does_not_force_ours() {
+        let base = TreeEntries(vec![entry("a.rs", "h1")]);
+        let ours = TreeEntries(vec![entry("a.rs", "h2")]);
+        let theirs = TreeEntries(vec![entry("a.rs", "h3")]);
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        assert!(result.has_conflicts());
+
+        let tree_ours = result.into_tree_entries(&ConflictResolution::Ours);
+        assert_eq!(tree_ours.0[0].id, "h2");
+
+        let tree_theirs = result.into_tree_entries(&ConflictResolution::Theirs);
+        assert_eq!(tree_theirs.0[0].id, "h3");
+    }
+
+    #[test]
+    fn test_extract_conflicts() {
+        let base = TreeEntries(vec![entry("a.rs", "h0"), entry("b.rs", "h1")]);
+        let ours = TreeEntries(vec![entry("a.rs", "h2"), entry("b.rs", "h1")]);
+        let theirs = TreeEntries(vec![entry("a.rs", "h3"), entry("b.rs", "h1")]);
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        let conflicts = extract_conflicts(&result.output);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].path, "a.rs");
+        assert_eq!(conflicts[0].ours_id, Some("h2".to_string()));
+        assert_eq!(conflicts[0].theirs_id, Some("h3".to_string()));
+        assert_eq!(conflicts[0].base_id, Some("h0".to_string()));
     }
 }

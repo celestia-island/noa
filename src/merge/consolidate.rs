@@ -21,15 +21,9 @@ impl<'a, L: AgentLog, S: SnapshotStore, O: ObjectStore> Consolidator<'a, L, S, O
         author: &str,
         message: &str,
     ) -> Result<crate::snapshot::Snapshot> {
-        let mut entries = self.engine.log.read_all().await?;
-        entries.sort_by_key(|e| e.ts);
-
-        let snapshot = self
-            .engine
+        self.engine
             .compute(workspace, parent_ids, author, message)
-            .await?;
-
-        Ok(snapshot)
+            .await
     }
 }
 
@@ -59,7 +53,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_consolidate_sorted_by_ts() {
+    async fn test_consolidate_builds_snapshot() {
         let (_tmp, engine) = make_engine().await;
         let consolidator = Consolidator::new(&engine);
 
@@ -69,6 +63,8 @@ mod tests {
             path: Some("b.rs".to_string()),
             blob_id: Some("h2".to_string()),
             from_path: None,
+            resolved_conflict_ours_id: None,
+            resolved_conflict_theirs_id: None,
             snapshot_id: None,
             ts: 200,
             message: None,
@@ -79,6 +75,8 @@ mod tests {
             path: Some("a.rs".to_string()),
             blob_id: Some("h1".to_string()),
             from_path: None,
+            resolved_conflict_ours_id: None,
+            resolved_conflict_theirs_id: None,
             snapshot_id: None,
             ts: 100,
             message: None,
