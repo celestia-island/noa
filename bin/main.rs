@@ -23,7 +23,7 @@ enum Commands {
         #[arg(long)]
         noa_remote: Option<String>,
         #[arg(long)]
-        git: bool,
+        no_git: bool,
     },
     Status,
     Log {
@@ -126,12 +126,12 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Init {
             path,
             noa_remote,
-            git,
+            no_git,
         }) => {
             cli::init::run(&cli::init::InitArgs {
                 path,
                 noa_remote,
-                git,
+                no_git,
             })?;
         }
         Some(Commands::Status) => {

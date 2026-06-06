@@ -13,7 +13,7 @@ pub struct InitArgs {
     pub noa_remote: Option<String>,
 
     #[arg(long)]
-    pub git: bool,
+    pub no_git: bool,
 }
 
 pub fn run(args: &InitArgs) -> Result<()> {
@@ -34,7 +34,7 @@ pub fn run(args: &InitArgs) -> Result<()> {
         None => Repository::init(&path)?,
     };
 
-    if args.git {
+    if !args.no_git {
         let git_dir = path.join(".git");
         if !git_dir.exists() {
             let output = std::process::Command::new("git")
@@ -64,17 +64,13 @@ pub fn run(args: &InitArgs) -> Result<()> {
             };
             std::fs::write(&gitignore, updated)?;
         }
-
-        println!(
-            "Initialized empty noa+git repository in {}",
-            repo.noa_dir.display()
-        );
-    } else {
-        println!(
-            "Initialized empty noa repository in {}",
-            repo.noa_dir.display()
-        );
     }
+
+    println!(
+        "Initialized empty noa{} repository in {}",
+        if args.no_git { "" } else { "+git" },
+        repo.noa_dir.display()
+    );
 
     Ok(())
 }
