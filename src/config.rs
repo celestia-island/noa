@@ -13,6 +13,9 @@ pub struct RepoConfig {
 
     #[serde(default)]
     pub noa_remote: Option<String>,
+
+    #[serde(default)]
+    pub sync: Option<SyncConfig>,
 }
 
 fn default_repo_name() -> String {
@@ -31,12 +34,46 @@ fn default_protocol() -> String {
     "git".to_string()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncConfig {
+    #[serde(default = "default_sync_socket")]
+    pub socket_path: String,
+
+    #[serde(default = "default_sync_interval")]
+    pub sync_interval_secs: u64,
+
+    #[serde(default = "default_branch_prefix")]
+    pub default_branch_prefix: String,
+
+    #[serde(default)]
+    pub auto_gitignore: bool,
+}
+
+fn default_sync_socket() -> String {
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| {
+        format!(
+            "/tmp/noa-{}",
+            std::env::var("USER").unwrap_or_else(|_| "unknown".to_string())
+        )
+    });
+    format!("{}/noa-sync.sock", runtime_dir)
+}
+
+fn default_sync_interval() -> u64 {
+    30
+}
+
+fn default_branch_prefix() -> String {
+    "entelecheia/agent-".to_string()
+}
+
 impl Default for RepoConfig {
     fn default() -> Self {
         RepoConfig {
             name: default_repo_name(),
             remotes: Vec::new(),
             noa_remote: None,
+            sync: None,
         }
     }
 }
@@ -192,5 +229,31 @@ mod tests {
     fn test_remote_config_default_protocol() {
         let proto = default_protocol();
         assert_eq!(proto, "git");
+    }
+
+    #[test]
+    fn test_sync_config_roundtrip() {
+        let config = RepoConfig {
+            sync: Some(SyncConfig {
+                socket_path: "/tmp/test.sock".to_string(),
+                sync_interval_secs: 60,
+                default_branch_prefix: "custom/".to_string(),
+                auto_gitignore: true,
+            }),
+            ..Default::default()
+        };
+        let toml_str = config.to_toml().unwrap();
+        let parsed = RepoConfig::from_toml(&toml_str).unwrap();
+        let pc = parsed.sync.unwrap();
+        assert_eq!(pc.socket_path, "/tmp/test.sock");
+        assert_eq!(pc.sync_interval_secs, 60);
+        assert_eq!(pc.default_branch_prefix, "custom/");
+        assert!(pc.auto_gitignore);
+    }
+
+    #[test]
+    fn test_sync_config_none_by_default() {
+        let config = RepoConfig::default();
+        assert!(config.sync.is_none());
     }
 }

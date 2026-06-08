@@ -3,17 +3,14 @@ use std::sync::Arc;
 use redb::{Database, ReadableTable};
 
 use super::{Snapshot, SnapshotId, SnapshotStore};
-use crate::error::{NoaError, Result};
+use crate::{
+    error::{NoaError, Result},
+    redb_err,
+};
 
 const SNAPSHOTS: redb::TableDefinition<&str, &[u8]> = redb::TableDefinition::new("snapshots");
 const PARENT_INDEX: redb::TableDefinition<&str, &str> =
     redb::TableDefinition::new("snapshot_parent_index");
-
-macro_rules! redb_err {
-    ($result:expr) => {
-        $result.map_err(|e| NoaError::Redb(e.to_string()))
-    };
-}
 
 #[derive(Clone)]
 pub struct RedbSnapshotStore {

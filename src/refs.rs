@@ -5,6 +5,7 @@ use redb::ReadableTable;
 
 use crate::{
     error::{NoaError, Result},
+    redb_err,
     snapshot::SnapshotId,
 };
 
@@ -21,12 +22,6 @@ pub struct RedbRefStore {
 }
 
 const REFS: redb::TableDefinition<&str, &[u8]> = redb::TableDefinition::new("refs");
-
-macro_rules! redb_err {
-    ($result:expr) => {
-        $result.map_err(|e| NoaError::Redb(e.to_string()))
-    };
-}
 
 impl RedbRefStore {
     pub fn new(db: Arc<redb::Database>) -> Result<Self> {

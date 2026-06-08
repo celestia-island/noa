@@ -18,11 +18,20 @@ use crate::{
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<redb::Database>,
+    pub api_token: String,
 }
 
 impl AppState {
     pub fn new(db: Arc<redb::Database>) -> Self {
-        AppState { db }
+        AppState {
+            db,
+            api_token: String::new(),
+        }
+    }
+
+    pub fn with_api_token(mut self, token: String) -> Self {
+        self.api_token = token;
+        self
     }
 
     pub fn object_store(&self) -> Result<RedbObjectStore, crate::error::NoaError> {
@@ -63,6 +72,26 @@ fn not_found_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
             error: msg.to_string(),
         }),
     )
+}
+
+fn validate_hash_id(id: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
+    if id.is_empty() || id.len() > 128 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "invalid hash id".to_string(),
+            }),
+        ));
+    }
+    if !id.chars().all(|c| c.is_ascii_hexdigit() || c == '_') {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "invalid hash id format".to_string(),
+            }),
+        ));
+    }
+    Ok(())
 }
 
 pub async fn list_refs(
@@ -115,6 +144,14 @@ pub async fn upload_blobs(
     State(state): State<AppState>,
     Json(body): Json<UploadBlobsRequest>,
 ) -> Result<Json<UploadResult>, (StatusCode, Json<ApiError>)> {
+    if body.blobs.len() > 1000 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "too many blobs in single request (max 1000)".to_string(),
+            }),
+        ));
+    }
     let store = state.object_store().map_err(err_json)?;
     let mut ids = Vec::new();
     for blob in &body.blobs {
@@ -131,6 +168,7 @@ pub async fn get_blob(
     State(state): State<AppState>,
     Path(hash): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    validate_hash_id(&hash)?;
     let store = state.object_store().map_err(err_json)?;
     match store.get_blob(&BlobId(hash)).await {
         Ok(data) => {
@@ -156,6 +194,14 @@ pub async fn upload_trees(
     State(state): State<AppState>,
     Json(body): Json<UploadTreesRequest>,
 ) -> Result<Json<UploadResult>, (StatusCode, Json<ApiError>)> {
+    if body.trees.len() > 1000 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "too many trees in single request (max 1000)".to_string(),
+            }),
+        ));
+    }
     let store = state.object_store().map_err(err_json)?;
     let mut ids = Vec::new();
     for tree in &body.trees {
@@ -171,9 +217,12 @@ pub async fn get_tree(
     State(state): State<AppState>,
     Path(hash): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    validate_hash_id(&hash)?;
     let store = state.object_store().map_err(err_json)?;
     match store.get_tree(&TreeId(hash)).await {
-        Ok(entries) => Ok(Json(serde_json::to_value(&entries).unwrap())),
+        Ok(entries) => Ok(Json(
+            serde_json::to_value(&entries).unwrap_or_else(|_| serde_json::json!({})),
+        )),
         Err(crate::error::NoaError::ObjectNotFound(_)) => Err(not_found_json("tree not found")),
         Err(e) => Err(err_json(e)),
     }

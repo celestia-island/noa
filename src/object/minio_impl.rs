@@ -18,6 +18,56 @@ impl MinioObjectStore {
         MinioObjectStore { client, bucket }
     }
 
+    fn validate_endpoint(endpoint: &str) -> Result<()> {
+        let without_scheme = endpoint
+            .strip_prefix("http://")
+            .or_else(|| endpoint.strip_prefix("https://"))
+            .unwrap_or(endpoint);
+
+        let host_port = without_scheme.split('/').next().unwrap_or(without_scheme);
+        let host = host_port.split(':').next().unwrap_or(host_port);
+
+        let blocked = [
+            "169.254.169.254",
+            "metadata.google.internal",
+            "metadata",
+            "100.100.100.200",
+        ];
+        for &b in &blocked {
+            if host == b {
+                return Err(NoaError::Config(format!("blocked SSRF endpoint: {}", host)));
+            }
+        }
+        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            match ip {
+                std::net::IpAddr::V4(v4) => {
+                    if v4.is_loopback()
+                        || v4.is_link_local()
+                        || v4.is_broadcast()
+                        || v4.is_multicast()
+                    {
+                        return Err(NoaError::Config(format!(
+                            "endpoint resolves to forbidden IP: {}",
+                            ip
+                        )));
+                    }
+                    let octets = v4.octets();
+                    if octets[0] == 10
+                        || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
+                        || (octets[0] == 192 && octets[1] == 168)
+                    {
+                        return Err(NoaError::Config(format!(
+                            "endpoint resolves to private IP: {}",
+                            ip
+                        )));
+                    }
+                }
+                std::net::IpAddr::V6(_) => {}
+            }
+        }
+        Ok(())
+    }
+
     pub async fn from_config(
         endpoint: &str,
         bucket: &str,
@@ -25,6 +75,7 @@ impl MinioObjectStore {
         secret_key: &str,
         region: &str,
     ) -> Result<Self> {
+        Self::validate_endpoint(endpoint)?;
         let config = aws_config::defaults(BehaviorVersion::latest())
             .region(aws_config::Region::new(region.to_string()))
             .endpoint_url(endpoint)

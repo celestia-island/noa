@@ -106,13 +106,16 @@ impl AgentLog for FileAgentLog {
     }
 
     async fn compact_to(&self, up_to_seq: u64) -> Result<()> {
-        let entries = self.read_all().await?;
-        let remaining: Vec<LogEntry> = entries.into_iter().filter(|e| e.seq > up_to_seq).collect();
-
         let mut file = self
             .file
             .lock()
             .map_err(|e| NoaError::Io(std::io::Error::other(e.to_string())))?;
+
+        file.seek(SeekFrom::Start(0))?;
+        let mut content = String::new();
+        file.read_to_string(&mut content)?;
+        let entries = format::deserialize_entries(&content)?;
+        let remaining: Vec<LogEntry> = entries.into_iter().filter(|e| e.seq > up_to_seq).collect();
 
         file.seek(SeekFrom::Start(0))?;
         file.set_len(0)?;
