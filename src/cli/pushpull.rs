@@ -3,6 +3,27 @@ use std::sync::Arc;
 
 use crate::repo::Repository;
 
+fn validate_svn_url(url: &str) -> Result<()> {
+    if url.is_empty() {
+        anyhow::bail!("empty SVN URL");
+    }
+    if url.contains('\0') || url.contains('\n') || url.contains('\r') {
+        anyhow::bail!("SVN URL contains control characters");
+    }
+    if url.starts_with('-') {
+        anyhow::bail!("SVN URL must not start with '-'");
+    }
+    if !url.starts_with("http://")
+        && !url.starts_with("https://")
+        && !url.starts_with("svn://")
+        && !url.starts_with("svn+ssh://")
+        && !url.starts_with("file://")
+    {
+        anyhow::bail!("invalid SVN URL format: {}", url);
+    }
+    Ok(())
+}
+
 pub async fn run_push(remote_name: &str) -> Result<()> {
     let root = Repository::find(std::path::Path::new("."))?;
     let repo = Repository::open(&root)?;
@@ -28,8 +49,7 @@ pub async fn run_push(remote_name: &str) -> Result<()> {
         }
         println!("Pushed to {} ({})", remote_name, remote.url);
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git push failed: {}", stderr);
+        anyhow::bail!("git push failed");
     }
 
     Ok(())
@@ -51,8 +71,7 @@ pub async fn run_pull(remote_name: &str) -> Result<()> {
         .output()?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git pull failed: {}", stderr);
+        anyhow::bail!("git pull failed");
     }
 
     if crate::git::export::detect_lfs_available(&root)
@@ -129,6 +148,8 @@ pub async fn run_clone(url: &str, path: &str) -> Result<()> {
 }
 
 pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
+    validate_svn_url(url)?;
+
     let target = std::path::PathBuf::from(path);
     std::fs::create_dir_all(&target)?;
 
@@ -149,8 +170,7 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
         .output()?;
 
     if !export_output.status.success() {
-        let stderr = String::from_utf8_lossy(&export_output.stderr);
-        anyhow::bail!("svn export failed: {}", stderr);
+        anyhow::bail!("svn export failed");
     }
 
     std::process::Command::new("git")
@@ -216,6 +236,7 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
             protocol: "svn".to_string(),
         }],
         noa_remote: None,
+        sync: None,
     };
     config.save_to_dir(&target.join(".noa"))?;
     std::fs::write(target.join(".noa").join("HEAD"), "default\n")?;

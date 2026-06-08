@@ -49,6 +49,9 @@ pub enum NoaError {
 
     #[error("remote error: {0}")]
     Remote(String),
+
+    #[error("sync error: {0}")]
+    Sync(String),
 }
 
 pub type Result<T> = std::result::Result<T, NoaError>;
@@ -81,6 +84,13 @@ impl From<toml::ser::Error> for NoaError {
     fn from(e: toml::ser::Error) -> Self {
         NoaError::Config(e.to_string())
     }
+}
+
+#[macro_export]
+macro_rules! redb_err {
+    ($result:expr) => {
+        $result.map_err(|e| $crate::error::NoaError::Redb(e.to_string()))
+    };
 }
 
 #[cfg(test)]

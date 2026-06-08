@@ -5,6 +5,7 @@ use redb::ReadableTable;
 
 use crate::{
     error::{NoaError, Result},
+    redb_err,
     snapshot::SnapshotId,
 };
 
@@ -20,12 +21,6 @@ pub struct Workspace {
 }
 
 const WORKSPACES: redb::TableDefinition<&str, &[u8]> = redb::TableDefinition::new("workspaces");
-
-macro_rules! redb_err {
-    ($result:expr) => {
-        $result.map_err(|e| NoaError::Redb(e.to_string()))
-    };
-}
 
 #[derive(Clone)]
 pub struct WorkspaceManager {

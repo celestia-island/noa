@@ -11,5 +11,6 @@ pub mod remote;
 pub mod repo;
 pub mod server;
 pub mod snapshot;
+pub mod sync;
 pub mod tui;
 pub mod workspace;

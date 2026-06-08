@@ -25,7 +25,7 @@ static VERSION_TEXT: &str = concat!(
 #[command(about = "Server for the noa distributed version control system")]
 #[command(version = VERSION_TEXT)]
 #[command(
-    after_help = "Environment variables NOA_DB_PATH and NOA_PORT are still supported as legacy defaults."
+    after_help = "Set NOA_API_TOKEN environment variable to enable Bearer token authentication."
 )]
 struct ServerApp {
     #[arg(
@@ -36,6 +36,13 @@ struct ServerApp {
     db_path: String,
     #[arg(short, long, default_value_t = 3000, help = "Port to listen on")]
     port: u16,
+    #[arg(
+        short = 'H',
+        long,
+        default_value = "127.0.0.1",
+        help = "Host address to bind to"
+    )]
+    host: String,
 }
 
 #[tokio::main]
@@ -44,11 +51,26 @@ async fn main() -> anyhow::Result<()> {
 
     let db = Arc::new(redb::Database::builder().create(&app.db_path)?);
 
-    let state = AppState::new(db);
+    let api_token = std::env::var("NOA_API_TOKEN").unwrap_or_default();
+
+    let state = AppState::new(db).with_api_token(api_token);
     let router = router(state);
 
-    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], app.port));
-    println!("noa-server listening on {}", addr);
+    let addr = format!("{}:{}", app.host, app.port)
+        .parse::<std::net::SocketAddr>()
+        .map_err(|e| anyhow::anyhow!("invalid address '{}:{}': {}", app.host, app.port, e))?;
+
+    if std::env::var("NOA_API_TOKEN").is_ok() {
+        println!(
+            "noa-server listening on {} (API token authentication enabled)",
+            addr
+        );
+    } else {
+        println!(
+            "noa-server listening on {} (WARNING: no authentication configured, set NOA_API_TOKEN)",
+            addr
+        );
+    }
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, router).await?;

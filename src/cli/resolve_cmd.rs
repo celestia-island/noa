@@ -30,7 +30,13 @@ pub async fn run_resolve(
         return Ok(());
     }
 
-    let latest_merge = merge_entries.last().unwrap();
+    let latest_merge = match merge_entries.last() {
+        Some(m) => m,
+        None => {
+            println!("No pending conflicts found.");
+            return Ok(());
+        }
+    };
     let ours_id = latest_merge
         .resolved_conflict_ours_id
         .as_deref()

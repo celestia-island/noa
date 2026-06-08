@@ -4,7 +4,10 @@ use redb::Database;
 use sha2::{Digest, Sha256};
 
 use super::{BlobId, ObjectStore, TreeEntries, TreeId};
-use crate::error::{NoaError, Result};
+use crate::{
+    error::{NoaError, Result},
+    redb_err,
+};
 
 const BLOBS: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new("blobs");
 const TREES: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new("trees");
@@ -13,12 +16,6 @@ fn sha256_hex(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
     hex::encode(hasher.finalize())
-}
-
-macro_rules! redb_err {
-    ($result:expr) => {
-        $result.map_err(|e| NoaError::Redb(e.to_string()))
-    };
 }
 
 #[derive(Clone)]

@@ -7,6 +7,31 @@ use crate::{
     snapshot::{RedbSnapshotStore, SnapshotStore},
 };
 
+pub fn validate_git_url(url: &str) -> Result<()> {
+    if url.is_empty() {
+        return Err(NoaError::Remote("empty URL".to_string()));
+    }
+    if url.contains('\0') || url.contains('\n') || url.contains('\r') {
+        return Err(NoaError::Remote(
+            "URL contains control characters".to_string(),
+        ));
+    }
+    let looks_valid = url.starts_with("https://")
+        || url.starts_with("http://")
+        || url.starts_with("git://")
+        || url.starts_with("ssh://")
+        || url.starts_with("file:///")
+        || (url.contains(':') && !url.starts_with('-'))
+        || url.starts_with('/');
+    if !looks_valid {
+        return Err(NoaError::Remote(format!("invalid git URL format: {}", url)));
+    }
+    if url.starts_with('-') {
+        return Err(NoaError::Remote("URL must not start with '-'".to_string()));
+    }
+    Ok(())
+}
+
 pub fn detect_lfs_available(repo_root: &Path) -> bool {
     Command::new("git")
         .args(["lfs", "version"])
@@ -131,6 +156,8 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
 }
 
 pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
+    validate_git_url(url)?;
+
     Command::new("git")
         .args(["clone", url, &target.to_string_lossy()])
         .status()
@@ -176,6 +203,7 @@ pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
             protocol: "git".to_string(),
         }],
         noa_remote: None,
+        sync: None,
     };
     config.save_to_dir(&target.join(".noa"))?;
 

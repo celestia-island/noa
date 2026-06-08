@@ -18,6 +18,7 @@ use crate::{
 pub const NOA_DIR_NAME: &str = ".noa";
 pub const DB_NAME: &str = "noa.redb";
 pub const AGENT_LOGS_DIR: &str = "agent-logs";
+pub const SNAPSHOTS_DIR: &str = "snapshots";
 pub const HEAD_FILE: &str = "HEAD";
 pub const ORIG_HEAD_FILE: &str = "ORIG_HEAD";
 
@@ -82,6 +83,7 @@ impl Repository {
 
         let config = RepoConfig::load_from_dir(&noa_dir)?;
         let db = Self::open_db(&noa_dir)?;
+        Self::init_tables(&db)?;
 
         Ok(Repository {
             root: path.to_path_buf(),
@@ -237,6 +239,79 @@ impl Repository {
         let path = self.agent_log_path(workspace);
         FileAgentLog::create(&path)
     }
+
+    pub fn init_for_sync(path: &Path) -> Result<SyncInitResult> {
+        let noa_dir = path.join(NOA_DIR_NAME);
+        let mut noa_initialized = false;
+        let mut gitignore_updated = false;
+
+        if !noa_dir.exists() {
+            std::fs::create_dir_all(&noa_dir)?;
+            std::fs::create_dir_all(noa_dir.join(AGENT_LOGS_DIR))?;
+            std::fs::create_dir_all(noa_dir.join(SNAPSHOTS_DIR))?;
+
+            let config = RepoConfig::default();
+            config.save_to_dir(&noa_dir)?;
+
+            std::fs::write(noa_dir.join(HEAD_FILE), "default\n")?;
+
+            let db = Self::open_db(&noa_dir)?;
+            Self::init_tables(&db)?;
+
+            let db = Arc::new(db);
+            Self::create_default_workspace(&db)?;
+
+            noa_initialized = true;
+        }
+
+        let gitignore_path = path.join(".gitignore");
+        if gitignore_path.exists() {
+            let content = std::fs::read_to_string(&gitignore_path)?;
+            let has_noa = content
+                .lines()
+                .any(|l| l.trim() == ".noa/" || l.trim() == ".noa");
+            if !has_noa {
+                manage_gitignore(path);
+                gitignore_updated = true;
+            }
+        } else {
+            manage_gitignore(path);
+            gitignore_updated = true;
+        }
+
+        let _repo = Repository::open(path)?;
+        let current_branch = get_current_git_branch(path)?;
+
+        Ok(SyncInitResult {
+            repo_id: format!("noa:{}", path.display()),
+            current_branch,
+            noa_initialized,
+            gitignore_updated,
+        })
+    }
+}
+
+pub struct SyncInitResult {
+    pub repo_id: String,
+    pub current_branch: String,
+    pub noa_initialized: bool,
+    pub gitignore_updated: bool,
+}
+
+fn get_current_git_branch(workspace_root: &Path) -> Result<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(|e| NoaError::Sync(format!("git rev-parse failed: {}", e)))?;
+
+    if !output.status.success() {
+        return Err(NoaError::Sync(
+            "failed to determine current git branch".to_string(),
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 pub fn manage_gitignore(root: &Path) {
