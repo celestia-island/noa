@@ -32,3 +32,6 @@ Thumbs.db
 
 # noa repository (for testing)
 .noa/
+
+# redb database files (should never be committed)
+*.redb

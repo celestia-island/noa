@@ -30,7 +30,7 @@ static VERSION_TEXT: &str = concat!(
 struct ServerApp {
     #[arg(
         long,
-        default_value = "noa-server.redb",
+        default_value = "target/noa-server.redb",
         help = "Path to the database file"
     )]
     db_path: String,
@@ -49,6 +49,9 @@ struct ServerApp {
 async fn main() -> anyhow::Result<()> {
     let app = ServerApp::parse();
 
+    if let Some(parent) = std::path::Path::new(&app.db_path).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let db = Arc::new(redb::Database::builder().create(&app.db_path)?);
 
     let api_token = std::env::var("NOA_API_TOKEN").unwrap_or_default();
