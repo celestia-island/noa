@@ -50,7 +50,9 @@ pub struct SyncConfig {
 }
 
 fn default_sync_socket() -> String {
-    "/tmp/noa-sync.sock".to_string()
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+        .unwrap_or_else(|_| format!("/tmp/noa-{}", std::env::var("USER").unwrap_or_else(|_| "unknown".to_string())));
+    format!("{}/noa-sync.sock", runtime_dir)
 }
 
 fn default_sync_interval() -> u64 {

@@ -44,8 +44,7 @@ pub async fn run_push(remote_name: &str) -> Result<()> {
         }
         println!("Pushed to {} ({})", remote_name, remote.url);
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git push failed: {}", stderr);
+        anyhow::bail!("git push failed");
     }
 
     Ok(())
@@ -67,8 +66,7 @@ pub async fn run_pull(remote_name: &str) -> Result<()> {
         .output()?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git pull failed: {}", stderr);
+        anyhow::bail!("git pull failed");
     }
 
     if crate::git::export::detect_lfs_available(&root)
@@ -167,8 +165,7 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
         .output()?;
 
     if !export_output.status.success() {
-        let stderr = String::from_utf8_lossy(&export_output.stderr);
-        anyhow::bail!("svn export failed: {}", stderr);
+        anyhow::bail!("svn export failed");
     }
 
     std::process::Command::new("git")
