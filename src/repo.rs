@@ -239,7 +239,7 @@ impl Repository {
         FileAgentLog::create(&path)
     }
 
-    pub fn init_for_polemos(path: &Path) -> Result<PolemosInitResult> {
+    pub fn init_for_sync(path: &Path) -> Result<SyncInitResult> {
         let noa_dir = path.join(NOA_DIR_NAME);
         let mut noa_initialized = false;
         let mut gitignore_updated = false;
@@ -281,7 +281,7 @@ impl Repository {
         let _repo = Repository::open(path)?;
         let current_branch = get_current_git_branch(path)?;
 
-        Ok(PolemosInitResult {
+        Ok(SyncInitResult {
             repo_id: format!("noa:{}", path.display()),
             current_branch,
             noa_initialized,
@@ -290,7 +290,7 @@ impl Repository {
     }
 }
 
-pub struct PolemosInitResult {
+pub struct SyncInitResult {
     pub repo_id: String,
     pub current_branch: String,
     pub noa_initialized: bool,
@@ -302,10 +302,10 @@ fn get_current_git_branch(workspace_root: &Path) -> Result<String> {
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(workspace_root)
         .output()
-        .map_err(|e| NoaError::Polemos(format!("git rev-parse failed: {}", e)))?;
+        .map_err(|e| NoaError::Sync(format!("git rev-parse failed: {}", e)))?;
 
     if !output.status.success() {
-        return Err(NoaError::Polemos(
+        return Err(NoaError::Sync(
             "failed to determine current git branch".to_string(),
         ));
     }

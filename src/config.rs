@@ -15,7 +15,7 @@ pub struct RepoConfig {
     pub noa_remote: Option<String>,
 
     #[serde(default)]
-    pub polemos: Option<PolemosConfig>,
+    pub sync: Option<SyncConfig>,
 }
 
 fn default_repo_name() -> String {
@@ -35,8 +35,8 @@ fn default_protocol() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PolemosConfig {
-    #[serde(default = "default_polemos_socket")]
+pub struct SyncConfig {
+    #[serde(default = "default_sync_socket")]
     pub socket_path: String,
 
     #[serde(default = "default_sync_interval")]
@@ -49,8 +49,8 @@ pub struct PolemosConfig {
     pub auto_gitignore: bool,
 }
 
-fn default_polemos_socket() -> String {
-    "/tmp/noa-polemos.sock".to_string()
+fn default_sync_socket() -> String {
+    "/tmp/noa-sync.sock".to_string()
 }
 
 fn default_sync_interval() -> u64 {
@@ -67,7 +67,7 @@ impl Default for RepoConfig {
             name: default_repo_name(),
             remotes: Vec::new(),
             noa_remote: None,
-            polemos: None,
+            sync: None,
         }
     }
 }
@@ -226,9 +226,9 @@ mod tests {
     }
 
     #[test]
-    fn test_polemos_config_roundtrip() {
+    fn test_sync_config_roundtrip() {
         let config = RepoConfig {
-            polemos: Some(PolemosConfig {
+            sync: Some(SyncConfig {
                 socket_path: "/tmp/test.sock".to_string(),
                 sync_interval_secs: 60,
                 default_branch_prefix: "custom/".to_string(),
@@ -238,7 +238,7 @@ mod tests {
         };
         let toml_str = config.to_toml().unwrap();
         let parsed = RepoConfig::from_toml(&toml_str).unwrap();
-        let pc = parsed.polemos.unwrap();
+        let pc = parsed.sync.unwrap();
         assert_eq!(pc.socket_path, "/tmp/test.sock");
         assert_eq!(pc.sync_interval_secs, 60);
         assert_eq!(pc.default_branch_prefix, "custom/");
@@ -246,8 +246,8 @@ mod tests {
     }
 
     #[test]
-    fn test_polemos_config_none_by_default() {
+    fn test_sync_config_none_by_default() {
         let config = RepoConfig::default();
-        assert!(config.polemos.is_none());
+        assert!(config.sync.is_none());
     }
 }

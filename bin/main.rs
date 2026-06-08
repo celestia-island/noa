@@ -87,8 +87,8 @@ enum Commands {
         #[arg(short, long)]
         path: Option<String>,
     },
-    Polemos {
-        #[arg(short, long, default_value = "/tmp/noa-polemos.sock")]
+    Sync {
+        #[arg(short, long, default_value = "/tmp/noa-sync.sock")]
         socket: String,
         #[arg(short, long, default_value = ".")]
         workspace: String,
@@ -275,12 +275,12 @@ async fn main() -> anyhow::Result<()> {
             let repo = libnoa::repo::Repository::open(&root)?;
             cli::resolve_cmd::run_resolve(&repo, &strategy, path.as_deref()).await?;
         }
-        Some(Commands::Polemos { socket, workspace }) => {
+        Some(Commands::Sync { socket, workspace }) => {
             let root = std::path::Path::new(&workspace)
                 .canonicalize()
                 .unwrap_or_else(|_| std::path::PathBuf::from(&workspace));
             let ws_root = libnoa::repo::Repository::find(&root)?;
-            let server = libnoa::polemos::PolemosServer::new(
+            let server = libnoa::sync::SyncServer::new(
                 std::path::Path::new(&socket),
                 &ws_root,
                 "default",

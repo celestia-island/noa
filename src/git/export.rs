@@ -176,7 +176,7 @@ pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
             protocol: "git".to_string(),
         }],
         noa_remote: None,
-        polemos: None,
+        sync: None,
     };
     config.save_to_dir(&target.join(".noa"))?;
 

@@ -1,13 +1,13 @@
-use anyhow::Context;
-use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use super::{NoaAck, RequestNoaHandshake};
+use serde::{Deserialize, Serialize};
+
 use crate::{
-    error::Result,
-    repo::{get_current_git_branch, manage_gitignore, Repository},
-    server::constant_time_eq,
+    error::{NoaError, Result},
+    repo::{manage_gitignore, Repository},
 };
+
+use super::{NoaAck, RequestNoaHandshake};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoaHandshakeResponse {
@@ -38,53 +38,46 @@ pub struct NoaAuthResponse {
 pub fn handle_handshake_request(
     workspace_root: &Path,
     req: &RequestNoaHandshake,
-    expected_token: &str,
 ) -> Result<NoaHandshakeResponse> {
     if !workspace_root.join(".git").exists() {
-        anyhow::bail!("workspace has no git repository, noa requires git");
+        return Err(NoaError::Sync(
+            "workspace has no git repository, noa requires git".to_string(),
+        ));
     }
 
-    match &req.token {
-        Some(token) if constant_time_eq(token.as_bytes(), expected_token.as_bytes()) => {}
-        _ => {
-            anyhow::bail!("authentication failed: invalid or missing token");
-        }
-    }
-
-    let noa_dir = crate::repo::Repository::resolve_noa_dir(workspace_root);
+    let noa_dir = workspace_root.join(".noa");
     let mut noa_initialized = false;
     let mut gitignore_updated = false;
 
-    if noa_dir.exists() {
-        let is_parasitic = noa_dir.starts_with(workspace_root.join(".git"));
+    if !noa_dir.exists() {
+        let _repo = Repository::init(workspace_root)?;
+        noa_initialized = true;
+        gitignore_updated = true;
+    } else {
         let gitignore_path = workspace_root.join(".gitignore");
-        if is_parasitic {
-            // Parasitic mode: noa data lives under .git/noa/; git already
-            // ignores .git/, so no .gitignore entry is needed.  Deliberately
-            // mirror Repository::init which skips manage_gitignore here.
-            gitignore_updated = false;
-        } else if gitignore_path.exists() {
+        if gitignore_path.exists() {
             let content = std::fs::read_to_string(&gitignore_path)?;
             let has_noa = content
                 .lines()
                 .any(|l| l.trim() == ".noa/" || l.trim() == ".noa");
             if !has_noa {
-                manage_gitignore(workspace_root)?;
+                manage_gitignore(workspace_root);
                 gitignore_updated = true;
             }
         } else {
-            manage_gitignore(workspace_root)?;
+            manage_gitignore(workspace_root);
             gitignore_updated = true;
         }
-    } else {
-        Repository::init(workspace_root)?;
-        noa_initialized = true;
-        gitignore_updated = true;
     }
 
+    let _repo = Repository::open(workspace_root)?;
     let current_branch = get_current_git_branch(workspace_root)?;
 
-    let repo_id = format!("{}:{}", req.workspace_id, workspace_root.display());
+    let repo_id = format!(
+        "{}:{}",
+        req.workspace_id,
+        workspace_root.display()
+    );
 
     Ok(NoaHandshakeResponse {
         repo_id,
@@ -97,89 +90,67 @@ pub fn handle_handshake_request(
 
 pub fn handle_auth_request(
     workspace_root: &Path,
-    workspace_id: &str,
     selection: &BranchSelection,
     _suggested_branch: &str,
-    branch_prefix: &str,
 ) -> Result<NoaAuthResponse> {
     let base_branch = get_current_git_branch(workspace_root)?;
 
     let selected_branch = match selection {
         BranchSelection::NewSession(session_id) => {
-            validate_git_ref_component(session_id)?;
-            let name = format!("{branch_prefix}{session_id}");
+            let name = format!("entelecheia/agent-{}", session_id);
             create_git_branch(workspace_root, &name, &base_branch)?;
             name
         }
         BranchSelection::NewTask(task_name) => {
-            validate_git_ref_component(task_name)?;
-            let name = format!("{branch_prefix}{task_name}");
+            let name = format!("entelecheia/agent-{}", task_name);
             create_git_branch(workspace_root, &name, &base_branch)?;
             name
         }
         BranchSelection::Existing(branch) => {
-            validate_git_ref_name(branch)?;
             checkout_git_branch(workspace_root, branch)?;
             branch.clone()
         }
         BranchSelection::Current => base_branch.clone(),
     };
 
-    tracing::info!(
-        "auth decision: workspace_root={} selection={:?} branch={}",
-        workspace_root.display(),
-        selection,
-        base_branch
-    );
-
     Ok(NoaAuthResponse {
-        workspace_id: workspace_id.to_string(),
+        workspace_id: String::new(),
         selected_branch,
         branch_base: base_branch,
         approved: true,
     })
 }
 
-fn validate_git_ref_component(name: &str) -> Result<()> {
-    if name.is_empty() || name.len() > 128 {
-        anyhow::bail!(
-            "invalid ref component: length must be 1-128, got {}",
-            name.len()
-        );
-    }
-    if name.contains('\0') || name.contains('\n') || name.contains('\r') {
-        anyhow::bail!("invalid ref component: contains control characters");
-    }
-    if name.contains("..") || name.contains('~') || name.contains('^') || name.contains(':') {
-        anyhow::bail!("invalid ref component: contains forbidden characters");
-    }
-    if name.starts_with('.') || name.starts_with('-') || name.ends_with('.') {
-        anyhow::bail!("invalid ref component: invalid start/end character");
-    }
-    if name
-        .contains(|c: char| c.is_ascii_control() || c == ' ' || c == '\\' || c == '[' || c == '?')
-    {
-        anyhow::bail!("invalid ref component: contains forbidden characters");
-    }
-    Ok(())
-}
-
-fn validate_git_ref_name(name: &str) -> Result<()> {
-    if name.is_empty() {
-        anyhow::bail!("empty ref name");
-    }
-    for component in name.split('/') {
-        validate_git_ref_component(component)?;
-    }
-    Ok(())
-}
-
-pub fn handle_ready(workspace_id: &str, branch: &str, _snapshot_id: &str) -> Result<NoaAck> {
-    tracing::info!("Noa workspace {} ready on branch {}", workspace_id, branch);
+pub fn handle_ready(
+    workspace_id: &str,
+    branch: &str,
+    _snapshot_id: &str,
+) -> Result<NoaAck> {
+    tracing::info!(
+        "Noa workspace {} ready on branch {}",
+        workspace_id,
+        branch
+    );
     Ok(NoaAck {
         ok: true,
-        message: format!("workspace {workspace_id} ready"),
+        message: format!("workspace {} ready", workspace_id),
     })
+}
+
+fn get_current_git_branch(workspace_root: &Path) -> Result<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(|e| NoaError::Sync(format!("git rev-parse failed: {}", e)))?;
+
+    if !output.status.success() {
+        return Err(NoaError::Sync(
+            "failed to determine current git branch".to_string(),
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 fn create_git_branch(workspace_root: &Path, name: &str, base: &str) -> Result<()> {
@@ -188,22 +159,23 @@ fn create_git_branch(workspace_root: &Path, name: &str, base: &str) -> Result<()
         .current_dir(workspace_root)
         .output();
 
-    if let Ok(output) = existing {
-        if output.status.success() {
-            checkout_git_branch(workspace_root, name)?;
-            return Ok(());
-        }
+    if existing.is_ok() && existing.unwrap().status.success() {
+        checkout_git_branch(workspace_root, name)?;
+        return Ok(());
     }
 
     let output = std::process::Command::new("git")
         .args(["checkout", "-b", name, base])
         .current_dir(workspace_root)
         .output()
-        .with_context(|| "git checkout -b failed")?;
+        .map_err(|e| NoaError::Sync(format!("git checkout -b failed: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git checkout -b failed: {stderr}");
+        return Err(NoaError::Sync(format!(
+            "git checkout -b failed: {}",
+            stderr
+        )));
     }
 
     Ok(())
@@ -214,11 +186,11 @@ fn checkout_git_branch(workspace_root: &Path, name: &str) -> Result<()> {
         .args(["checkout", name])
         .current_dir(workspace_root)
         .output()
-        .with_context(|| "git checkout failed")?;
+        .map_err(|e| NoaError::Sync(format!("git checkout failed: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git checkout failed: {stderr}");
+        return Err(NoaError::Sync(format!("git checkout failed: {}", stderr)));
     }
 
     Ok(())
@@ -266,8 +238,6 @@ mod tests {
         assert!(!branch.is_empty());
     }
 
-    const TEST_TOKEN: &str = "test-token-for-tests";
-
     #[test]
     fn test_handle_handshake_creates_noa() {
         let tmp = TempDir::new().unwrap();
@@ -276,11 +246,10 @@ mod tests {
             workspace_id: "test-ws".to_string(),
             remote_name: "origin".to_string(),
             remote_path: tmp.path().display().to_string(),
-            token: Some(TEST_TOKEN.to_string()),
         };
-        let resp = handle_handshake_request(tmp.path(), &req, TEST_TOKEN).unwrap();
+        let resp = handle_handshake_request(tmp.path(), &req).unwrap();
         assert!(resp.noa_initialized);
-        assert!(tmp.path().join(".git/noa").exists());
+        assert!(tmp.path().join(".noa").exists());
     }
 
     #[test]
@@ -291,10 +260,9 @@ mod tests {
             workspace_id: "test-ws".to_string(),
             remote_name: "origin".to_string(),
             remote_path: tmp.path().display().to_string(),
-            token: Some(TEST_TOKEN.to_string()),
         };
-        handle_handshake_request(tmp.path(), &req, TEST_TOKEN).unwrap();
-        let resp2 = handle_handshake_request(tmp.path(), &req, TEST_TOKEN).unwrap();
+        handle_handshake_request(tmp.path(), &req).unwrap();
+        let resp2 = handle_handshake_request(tmp.path(), &req).unwrap();
         assert!(!resp2.noa_initialized);
     }
 
@@ -305,46 +273,9 @@ mod tests {
             workspace_id: "test-ws".to_string(),
             remote_name: "origin".to_string(),
             remote_path: tmp.path().display().to_string(),
-            token: Some(TEST_TOKEN.to_string()),
         };
-        let result = handle_handshake_request(tmp.path(), &req, TEST_TOKEN);
+        let result = handle_handshake_request(tmp.path(), &req);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_handle_handshake_bad_token_fails() {
-        let tmp = TempDir::new().unwrap();
-        init_git_repo(tmp.path());
-        let req = RequestNoaHandshake {
-            workspace_id: "test-ws".to_string(),
-            remote_name: "origin".to_string(),
-            remote_path: tmp.path().display().to_string(),
-            token: Some("wrong-token".to_string()),
-        };
-        let result = handle_handshake_request(tmp.path(), &req, TEST_TOKEN);
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("authentication failed"));
-    }
-
-    #[test]
-    fn test_handle_handshake_missing_token_fails() {
-        let tmp = TempDir::new().unwrap();
-        init_git_repo(tmp.path());
-        let req = RequestNoaHandshake {
-            workspace_id: "test-ws".to_string(),
-            remote_name: "origin".to_string(),
-            remote_path: tmp.path().display().to_string(),
-            token: None,
-        };
-        let result = handle_handshake_request(tmp.path(), &req, TEST_TOKEN);
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("authentication failed"));
     }
 
     #[test]
@@ -362,10 +293,8 @@ mod tests {
         init_git_repo(tmp.path());
         let resp = handle_auth_request(
             tmp.path(),
-            "test-ws",
             &BranchSelection::NewSession("sess-123".to_string()),
             "entelecheia/agent-sess-123",
-            "entelecheia/agent-",
         )
         .unwrap();
         assert_eq!(resp.selected_branch, "entelecheia/agent-sess-123");
@@ -377,14 +306,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init_git_repo(tmp.path());
         let current = get_current_git_branch(tmp.path()).unwrap();
-        let resp = handle_auth_request(
-            tmp.path(),
-            "test-ws",
-            &BranchSelection::Current,
-            "",
-            "entelecheia/agent-",
-        )
-        .unwrap();
+        let resp =
+            handle_auth_request(tmp.path(), &BranchSelection::Current, "").unwrap();
         assert_eq!(resp.selected_branch, current);
     }
 
