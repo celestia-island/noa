@@ -49,6 +49,9 @@ pub enum NoaError {
 
     #[error("remote error: {0}")]
     Remote(String),
+
+    #[error("polemos error: {0}")]
+    Polemos(String),
 }
 
 pub type Result<T> = std::result::Result<T, NoaError>;

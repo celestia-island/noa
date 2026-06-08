@@ -216,6 +216,7 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
             protocol: "svn".to_string(),
         }],
         noa_remote: None,
+        polemos: None,
     };
     config.save_to_dir(&target.join(".noa"))?;
     std::fs::write(target.join(".noa").join("HEAD"), "default\n")?;

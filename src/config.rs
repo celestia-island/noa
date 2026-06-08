@@ -13,6 +13,9 @@ pub struct RepoConfig {
 
     #[serde(default)]
     pub noa_remote: Option<String>,
+
+    #[serde(default)]
+    pub polemos: Option<PolemosConfig>,
 }
 
 fn default_repo_name() -> String {
@@ -31,12 +34,40 @@ fn default_protocol() -> String {
     "git".to_string()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolemosConfig {
+    #[serde(default = "default_polemos_socket")]
+    pub socket_path: String,
+
+    #[serde(default = "default_sync_interval")]
+    pub sync_interval_secs: u64,
+
+    #[serde(default = "default_branch_prefix")]
+    pub default_branch_prefix: String,
+
+    #[serde(default)]
+    pub auto_gitignore: bool,
+}
+
+fn default_polemos_socket() -> String {
+    "/tmp/noa-polemos.sock".to_string()
+}
+
+fn default_sync_interval() -> u64 {
+    30
+}
+
+fn default_branch_prefix() -> String {
+    "entelecheia/agent-".to_string()
+}
+
 impl Default for RepoConfig {
     fn default() -> Self {
         RepoConfig {
             name: default_repo_name(),
             remotes: Vec::new(),
             noa_remote: None,
+            polemos: None,
         }
     }
 }
@@ -192,5 +223,31 @@ mod tests {
     fn test_remote_config_default_protocol() {
         let proto = default_protocol();
         assert_eq!(proto, "git");
+    }
+
+    #[test]
+    fn test_polemos_config_roundtrip() {
+        let config = RepoConfig {
+            polemos: Some(PolemosConfig {
+                socket_path: "/tmp/test.sock".to_string(),
+                sync_interval_secs: 60,
+                default_branch_prefix: "custom/".to_string(),
+                auto_gitignore: true,
+            }),
+            ..Default::default()
+        };
+        let toml_str = config.to_toml().unwrap();
+        let parsed = RepoConfig::from_toml(&toml_str).unwrap();
+        let pc = parsed.polemos.unwrap();
+        assert_eq!(pc.socket_path, "/tmp/test.sock");
+        assert_eq!(pc.sync_interval_secs, 60);
+        assert_eq!(pc.default_branch_prefix, "custom/");
+        assert!(pc.auto_gitignore);
+    }
+
+    #[test]
+    fn test_polemos_config_none_by_default() {
+        let config = RepoConfig::default();
+        assert!(config.polemos.is_none());
     }
 }
