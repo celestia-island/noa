@@ -1,13 +1,13 @@
 # Noa ↔ Entelecheia Integration Plan
 
 > **Last updated**: 2026-06-08
-> **Status**: Noa-side Polemos integration implemented. Core handshake, event sync, transport, and server modules are complete.
+> **Status**: Noa-side sync (formerly polemos) integration implemented. Core handshake, event sync, transport, and server modules are complete.
 
 ## Overview
 
 Noa provides git-native workspace versioning for Entelecheia agents. When an agent operates on a workspace, Noa records file writes, creates snapshots at task boundaries, and enables branch-based development (feature branches for agent tasks, rollbacks on failure).
 
-This plan defines the Noa-side responsibilities in the mutual handshake protocol between Noa (source machine) and Scepter (Entelecheia server). The protocol rides on Polemos — Entelecheia's bidirectional JSON-RPC relay over Unix socket / WebSocket.
+This plan defines the Noa-side responsibilities in the mutual handshake protocol between Noa (source machine) and Scepter (Entelecheia server). The protocol rides on Polemos — Entelecheia's bidirectional JSON-RPC relay over Unix socket / WebSocket. The Noa crate's internal module implementing this is named `sync` (originally `polemos`, renamed 2026-06-08 to avoid confusion with the entelecheia Polemos infrastructure).
 
 ## Protocol: Noa Handshake over Polemos
 
@@ -115,7 +115,7 @@ Pull (Scepter → Noa):
 ### Noa Client Library API (to be implemented)
 
 ```rust
-// In libnoa or a noa-client shim:
+// In libnoa::sync:
 
 /// Initialize .noa on the source machine for a Polemos workspace
 pub fn init_noa_for_polemos(
