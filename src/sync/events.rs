@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -8,6 +8,35 @@ use crate::{
     object::ObjectStore,
     repo::Repository,
 };
+
+fn sanitize_path(base: &Path, user_path: &str) -> Option<PathBuf> {
+    let joined = base.join(user_path);
+    match joined.canonicalize() {
+        Ok(canonical) => {
+            let base_canonical = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+            if canonical.starts_with(&base_canonical) {
+                Some(canonical)
+            } else {
+                None
+            }
+        }
+        Err(_) => {
+            let mut safe = base.to_path_buf();
+            for component in Path::new(user_path).components() {
+                match component {
+                    Component::Normal(c) => {
+                        safe.push(c);
+                    }
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                        return None;
+                    }
+                    Component::CurDir => {}
+                }
+            }
+            Some(safe)
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncEvent {
@@ -75,7 +104,16 @@ impl EventSyncEngine {
 
         for event in events {
             if let Some(path) = &event.path {
-                let file_path = self.workspace_root.join(path);
+                let file_path = match sanitize_path(&self.workspace_root, path) {
+                    Some(p) => p,
+                    None => {
+                        tracing::warn!(
+                            "rejecting path traversal attempt: {}",
+                            path
+                        );
+                        continue;
+                    }
+                };
                 if let Some(parent) = file_path.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
@@ -108,7 +146,16 @@ impl EventSyncEngine {
                     }
                     "rename" => {
                         if let Some(from) = &event.from_path {
-                            let from_path = self.workspace_root.join(from);
+                            let from_path = match sanitize_path(&self.workspace_root, from) {
+                                Some(p) => p,
+                                None => {
+                                    tracing::warn!(
+                                        "rejecting path traversal in rename source: {}",
+                                        from
+                                    );
+                                    continue;
+                                }
+                            };
                             if from_path.exists() {
                                 std::fs::rename(&from_path, &file_path)?;
                                 applied += 1;
@@ -163,6 +210,21 @@ mod tests {
         let repo = Repository::init(tmp.path()).unwrap();
         drop(repo);
         tmp
+    }
+
+    #[test]
+    fn test_sanitize_path_rejects_traversal() {
+        let tmp = TempDir::new().unwrap();
+        assert!(sanitize_path(tmp.path(), "../../../etc/passwd").is_none());
+        assert!(sanitize_path(tmp.path(), "/etc/passwd").is_none());
+        assert!(sanitize_path(tmp.path(), "sub/../../../etc/passwd").is_none());
+    }
+
+    #[test]
+    fn test_sanitize_path_allows_normal() {
+        let tmp = TempDir::new().unwrap();
+        assert!(sanitize_path(tmp.path(), "src/main.rs").is_some());
+        assert!(sanitize_path(tmp.path(), "a/b/c.txt").is_some());
     }
 
     #[tokio::test]
