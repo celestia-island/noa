@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Component, PathBuf},
+};
 
 use crate::{
     error::Result,
@@ -106,6 +109,16 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
         self.build_tree_from_entries_with_base(&[], entries).await
     }
 
+    fn is_path_within_root(path: &std::path::Path) -> bool {
+        for component in path.components() {
+            match component {
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => return false,
+                _ => {}
+            }
+        }
+        true
+    }
+
     async fn build_tree_from_entries_with_base(
         &self,
         base: &[TreeEntry],
@@ -123,8 +136,14 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
                                 continue;
                             }
                         }
-                        let blob_id = if let Some(ref root) = self.repo_root {
-                            let file_path = root.join(path);
+                        if let Some(ref repo_root) = self.repo_root {
+                            if !Self::is_path_within_root(PathBuf::from(path).as_path()) {
+                                tracing::warn!("skipping path traversal in log entry: {}", path);
+                                continue;
+                            }
+                        }
+                        let blob_id = if let Some(ref repo_root) = self.repo_root {
+                            let file_path = repo_root.join(path);
                             match std::fs::read(&file_path) {
                                 Ok(content) => self.object_store.put_blob(&content).await?.0,
                                 Err(_) => log_blob_id.clone(),
