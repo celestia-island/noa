@@ -97,16 +97,19 @@ pub fn handle_auth_request(
 
     let selected_branch = match selection {
         BranchSelection::NewSession(session_id) => {
+            validate_git_ref_component(session_id)?;
             let name = format!("entelecheia/agent-{}", session_id);
             create_git_branch(workspace_root, &name, &base_branch)?;
             name
         }
         BranchSelection::NewTask(task_name) => {
+            validate_git_ref_component(task_name)?;
             let name = format!("entelecheia/agent-{}", task_name);
             create_git_branch(workspace_root, &name, &base_branch)?;
             name
         }
         BranchSelection::Existing(branch) => {
+            validate_git_ref_name(branch)?;
             checkout_git_branch(workspace_root, branch)?;
             branch.clone()
         }
@@ -119,6 +122,44 @@ pub fn handle_auth_request(
         branch_base: base_branch,
         approved: true,
     })
+}
+
+fn validate_git_ref_component(name: &str) -> Result<()> {
+    if name.is_empty() || name.len() > 128 {
+        return Err(NoaError::Sync(format!(
+            "invalid ref component: length must be 1-128, got {}",
+            name.len()
+        )));
+    }
+    if name.contains('\0') || name.contains('\n') || name.contains('\r') {
+        return Err(NoaError::Sync("invalid ref component: contains control characters".to_string()));
+    }
+    if name.contains("..") || name.contains("~") || name.contains("^") || name.contains(":") {
+        return Err(NoaError::Sync(
+            "invalid ref component: contains forbidden characters".to_string(),
+        ));
+    }
+    if name.starts_with('.') || name.starts_with('-') || name.ends_with('.') {
+        return Err(NoaError::Sync(
+            "invalid ref component: invalid start/end character".to_string(),
+        ));
+    }
+    if name.contains(|c: char| c.is_ascii_control() || c == ' ' || c == '\\' || c == '[' || c == '?') {
+        return Err(NoaError::Sync(
+            "invalid ref component: contains forbidden characters".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_git_ref_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        return Err(NoaError::Sync("empty ref name".to_string()));
+    }
+    for component in name.split('/') {
+        validate_git_ref_component(component)?;
+    }
+    Ok(())
 }
 
 pub fn handle_ready(

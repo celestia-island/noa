@@ -38,6 +38,7 @@ impl RemoteBackend for GitBackend {
     }
 
     async fn push(&self, url: &str, _: &[PushSpec]) -> Result<PushResult> {
+        export::validate_git_url(url)?;
         let output = Command::new("git")
             .args(["push", url])
             .output()
@@ -60,6 +61,7 @@ impl RemoteBackend for GitBackend {
     }
 
     async fn fetch(&self, url: &str, _: &[FetchSpec]) -> Result<FetchResult> {
+        export::validate_git_url(url)?;
         let output = Command::new("git")
             .args(["fetch", url])
             .output()
@@ -74,6 +76,7 @@ impl RemoteBackend for GitBackend {
     }
 
     async fn list_refs(&self, url: &str) -> Result<Vec<RemoteRef>> {
+        export::validate_git_url(url)?;
         let output = Command::new("git")
             .args(["ls-remote", "--refs", url])
             .output()

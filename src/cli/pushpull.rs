@@ -3,6 +3,22 @@ use std::sync::Arc;
 
 use crate::repo::Repository;
 
+fn validate_svn_url(url: &str) -> Result<()> {
+    if url.is_empty() {
+        anyhow::bail!("empty SVN URL");
+    }
+    if url.contains('\0') || url.contains('\n') || url.contains('\r') {
+        anyhow::bail!("SVN URL contains control characters");
+    }
+    if url.starts_with('-') {
+        anyhow::bail!("SVN URL must not start with '-'");
+    }
+    if !url.starts_with("http://") && !url.starts_with("https://") && !url.starts_with("svn://") && !url.starts_with("svn+ssh://") && !url.starts_with("file://") {
+        anyhow::bail!("invalid SVN URL format: {}", url);
+    }
+    Ok(())
+}
+
 pub async fn run_push(remote_name: &str) -> Result<()> {
     let root = Repository::find(std::path::Path::new("."))?;
     let repo = Repository::open(&root)?;
@@ -129,6 +145,8 @@ pub async fn run_clone(url: &str, path: &str) -> Result<()> {
 }
 
 pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
+    validate_svn_url(url)?;
+
     let target = std::path::PathBuf::from(path);
     std::fs::create_dir_all(&target)?;
 
