@@ -12,14 +12,17 @@ pub fn validate_git_url(url: &str) -> Result<()> {
         return Err(NoaError::Remote("empty URL".to_string()));
     }
     if url.contains('\0') || url.contains('\n') || url.contains('\r') {
-        return Err(NoaError::Remote("URL contains control characters".to_string()));
+        return Err(NoaError::Remote(
+            "URL contains control characters".to_string(),
+        ));
     }
     let looks_valid = url.starts_with("https://")
         || url.starts_with("http://")
         || url.starts_with("git://")
         || url.starts_with("ssh://")
         || url.starts_with("file:///")
-        || (url.contains(':') && !url.starts_with('-'));
+        || (url.contains(':') && !url.starts_with('-'))
+        || url.starts_with('/');
     if !looks_valid {
         return Err(NoaError::Remote(format!("invalid git URL format: {}", url)));
     }

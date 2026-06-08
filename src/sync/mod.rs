@@ -5,15 +5,13 @@ mod transport;
 
 pub use events::{EventSyncEngine, SyncEvent};
 pub use handshake::{
-    handle_auth_request, handle_handshake_request, handle_ready, BranchSelection,
-    NoaAuthResponse, NoaHandshakeResponse,
+    handle_auth_request, handle_handshake_request, handle_ready, BranchSelection, NoaAuthResponse,
+    NoaHandshakeResponse,
 };
 pub use server::SyncServer;
-pub use transport::{JsonRpcMessage, JsonRpcTransport, UnixSocketTransport};
+pub use transport::JsonRpcMessage;
 
 use serde::{Deserialize, Serialize};
-
-pub const PROTOCOL_VERSION: &str = "0.1.0";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestNoaHandshake {
@@ -49,28 +47,6 @@ pub struct NoaEventSyncMessage {
 pub enum SyncDirection {
     Push,
     Pull,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "method", content = "params")]
-pub enum SyncRequest {
-    #[serde(rename = "noa.handshake")]
-    Handshake(RequestNoaHandshake),
-    #[serde(rename = "noa.auth")]
-    Auth(NoaAuthRequest),
-    #[serde(rename = "noa.ready")]
-    Ready(NoaReady),
-    #[serde(rename = "noa.event_sync")]
-    EventSync(NoaEventSyncMessage),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum SyncResponse {
-    Handshake(NoaHandshakeResponse),
-    Auth(NoaAuthResponse),
-    Ack(NoaAck),
-    EventSyncAck(NoaEventSyncAck),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

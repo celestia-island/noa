@@ -83,6 +83,7 @@ impl Repository {
 
         let config = RepoConfig::load_from_dir(&noa_dir)?;
         let db = Self::open_db(&noa_dir)?;
+        Self::init_tables(&db)?;
 
         Ok(Repository {
             root: path.to_path_buf(),

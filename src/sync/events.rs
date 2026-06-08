@@ -107,10 +107,7 @@ impl EventSyncEngine {
                 let file_path = match sanitize_path(&self.workspace_root, path) {
                     Some(p) => p,
                     None => {
-                        tracing::warn!(
-                            "rejecting path traversal attempt: {}",
-                            path
-                        );
+                        tracing::warn!("rejecting path traversal attempt: {}", path);
                         continue;
                     }
                 };
@@ -129,10 +126,7 @@ impl EventSyncEngine {
                                     applied += 1;
                                 }
                                 Err(NoaError::ObjectNotFound(_)) => {
-                                    tracing::warn!(
-                                        "blob {} not found, skipping write",
-                                        blob_id.0
-                                    );
+                                    tracing::warn!("blob {} not found, skipping write", blob_id.0);
                                 }
                                 Err(e) => return Err(e),
                             }

@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
 
 use crate::error::{NoaError, Result};
 
@@ -64,17 +63,6 @@ impl JsonRpcMessage {
         }
     }
 
-    pub fn notification(method: &str, params: serde_json::Value) -> Self {
-        JsonRpcMessage {
-            jsonrpc: "2.0".to_string(),
-            id: None,
-            method: Some(method.to_string()),
-            params: Some(params),
-            result: None,
-            error: None,
-        }
-    }
-
     pub fn to_json(&self) -> Result<String> {
         serde_json::to_string(self).map_err(|e| NoaError::Serialization(e.to_string()))
     }
@@ -103,33 +91,6 @@ impl JsonRpcMessage {
         let json = std::str::from_utf8(&data[4..4 + len])
             .map_err(|e| NoaError::Serialization(e.to_string()))?;
         Self::from_json(json)
-    }
-}
-
-pub trait JsonRpcTransport: Send + Sync {
-    fn send(&mut self, msg: &JsonRpcMessage) -> Result<()>;
-    fn recv(&mut self) -> Result<JsonRpcMessage>;
-}
-
-pub struct UnixSocketTransport {
-    socket_path: PathBuf,
-}
-
-impl UnixSocketTransport {
-    pub fn new(socket_path: &Path) -> Self {
-        UnixSocketTransport {
-            socket_path: socket_path.to_path_buf(),
-        }
-    }
-
-    pub fn socket_path(&self) -> &Path {
-        &self.socket_path
-    }
-
-    pub async fn connect(&self) -> Result<tokio::net::UnixStream> {
-        tokio::net::UnixStream::connect(&self.socket_path)
-            .await
-            .map_err(|e| NoaError::Sync(format!("unix socket connect failed: {}", e)))
     }
 }
 
@@ -165,12 +126,6 @@ mod tests {
     }
 
     #[test]
-    fn test_notification_message() {
-        let msg = JsonRpcMessage::notification("noa.event_sync", serde_json::json!({}));
-        assert!(msg.id.is_none());
-    }
-
-    #[test]
     fn test_json_roundtrip() {
         let msg = JsonRpcMessage::request(
             42,
@@ -185,11 +140,7 @@ mod tests {
 
     #[test]
     fn test_frame_roundtrip() {
-        let msg = JsonRpcMessage::request(
-            1,
-            "test.method",
-            serde_json::json!({"key": "value"}),
-        );
+        let msg = JsonRpcMessage::request(1, "test.method", serde_json::json!({"key": "value"}));
         let frame = msg.to_frame().unwrap();
         let parsed = JsonRpcMessage::from_frame(&frame).unwrap();
         assert_eq!(parsed.id, msg.id);
@@ -212,11 +163,5 @@ mod tests {
         frame.extend_from_slice(json.as_bytes());
         let result = JsonRpcMessage::from_frame(&frame);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_unix_socket_transport_path() {
-        let transport = UnixSocketTransport::new(Path::new("/tmp/test.sock"));
-        assert_eq!(transport.socket_path(), Path::new("/tmp/test.sock"));
     }
 }

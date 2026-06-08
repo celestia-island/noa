@@ -1,6 +1,5 @@
 pub mod export;
 pub mod import;
-mod translate;
 
 use async_trait::async_trait;
 use std::process::Command;
@@ -10,7 +9,6 @@ pub use export::{
     lfs_pull, lfs_push_all,
 };
 pub use import::{import_git_to_noa, is_lfs_pointer};
-pub use translate::GitTranslator;
 
 use crate::{
     error::{NoaError, Result},

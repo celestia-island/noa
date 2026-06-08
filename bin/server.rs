@@ -36,7 +36,12 @@ struct ServerApp {
     db_path: String,
     #[arg(short, long, default_value_t = 3000, help = "Port to listen on")]
     port: u16,
-    #[arg(short, long, default_value = "127.0.0.1", help = "Host address to bind to")]
+    #[arg(
+        short = 'H',
+        long,
+        default_value = "127.0.0.1",
+        help = "Host address to bind to"
+    )]
     host: String,
 }
 
@@ -56,9 +61,15 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("invalid address '{}:{}': {}", app.host, app.port, e))?;
 
     if std::env::var("NOA_API_TOKEN").is_ok() {
-        println!("noa-server listening on {} (API token authentication enabled)", addr);
+        println!(
+            "noa-server listening on {} (API token authentication enabled)",
+            addr
+        );
     } else {
-        println!("noa-server listening on {} (WARNING: no authentication configured, set NOA_API_TOKEN)", addr);
+        println!(
+            "noa-server listening on {} (WARNING: no authentication configured, set NOA_API_TOKEN)",
+            addr
+        );
     }
 
     let listener = tokio::net::TcpListener::bind(addr).await?;

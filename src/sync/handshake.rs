@@ -73,11 +73,7 @@ pub fn handle_handshake_request(
     let _repo = Repository::open(workspace_root)?;
     let current_branch = get_current_git_branch(workspace_root)?;
 
-    let repo_id = format!(
-        "{}:{}",
-        req.workspace_id,
-        workspace_root.display()
-    );
+    let repo_id = format!("{}:{}", req.workspace_id, workspace_root.display());
 
     Ok(NoaHandshakeResponse {
         repo_id,
@@ -132,7 +128,9 @@ fn validate_git_ref_component(name: &str) -> Result<()> {
         )));
     }
     if name.contains('\0') || name.contains('\n') || name.contains('\r') {
-        return Err(NoaError::Sync("invalid ref component: contains control characters".to_string()));
+        return Err(NoaError::Sync(
+            "invalid ref component: contains control characters".to_string(),
+        ));
     }
     if name.contains("..") || name.contains("~") || name.contains("^") || name.contains(":") {
         return Err(NoaError::Sync(
@@ -144,7 +142,9 @@ fn validate_git_ref_component(name: &str) -> Result<()> {
             "invalid ref component: invalid start/end character".to_string(),
         ));
     }
-    if name.contains(|c: char| c.is_ascii_control() || c == ' ' || c == '\\' || c == '[' || c == '?') {
+    if name
+        .contains(|c: char| c.is_ascii_control() || c == ' ' || c == '\\' || c == '[' || c == '?')
+    {
         return Err(NoaError::Sync(
             "invalid ref component: contains forbidden characters".to_string(),
         ));
@@ -162,16 +162,8 @@ fn validate_git_ref_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn handle_ready(
-    workspace_id: &str,
-    branch: &str,
-    _snapshot_id: &str,
-) -> Result<NoaAck> {
-    tracing::info!(
-        "Noa workspace {} ready on branch {}",
-        workspace_id,
-        branch
-    );
+pub fn handle_ready(workspace_id: &str, branch: &str, _snapshot_id: &str) -> Result<NoaAck> {
+    tracing::info!("Noa workspace {} ready on branch {}", workspace_id, branch);
     Ok(NoaAck {
         ok: true,
         message: format!("workspace {} ready", workspace_id),
@@ -347,8 +339,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init_git_repo(tmp.path());
         let current = get_current_git_branch(tmp.path()).unwrap();
-        let resp =
-            handle_auth_request(tmp.path(), &BranchSelection::Current, "").unwrap();
+        let resp = handle_auth_request(tmp.path(), &BranchSelection::Current, "").unwrap();
         assert_eq!(resp.selected_branch, current);
     }
 

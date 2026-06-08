@@ -35,16 +35,17 @@ impl MinioObjectStore {
         ];
         for &b in &blocked {
             if host == b {
-                return Err(NoaError::Config(format!(
-                    "blocked SSRF endpoint: {}",
-                    host
-                )));
+                return Err(NoaError::Config(format!("blocked SSRF endpoint: {}", host)));
             }
         }
         if let Ok(ip) = host.parse::<std::net::IpAddr>() {
             match ip {
                 std::net::IpAddr::V4(v4) => {
-                    if v4.is_loopback() || v4.is_link_local() || v4.is_broadcast() || v4.is_multicast() {
+                    if v4.is_loopback()
+                        || v4.is_link_local()
+                        || v4.is_broadcast()
+                        || v4.is_multicast()
+                    {
                         return Err(NoaError::Config(format!(
                             "endpoint resolves to forbidden IP: {}",
                             ip

@@ -86,6 +86,13 @@ impl From<toml::ser::Error> for NoaError {
     }
 }
 
+#[macro_export]
+macro_rules! redb_err {
+    ($result:expr) => {
+        $result.map_err(|e| $crate::error::NoaError::Redb(e.to_string()))
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

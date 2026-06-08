@@ -6,11 +6,9 @@ use tokio::sync::Mutex;
 
 use crate::error::{NoaError, Result};
 
-use super::transport::JsonRpcMessage;
 use super::events::EventSyncEngine;
-use super::{
-    NoaEventSyncAck, NoaEventSyncMessage, RequestNoaHandshake, NoaAuthRequest, NoaReady,
-};
+use super::transport::JsonRpcMessage;
+use super::{NoaAuthRequest, NoaEventSyncAck, NoaEventSyncMessage, NoaReady, RequestNoaHandshake};
 
 pub struct SyncServer {
     socket_path: PathBuf,
@@ -39,10 +37,18 @@ impl SyncServer {
             std::fs::remove_file(&self.socket_path)?;
         }
 
-        let listener = UnixListener::bind(&self.socket_path)
-            .map_err(|e| NoaError::Sync(format!("failed to bind {}: {}", self.socket_path.display(), e)))?;
+        let listener = UnixListener::bind(&self.socket_path).map_err(|e| {
+            NoaError::Sync(format!(
+                "failed to bind {}: {}",
+                self.socket_path.display(),
+                e
+            ))
+        })?;
 
-        tracing::info!("Noa sync server listening on {}", self.socket_path.display());
+        tracing::info!(
+            "Noa sync server listening on {}",
+            self.socket_path.display()
+        );
 
         let connection_count = Arc::new(Mutex::new(0usize));
 
@@ -52,7 +58,10 @@ impl SyncServer {
                     {
                         let mut count = connection_count.lock().await;
                         if *count >= MAX_CONNECTIONS {
-                            tracing::warn!("rejecting connection: max connections ({}) reached", MAX_CONNECTIONS);
+                            tracing::warn!(
+                                "rejecting connection: max connections ({}) reached",
+                                MAX_CONNECTIONS
+                            );
                             continue;
                         }
                         *count += 1;
@@ -65,8 +74,14 @@ impl SyncServer {
                     let conn_count = Arc::clone(&connection_count);
 
                     tokio::spawn(async move {
-                        if let Err(e) =
-                            Self::handle_connection(stream, &workspace_root, &workspace_name, &auth_token, &authenticated_sessions).await
+                        if let Err(e) = Self::handle_connection(
+                            stream,
+                            &workspace_root,
+                            &workspace_name,
+                            &auth_token,
+                            &authenticated_sessions,
+                        )
+                        .await
                         {
                             tracing::error!("connection error: {}", e);
                         }
@@ -94,7 +109,14 @@ impl SyncServer {
 
         loop {
             let msg = Self::read_message(reader.clone()).await?;
-            let response = Self::dispatch(msg, workspace_root, workspace_name, auth_token, authenticated_sessions).await?;
+            let response = Self::dispatch(
+                msg,
+                workspace_root,
+                workspace_name,
+                auth_token,
+                authenticated_sessions,
+            )
+            .await?;
             Self::write_message(writer.clone(), &response).await?;
         }
     }
@@ -124,8 +146,8 @@ impl SyncServer {
             .await
             .map_err(|e| NoaError::Sync(format!("read body: {}", e)))?;
 
-        let json = std::str::from_utf8(&body_buf)
-            .map_err(|e| NoaError::Serialization(e.to_string()))?;
+        let json =
+            std::str::from_utf8(&body_buf).map_err(|e| NoaError::Serialization(e.to_string()))?;
         JsonRpcMessage::from_json(json)
     }
 
@@ -157,13 +179,7 @@ impl SyncServer {
         let id = msg.id.unwrap_or(0);
         let method = match msg.method {
             Some(m) => m,
-            None => {
-                return Ok(JsonRpcMessage::error_response(
-                    id,
-                    -32600,
-                    "missing method",
-                ))
-            }
+            None => return Ok(JsonRpcMessage::error_response(id, -32600, "missing method")),
         };
 
         let params = msg.params.unwrap_or(serde_json::Value::Null);

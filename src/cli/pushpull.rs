@@ -13,7 +13,12 @@ fn validate_svn_url(url: &str) -> Result<()> {
     if url.starts_with('-') {
         anyhow::bail!("SVN URL must not start with '-'");
     }
-    if !url.starts_with("http://") && !url.starts_with("https://") && !url.starts_with("svn://") && !url.starts_with("svn+ssh://") && !url.starts_with("file://") {
+    if !url.starts_with("http://")
+        && !url.starts_with("https://")
+        && !url.starts_with("svn://")
+        && !url.starts_with("svn+ssh://")
+        && !url.starts_with("file://")
+    {
         anyhow::bail!("invalid SVN URL format: {}", url);
     }
     Ok(())

@@ -136,11 +136,11 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
                                 continue;
                             }
                         }
-                        if let Some(ref repo_root) = self.repo_root {
-                            if !Self::is_path_within_root(PathBuf::from(path).as_path()) {
-                                tracing::warn!("skipping path traversal in log entry: {}", path);
-                                continue;
-                            }
+                        if self.repo_root.is_some()
+                            && !Self::is_path_within_root(PathBuf::from(path).as_path())
+                        {
+                            tracing::warn!("skipping path traversal in log entry: {}", path);
+                            continue;
                         }
                         let blob_id = if let Some(ref repo_root) = self.repo_root {
                             let file_path = repo_root.join(path);
