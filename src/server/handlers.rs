@@ -18,11 +18,20 @@ use crate::{
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<redb::Database>,
+    pub api_token: String,
 }
 
 impl AppState {
     pub fn new(db: Arc<redb::Database>) -> Self {
-        AppState { db }
+        AppState {
+            db,
+            api_token: String::new(),
+        }
+    }
+
+    pub fn with_api_token(mut self, token: String) -> Self {
+        self.api_token = token;
+        self
     }
 
     pub fn object_store(&self) -> Result<RedbObjectStore, crate::error::NoaError> {
@@ -47,11 +56,11 @@ pub struct ApiError {
     pub error: String,
 }
 
-fn err_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
+fn err_json(_msg: impl ToString) -> (StatusCode, Json<ApiError>) {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(ApiError {
-            error: msg.to_string(),
+            error: "internal server error".to_string(),
         }),
     )
 }
@@ -173,7 +182,9 @@ pub async fn get_tree(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
     let store = state.object_store().map_err(err_json)?;
     match store.get_tree(&TreeId(hash)).await {
-        Ok(entries) => Ok(Json(serde_json::to_value(&entries).unwrap())),
+        Ok(entries) => Ok(Json(
+            serde_json::to_value(&entries).unwrap_or_else(|_| serde_json::json!({})),
+        )),
         Err(crate::error::NoaError::ObjectNotFound(_)) => Err(not_found_json("tree not found")),
         Err(e) => Err(err_json(e)),
     }

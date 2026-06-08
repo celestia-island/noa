@@ -1,10 +1,42 @@
 mod handlers;
 
 use axum::{
+    extract::Request,
+    http::StatusCode,
+    middleware::Next,
+    response::Response,
     routing::{get, post},
     Router,
 };
 pub use handlers::AppState;
+
+async fn auth_middleware(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    req: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let expected = &state.api_token;
+    if expected.is_empty() {
+        return Ok(next.run(req).await);
+    }
+
+    let auth_header = req
+        .headers()
+        .get("Authorization")
+        .and_then(|v| v.to_str().ok());
+
+    match auth_header {
+        Some(val) if val.starts_with("Bearer ") => {
+            let token = &val[7..];
+            if token == expected {
+                Ok(next.run(req).await)
+            } else {
+                Err(StatusCode::UNAUTHORIZED)
+            }
+        }
+        _ => Err(StatusCode::UNAUTHORIZED),
+    }
+}
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -24,5 +56,9 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/workspaces",
             get(handlers::list_workspaces).post(handlers::create_workspace),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ))
         .with_state(state)
 }
