@@ -74,6 +74,26 @@ fn not_found_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
     )
 }
 
+fn validate_hash_id(id: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
+    if id.is_empty() || id.len() > 128 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "invalid hash id".to_string(),
+            }),
+        ));
+    }
+    if !id.chars().all(|c| c.is_ascii_hexdigit() || c == '_') {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "invalid hash id format".to_string(),
+            }),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn list_refs(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ApiError>)> {
@@ -124,6 +144,14 @@ pub async fn upload_blobs(
     State(state): State<AppState>,
     Json(body): Json<UploadBlobsRequest>,
 ) -> Result<Json<UploadResult>, (StatusCode, Json<ApiError>)> {
+    if body.blobs.len() > 1000 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "too many blobs in single request (max 1000)".to_string(),
+            }),
+        ));
+    }
     let store = state.object_store().map_err(err_json)?;
     let mut ids = Vec::new();
     for blob in &body.blobs {
@@ -140,6 +168,7 @@ pub async fn get_blob(
     State(state): State<AppState>,
     Path(hash): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    validate_hash_id(&hash)?;
     let store = state.object_store().map_err(err_json)?;
     match store.get_blob(&BlobId(hash)).await {
         Ok(data) => {
@@ -165,6 +194,14 @@ pub async fn upload_trees(
     State(state): State<AppState>,
     Json(body): Json<UploadTreesRequest>,
 ) -> Result<Json<UploadResult>, (StatusCode, Json<ApiError>)> {
+    if body.trees.len() > 1000 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "too many trees in single request (max 1000)".to_string(),
+            }),
+        ));
+    }
     let store = state.object_store().map_err(err_json)?;
     let mut ids = Vec::new();
     for tree in &body.trees {
@@ -180,6 +217,7 @@ pub async fn get_tree(
     State(state): State<AppState>,
     Path(hash): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    validate_hash_id(&hash)?;
     let store = state.object_store().map_err(err_json)?;
     match store.get_tree(&TreeId(hash)).await {
         Ok(entries) => Ok(Json(

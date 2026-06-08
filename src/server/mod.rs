@@ -56,6 +56,7 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/workspaces",
             get(handlers::list_workspaces).post(handlers::create_workspace),
         )
+        .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
