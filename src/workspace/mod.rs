@@ -104,10 +104,11 @@ impl WorkspaceManager {
         let name = name.to_string();
         tokio::task::spawn_blocking(move || {
             let txn = redb_err!(db.begin_write())?;
-            {
+            let existed = {
                 let mut table = redb_err!(txn.open_table(WORKSPACES))?;
-                let existed = redb_err!(table.remove(name.as_str()))?.is_some();
-            }
+                let removed = redb_err!(table.remove(name.as_str()))?;
+                removed.is_some()
+            };
             redb_err!(txn.commit())?;
             Ok(existed)
         })
@@ -316,5 +317,68 @@ mod tests {
         mgr.create(&ws).await.unwrap();
         let got = mgr.get("test").await.unwrap().unwrap();
         assert_eq!(got, ws);
+    }
+
+    #[tokio::test]
+    async fn test_delete_nonexistent_returns_false() {
+        let (_tmp, mgr) = make_manager();
+        let existed = mgr.delete("ghost").await.unwrap();
+        assert!(!existed);
+    }
+
+    #[tokio::test]
+    async fn test_delete_existent_returns_true() {
+        let (_tmp, mgr) = make_manager();
+        mgr.create(&make_workspace("ws1")).await.unwrap();
+        let existed = mgr.delete("ws1").await.unwrap();
+        assert!(existed);
+        assert!(mgr.get("ws1").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_create_only_one_succeeds() {
+        let (_tmp, mgr) = make_manager();
+        let mgr2 = mgr.clone();
+        let ws1 = make_workspace("race-ws");
+        let ws2 = make_workspace("race-ws");
+        let (r1, r2) = tokio::join!(
+            async { mgr.create(&ws1).await },
+            async { mgr2.create(&ws2).await }
+        );
+        let successes = vec![&r1, &r2].iter().filter(|r| r.is_ok()).count();
+        assert_eq!(successes, 1);
+        let ws = mgr.get("race-ws").await.unwrap().unwrap();
+        assert_eq!(ws.name, "race-ws");
+    }
+
+    #[tokio::test]
+    async fn test_update_head_and_seq() {
+        let (_tmp, mgr) = make_manager();
+        mgr.create(&make_workspace("ws1")).await.unwrap();
+        let new_head = SnapshotId("noa_updated".to_string());
+        mgr.update_head_and_seq("ws1", &new_head, 42)
+            .await
+            .unwrap();
+        let ws = mgr.get("ws1").await.unwrap().unwrap();
+        assert_eq!(ws.head, new_head);
+        assert_eq!(ws.last_seq, 42);
+    }
+
+    #[tokio::test]
+    async fn test_update_head_and_seq_nonexistent() {
+        let (_tmp, mgr) = make_manager();
+        let result = mgr
+            .update_head_and_seq("missing", &SnapshotId("noa_x".to_string()), 1)
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_put_creates_if_missing() {
+        let (_tmp, mgr) = make_manager();
+        let ws = make_workspace("new-ws");
+        mgr.put(&ws).await.unwrap();
+        let got = mgr.get("new-ws").await.unwrap().unwrap();
+        assert_eq!(got.name, "new-ws");
     }
 }

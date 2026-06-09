@@ -231,4 +231,60 @@ mod tests {
         assert!(matcher.should_skip(".noa/config", false));
         assert!(matcher.should_skip(".noa/HEAD", false));
     }
+
+    #[test]
+    fn test_depth_limit_11_levels_still_works() {
+        let tmp = TempDir::new().unwrap();
+        let root = make_repo_root(&tmp);
+        std::fs::write(root.join(".gitignore"), "").unwrap();
+
+        let mut dir = root.to_path_buf();
+        let mut parts = Vec::new();
+        for i in 0..10 {
+            let name = format!("d{}", i);
+            parts.push(name.clone());
+            dir = dir.join(&name);
+        }
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".gitignore"), "*.deep\n").unwrap();
+
+        let matcher = IgnoreMatcher::from_repo_root(root);
+        let path = format!("{}/x.deep", parts.join("/"));
+        assert!(matcher.should_skip(&path, false));
+    }
+
+    #[test]
+    fn test_depth_beyond_limit_ignored() {
+        let tmp = TempDir::new().unwrap();
+        let root = make_repo_root(&tmp);
+        std::fs::write(root.join(".gitignore"), "").unwrap();
+
+        let mut dir = root.to_path_buf();
+        for i in 0..12 {
+            dir = dir.join(format!("d{}", i));
+        }
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".gitignore"), "*.toodeep\n").unwrap();
+
+        let matcher = IgnoreMatcher::from_repo_root(root);
+        let parts: Vec<String> = (0..12).map(|i| format!("d{}", i)).collect();
+        let path = parts.join("/");
+        assert!(!matcher.should_skip(&format!("{}/x.toodeep", path), false));
+    }
+
+    #[test]
+    fn test_noa_dir_inside_subdir_not_skipped() {
+        let tmp = TempDir::new().unwrap();
+        let matcher = IgnoreMatcher::from_repo_root(make_repo_root(&tmp));
+        assert!(!matcher.should_skip("src/.noa", false));
+        assert!(!matcher.should_skip("subdir/.noa/data", false));
+    }
+
+    #[test]
+    fn test_windows_style_noa_path() {
+        let tmp = TempDir::new().unwrap();
+        let matcher = IgnoreMatcher::from_repo_root(make_repo_root(&tmp));
+        assert!(matcher.should_skip(".noa\\config", false));
+        assert!(matcher.should_skip(".noa\\data", false));
+    }
 }

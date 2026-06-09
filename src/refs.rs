@@ -37,6 +37,13 @@ impl RedbRefStore {
         }
         redb_err!(txn.commit())
     }
+
+    #[cfg(test)]
+    fn clone_inner(&self) -> Self {
+        RedbRefStore {
+            db: self.db.clone(),
+        }
+    }
 }
 
 #[async_trait]
@@ -126,12 +133,13 @@ impl RefStore for RedbRefStore {
         let name = name.to_string();
         tokio::task::spawn_blocking(move || {
             let txn = redb_err!(db.begin_write())?;
-            {
+            let existed = {
                 let mut table = redb_err!(txn.open_table(REFS))?;
-                redb_err!(table.remove(name.as_str()))?;
-            }
+                let removed = redb_err!(table.remove(name.as_str()))?;
+                removed.is_some()
+            };
             redb_err!(txn.commit())?;
-            Ok(true)
+            Ok(existed)
         }).await.map_err(|e| NoaError::Sync(e.to_string()))?
     }
 }
@@ -264,10 +272,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_nonexistent() {
+    async fn test_delete_nonexistent_returns_false() {
         let (_tmp, store) = make_store();
-        let ok = store.delete("nonexistent").await.unwrap();
-        assert!(ok);
+        let existed = store.delete("nonexistent").await.unwrap();
+        assert!(!existed);
     }
 
     #[tokio::test]
@@ -289,5 +297,59 @@ mod tests {
         store.cas("main", Some(&v2), &v3).await.unwrap();
 
         assert_eq!(store.get("main").await.unwrap(), Some(v3));
+    }
+
+    #[tokio::test]
+    async fn test_cas_concurrent_only_one_wins() {
+        let (_tmp, store) = make_store();
+        let v1 = SnapshotId("noa_v1".to_string());
+        store.cas("main", None, &v1).await.unwrap();
+
+        let v_a = SnapshotId("noa_a".to_string());
+        let v_b = SnapshotId("noa_b".to_string());
+
+        let store_c1 = store.clone_inner();
+        let store_c2 = store.clone_inner();
+
+        let (r1, r2) = tokio::join!(
+            async { store_c1.cas("main", Some(&v1), &v_a).await },
+            async { store_c2.cas("main", Some(&v1), &v_b).await }
+        );
+        let ok1 = r1.unwrap();
+        let ok2 = r2.unwrap();
+        assert!(ok1 != ok2, "exactly one CAS should succeed, got ok1={} ok2={}", ok1, ok2);
+        let final_val = store.get("main").await.unwrap().unwrap();
+        assert!(final_val == v_a || final_val == v_b);
+    }
+
+    #[tokio::test]
+    async fn test_cas_create_concurrent_only_one_wins() {
+        let (_tmp, store) = make_store();
+
+        let v_a = SnapshotId("noa_a".to_string());
+        let v_b = SnapshotId("noa_b".to_string());
+
+        let store_c1 = store.clone_inner();
+        let store_c2 = store.clone_inner();
+
+        let (r1, r2) = tokio::join!(
+            async { store_c1.cas("new-ref", None, &v_a).await },
+            async { store_c2.cas("new-ref", None, &v_b).await }
+        );
+        let ok1 = r1.unwrap();
+        let ok2 = r2.unwrap();
+        assert!(ok1 || ok2, "at least one must succeed");
+        assert!(!(ok1 && ok2), "both should not succeed");
+    }
+
+    #[tokio::test]
+    async fn test_list_after_delete() {
+        let (_tmp, store) = make_store();
+        store.cas("a", None, &SnapshotId("noa_1".to_string())).await.unwrap();
+        store.cas("b", None, &SnapshotId("noa_2".to_string())).await.unwrap();
+        store.delete("a").await.unwrap();
+        let refs = store.list().await.unwrap();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].0, "b");
     }
 }

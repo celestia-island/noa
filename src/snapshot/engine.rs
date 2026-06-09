@@ -572,4 +572,174 @@ mod tests {
             crate::object::RedbObjectStore,
         >::is_path_within_root(PathBuf::from("foo/../../bar").as_path()));
     }
+
+    #[tokio::test]
+    async fn test_compute_empty_log() {
+        let (_tmp, engine) = make_engine().await;
+        let snap = engine
+            .compute("default", vec![], 0, "test", "empty")
+            .await
+            .unwrap();
+        let tree = engine
+            .object_store
+            .get_tree(&crate::object::TreeId(snap.tree_hash))
+            .await
+            .unwrap();
+        assert!(tree.0.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_compute_delete_only_log() {
+        let (_tmp, engine) = make_engine().await;
+        engine.log.append(&delete_entry(1, "nonexistent.rs", 100)).await.unwrap();
+        let snap = engine
+            .compute("default", vec![], 0, "test", "delete-only")
+            .await
+            .unwrap();
+        let tree = engine
+            .object_store
+            .get_tree(&crate::object::TreeId(snap.tree_hash))
+            .await
+            .unwrap();
+        assert!(tree.0.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_compute_rename_chain() {
+        let (_tmp, engine) = make_engine().await;
+        engine.log.append(&write_entry(1, "a.rs", "h1", 100)).await.unwrap();
+
+        let rename_entry = LogEntry {
+            seq: 2,
+            op: OpType::Rename,
+            path: Some("b.rs".to_string()),
+            blob_id: None,
+            from_path: Some("a.rs".to_string()),
+            resolved_conflict_ours_id: None,
+            resolved_conflict_theirs_id: None,
+            snapshot_id: None,
+            ts: 200,
+            message: None,
+        };
+        engine.log.append(&rename_entry).await.unwrap();
+
+        let rename2 = LogEntry {
+            seq: 3,
+            op: OpType::Rename,
+            path: Some("c.rs".to_string()),
+            blob_id: None,
+            from_path: Some("b.rs".to_string()),
+            resolved_conflict_ours_id: None,
+            resolved_conflict_theirs_id: None,
+            snapshot_id: None,
+            ts: 300,
+            message: None,
+        };
+        engine.log.append(&rename2).await.unwrap();
+
+        let snap = engine
+            .compute("ws1", vec![], 0, "test", "rename chain")
+            .await
+            .unwrap();
+        let tree = engine
+            .object_store
+            .get_tree(&crate::object::TreeId(snap.tree_hash))
+            .await
+            .unwrap();
+        assert_eq!(tree.0.len(), 1);
+        assert_eq!(tree.0[0].name, "c.rs");
+        assert_eq!(tree.0[0].id, "h1");
+    }
+
+    #[tokio::test]
+    async fn test_compute_write_overwrite_delete_readd() {
+        let (_tmp, engine) = make_engine().await;
+        engine.log.append(&write_entry(1, "f.rs", "h1", 100)).await.unwrap();
+        engine.log.append(&write_entry(2, "f.rs", "h2", 200)).await.unwrap();
+        engine.log.append(&delete_entry(3, "f.rs", 300)).await.unwrap();
+        engine.log.append(&write_entry(4, "f.rs", "h3", 400)).await.unwrap();
+
+        let snap = engine
+            .compute("ws1", vec![], 0, "test", "complex lifecycle")
+            .await
+            .unwrap();
+        let tree = engine
+            .object_store
+            .get_tree(&crate::object::TreeId(snap.tree_hash))
+            .await
+            .unwrap();
+        assert_eq!(tree.0.len(), 1);
+        assert_eq!(tree.0[0].name, "f.rs");
+        assert_eq!(tree.0[0].id, "h3");
+    }
+
+    #[tokio::test]
+    async fn test_compute_with_since_seq() {
+        let (_tmp, engine) = make_engine().await;
+        engine.log.append(&write_entry(1, "a.rs", "h1", 100)).await.unwrap();
+        let parent = engine
+            .compute("ws1", vec![], 0, "test", "parent")
+            .await
+            .unwrap();
+
+        engine.log.append(&write_entry(2, "b.rs", "h2", 200)).await.unwrap();
+        let child = engine
+            .compute("ws1", vec![parent.id], 1, "test", "child since seq=1")
+            .await
+            .unwrap();
+
+        let tree = engine
+            .object_store
+            .get_tree(&crate::object::TreeId(child.tree_hash))
+            .await
+            .unwrap();
+        let names: Vec<&str> = tree.0.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"a.rs"), "parent entry should be inherited");
+        assert!(names.contains(&"b.rs"), "new entry from since_seq should appear");
+    }
+
+    #[tokio::test]
+    async fn test_compute_rename_to_ignored_path_removes_source() {
+        let tmp = TempDir::new().unwrap();
+        let db = Arc::new(
+            redb::Database::builder()
+                .create(tmp.path().join("test.redb"))
+                .unwrap(),
+        );
+        let log = FileAgentLog::create(&tmp.path().join("test.log")).unwrap();
+        let snapshot_store = RedbSnapshotStore::new(Arc::clone(&db)).unwrap();
+        let object_store = RedbObjectStore::new(db).unwrap();
+        let matcher = IgnoreMatcher::from_repo_root(tmp.path());
+        let engine = SnapshotEngine::new(log, snapshot_store, object_store).with_ignore(matcher);
+
+        engine.log.append(&write_entry(1, "good.rs", "h1", 100)).await.unwrap();
+
+        let rename_to_noa = LogEntry {
+            seq: 2,
+            op: OpType::Rename,
+            path: Some(".noa/stolen".to_string()),
+            blob_id: None,
+            from_path: Some("good.rs".to_string()),
+            resolved_conflict_ours_id: None,
+            resolved_conflict_theirs_id: None,
+            snapshot_id: None,
+            ts: 200,
+            message: None,
+        };
+        engine.log.append(&rename_to_noa).await.unwrap();
+
+        let snap = engine
+            .compute("default", vec![], 0, "test", "rename to ignored")
+            .await
+            .unwrap();
+        let tree = engine
+            .object_store
+            .get_tree(&crate::object::TreeId(snap.tree_hash))
+            .await
+            .unwrap();
+        let names: Vec<&str> = tree.0.iter().map(|e| e.name.as_str()).collect();
+        assert!(!names.contains(&"good.rs"), "source should be removed by rename");
+        assert!(!names.iter().any(|n| n.starts_with(".noa")), "target should be ignored");
+        assert!(tree.0.is_empty());
+    }
 }
