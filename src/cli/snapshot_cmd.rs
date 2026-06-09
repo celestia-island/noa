@@ -47,12 +47,11 @@ pub async fn run_create(repo: &Repository, message: &str, author: &str) -> Resul
         Ok(true) => {}
         Ok(false) => {
             anyhow::bail!(
-                "concurrent modification detected: ref '{}' was modified during snapshot creation",
-                head_ws
+                "concurrent modification detected: ref '{head_ws}' was modified during snapshot creation"
             );
         }
         Err(e) => {
-            anyhow::bail!("failed to update ref '{}': {}", head_ws, e);
+            anyhow::bail!("failed to update ref '{head_ws}': {e}");
         }
     }
 
@@ -84,7 +83,7 @@ pub async fn run_list(repo: &Repository) -> Result<()> {
     for snap in all {
         let msg = if snap.message.chars().count() > 40 {
             let truncated: String = snap.message.chars().take(37).collect();
-            format!("{}...", truncated)
+            format!("{truncated}...")
         } else {
             snap.message
         };
@@ -103,11 +102,11 @@ pub async fn run_diff(repo: &Repository, a: &str, b: &str) -> Result<()> {
     let snap_a = snap_store
         .get(&SnapshotId(a.to_string()))
         .await
-        .map_err(|_| anyhow::anyhow!("snapshot {} not found", a))?;
+        .map_err(|_| anyhow::anyhow!("snapshot {a} not found"))?;
     let snap_b = snap_store
         .get(&SnapshotId(b.to_string()))
         .await
-        .map_err(|_| anyhow::anyhow!("snapshot {} not found", b))?;
+        .map_err(|_| anyhow::anyhow!("snapshot {b} not found"))?;
 
     let tree_a = obj_store
         .get_tree(&crate::object::TreeId(snap_a.tree_hash))
@@ -119,7 +118,7 @@ pub async fn run_diff(repo: &Repository, a: &str, b: &str) -> Result<()> {
     let diffs = crate::snapshot::diff_snapshots(&tree_a.0, &tree_b.0);
 
     if diffs.is_empty() {
-        println!("No differences between {} and {}", a, b);
+        println!("No differences between {a} and {b}");
         return Ok(());
     }
 

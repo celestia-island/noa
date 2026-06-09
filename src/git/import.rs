@@ -25,7 +25,7 @@ pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Resul
 
     let commit = head_obj
         .try_into_commit()
-        .map_err(|e| NoaError::Remote(format!("HEAD is not a commit: {}", e)))?;
+        .map_err(|e| NoaError::Remote(format!("HEAD is not a commit: {e}")))?;
 
     let tree_id = commit
         .tree_id()
@@ -41,12 +41,11 @@ pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Resul
     let author = commit
         .author()
         .ok()
-        .map(|a| a.name.to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+        .map_or_else(|| "unknown".to_string(), |a| a.name.to_string());
 
     let message = commit
         .message_raw()
-        .map(|m| m.to_string())
+        .map(std::string::ToString::to_string)
         .unwrap_or_default();
 
     let time = commit.time().map_err(|e| NoaError::Remote(e.to_string()))?;
@@ -66,13 +65,13 @@ pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Resul
     Ok(())
 }
 
+#[must_use]
 pub fn is_lfs_pointer(content: &[u8]) -> bool {
     if content.len() > 500 {
         return false;
     }
-    let s = match std::str::from_utf8(content) {
-        Ok(s) => s,
-        Err(_) => return false,
+    let Ok(s) = std::str::from_utf8(content) else {
+        return false;
     };
     s.starts_with("version https://git-lfs.github.com/spec/")
 }
@@ -90,7 +89,7 @@ fn walk_tree(
             .map_err(|e| NoaError::Remote(e.to_string()))?;
         let tree = obj
             .try_into_tree()
-            .map_err(|e| NoaError::Remote(format!("not a tree: {}", e)))?;
+            .map_err(|e| NoaError::Remote(format!("not a tree: {e}")))?;
 
         for entry_result in tree.iter() {
             let entry = entry_result.map_err(|e| NoaError::Remote(e.to_string()))?;
@@ -100,7 +99,7 @@ fn walk_tree(
             let full_name = if prefix.is_empty() {
                 name
             } else {
-                format!("{}/{}", prefix, name)
+                format!("{prefix}/{name}")
             };
 
             if mode.is_tree() {
@@ -111,7 +110,7 @@ fn walk_tree(
                     .map_err(|e| NoaError::Remote(e.to_string()))?;
                 let blob = blob_obj
                     .try_into_blob()
-                    .map_err(|e| NoaError::Remote(format!("not a blob: {}", e)))?;
+                    .map_err(|e| NoaError::Remote(format!("not a blob: {e}")))?;
                 results.push((full_name, blob.data.clone()));
             }
         }

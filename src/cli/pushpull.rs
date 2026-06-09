@@ -19,7 +19,7 @@ fn validate_svn_url(url: &str) -> Result<()> {
         && !url.starts_with("svn+ssh://")
         && !url.starts_with("file://")
     {
-        anyhow::bail!("invalid SVN URL format: {}", url);
+        anyhow::bail!("invalid SVN URL format: {url}");
     }
     Ok(())
 }
@@ -31,7 +31,7 @@ pub async fn run_push(remote_name: &str) -> Result<()> {
     let remote = repo
         .config
         .get_remote(remote_name)
-        .ok_or_else(|| anyhow::anyhow!("remote '{}' not found", remote_name))?
+        .ok_or_else(|| anyhow::anyhow!("remote '{remote_name}' not found"))?
         .clone();
 
     let db = Arc::clone(&repo.db);
@@ -64,7 +64,7 @@ pub async fn run_pull(remote_name: &str) -> Result<()> {
     let remote = repo
         .config
         .get_remote(remote_name)
-        .ok_or_else(|| anyhow::anyhow!("remote '{}' not found", remote_name))?
+        .ok_or_else(|| anyhow::anyhow!("remote '{remote_name}' not found"))?
         .clone();
 
     crate::git::export::validate_git_url(&remote.url)?;
@@ -97,11 +97,11 @@ pub async fn run_pull(remote_name: &str) -> Result<()> {
     if let Some(snap_id) = head_ref {
         let ws_mgr = crate::workspace::WorkspaceManager::new(db)?;
         if let Err(e) = ws_mgr.update_head(&head_ws, &snap_id).await {
-            eprintln!("warning: failed to update workspace head after pull: {}", e);
+            eprintln!("warning: failed to update workspace head after pull: {e}");
         }
     }
 
-    println!("Pulled from {} and re-imported into noa", remote_name);
+    println!("Pulled from {remote_name} and re-imported into noa");
 
     Ok(())
 }
@@ -113,7 +113,7 @@ pub async fn run_fetch(remote_name: &str) -> Result<()> {
     let remote = repo
         .config
         .get_remote(remote_name)
-        .ok_or_else(|| anyhow::anyhow!("remote '{}' not found", remote_name))?
+        .ok_or_else(|| anyhow::anyhow!("remote '{remote_name}' not found"))?
         .clone();
 
     let backend = crate::git::GitBackend::new();
@@ -124,7 +124,7 @@ pub async fn run_fetch(remote_name: &str) -> Result<()> {
         return Ok(());
     }
 
-    println!("Remote refs from {}:", remote_name);
+    println!("Remote refs from {remote_name}:");
     for r in &refs {
         println!(
             "  {} -> {}",
@@ -196,10 +196,9 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
 
     let rev_info = svn_rev_output
         .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "?".to_string());
+        .map_or_else(|| "?".to_string(), |s| s.trim().to_string());
 
-    let commit_msg = format!("imported from SVN {}@r{}", svn_url, rev_info);
+    let commit_msg = format!("imported from SVN {svn_url}@r{rev_info}");
 
     std::process::Command::new("git")
         .args(["commit", "-m", &commit_msg])
@@ -230,7 +229,7 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
     // Update the existing default workspace's head (created by init_with_remotes)
     let ws_mgr = crate::workspace::WorkspaceManager::new(db)?;
     if let Err(e) = ws_mgr.update_head("default", &head_snap_id).await {
-        eprintln!("warning: failed to update default workspace head: {}", e);
+        eprintln!("warning: failed to update default workspace head: {e}");
     }
 
     println!(

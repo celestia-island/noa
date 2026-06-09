@@ -27,6 +27,7 @@ pub enum MergedEntry {
 }
 
 impl MergedEntry {
+    #[must_use]
     pub fn path(&self) -> Option<&str> {
         match self {
             MergedEntry::Clean(entry) => Some(&entry.name),
@@ -36,14 +37,16 @@ impl MergedEntry {
         }
     }
 
+    #[must_use]
     pub fn is_conflict(&self) -> bool {
         matches!(self, MergedEntry::Conflict { .. })
     }
 
+    #[must_use]
     pub fn into_clean_entry(self) -> Option<TreeEntry> {
         match self {
             MergedEntry::Clean(entry) => Some(entry),
-            _ => None,
+            MergedEntry::Conflict { .. } => None,
         }
     }
 }
@@ -55,20 +58,23 @@ pub struct MergeOutput {
 }
 
 impl MergeOutput {
+    #[must_use]
     pub fn clean_entries(&self) -> Vec<&TreeEntry> {
         self.entries
             .iter()
             .filter_map(|e| match e {
                 MergedEntry::Clean(entry) => Some(entry),
-                _ => None,
+                MergedEntry::Conflict { .. } => None,
             })
             .collect()
     }
 
+    #[must_use]
     pub fn conflict_count(&self) -> usize {
         self.entries.iter().filter(|e| e.is_conflict()).count()
     }
 
+    #[must_use]
     pub fn resolve_with_strategy(&self, resolution: &ConflictResolution) -> Vec<TreeEntry> {
         self.entries
             .iter()
@@ -86,6 +92,7 @@ impl MergeOutput {
 pub struct ConflictDetector;
 
 impl ConflictDetector {
+    #[must_use]
     pub fn resolve_upstream_wins(conflicts: &[FileConflict]) -> Vec<(String, ConflictResolution)> {
         conflicts
             .iter()
@@ -93,6 +100,7 @@ impl ConflictDetector {
             .collect()
     }
 
+    #[must_use]
     pub fn resolve_ours_wins(conflicts: &[FileConflict]) -> Vec<(String, ConflictResolution)> {
         conflicts
             .iter()

@@ -43,7 +43,7 @@ pub fn run(args: &InitArgs) -> Result<()> {
                 .output()?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("git init failed: {}", stderr);
+                anyhow::bail!("git init failed: {stderr}");
             }
         }
 

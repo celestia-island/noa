@@ -34,7 +34,7 @@ impl RedbSnapshotStore {
     }
 
     fn index_key(parent_id: &str, child_id: &str) -> String {
-        format!("{}:{}", parent_id, child_id)
+        format!("{parent_id}:{child_id}")
     }
 }
 

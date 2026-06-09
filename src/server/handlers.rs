@@ -22,6 +22,7 @@ pub struct AppState {
 }
 
 impl AppState {
+    #[must_use]
     pub fn new(db: Arc<redb::Database>) -> Self {
         AppState {
             db,
@@ -29,6 +30,7 @@ impl AppState {
         }
     }
 
+    #[must_use]
     pub fn with_api_token(mut self, token: String) -> Self {
         self.api_token = token;
         self
@@ -305,7 +307,7 @@ pub async fn get_tree(
     match store.get_tree(&TreeId(hash)).await {
         Ok(entries) => match serde_json::to_value(&entries) {
             Ok(v) => Ok(Json(v)),
-            Err(e) => Err(err_json(format!("TreeEntries serialization failed: {}", e))),
+            Err(e) => Err(err_json(format!("TreeEntries serialization failed: {e}"))),
         },
         Err(crate::error::NoaError::ObjectNotFound(_)) => Err(not_found_json("tree not found")),
         Err(e) => Err(err_json(e)),

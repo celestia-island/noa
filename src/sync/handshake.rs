@@ -57,11 +57,7 @@ pub fn handle_handshake_request(
     let mut noa_initialized = false;
     let mut gitignore_updated = false;
 
-    if !noa_dir.exists() {
-        Repository::init(workspace_root)?;
-        noa_initialized = true;
-        gitignore_updated = true;
-    } else {
+    if noa_dir.exists() {
         let gitignore_path = workspace_root.join(".gitignore");
         if gitignore_path.exists() {
             let content = std::fs::read_to_string(&gitignore_path)?;
@@ -76,6 +72,10 @@ pub fn handle_handshake_request(
             manage_gitignore(workspace_root)?;
             gitignore_updated = true;
         }
+    } else {
+        Repository::init(workspace_root)?;
+        noa_initialized = true;
+        gitignore_updated = true;
     }
 
     let current_branch = get_current_git_branch(workspace_root)?;
@@ -101,13 +101,13 @@ pub fn handle_auth_request(
     let selected_branch = match selection {
         BranchSelection::NewSession(session_id) => {
             validate_git_ref_component(session_id)?;
-            let name = format!("entelecheia/agent-{}", session_id);
+            let name = format!("entelecheia/agent-{session_id}");
             create_git_branch(workspace_root, &name, &base_branch)?;
             name
         }
         BranchSelection::NewTask(task_name) => {
             validate_git_ref_component(task_name)?;
-            let name = format!("entelecheia/agent-{}", task_name);
+            let name = format!("entelecheia/agent-{task_name}");
             create_git_branch(workspace_root, &name, &base_branch)?;
             name
         }
@@ -146,7 +146,7 @@ fn validate_git_ref_component(name: &str) -> Result<()> {
             "invalid ref component: contains control characters".to_string(),
         ));
     }
-    if name.contains("..") || name.contains("~") || name.contains("^") || name.contains(":") {
+    if name.contains("..") || name.contains('~') || name.contains('^') || name.contains(':') {
         return Err(NoaError::Sync(
             "invalid ref component: contains forbidden characters".to_string(),
         ));
@@ -180,7 +180,7 @@ pub fn handle_ready(workspace_id: &str, branch: &str, _snapshot_id: &str) -> Res
     tracing::info!("Noa workspace {} ready on branch {}", workspace_id, branch);
     Ok(NoaAck {
         ok: true,
-        message: format!("workspace {} ready", workspace_id),
+        message: format!("workspace {workspace_id} ready"),
     })
 }
 
@@ -201,14 +201,11 @@ fn create_git_branch(workspace_root: &Path, name: &str, base: &str) -> Result<()
         .args(["checkout", "-b", name, base])
         .current_dir(workspace_root)
         .output()
-        .map_err(|e| NoaError::Sync(format!("git checkout -b failed: {}", e)))?;
+        .map_err(|e| NoaError::Sync(format!("git checkout -b failed: {e}")))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(NoaError::Sync(format!(
-            "git checkout -b failed: {}",
-            stderr
-        )));
+        return Err(NoaError::Sync(format!("git checkout -b failed: {stderr}")));
     }
 
     Ok(())
@@ -219,11 +216,11 @@ fn checkout_git_branch(workspace_root: &Path, name: &str) -> Result<()> {
         .args(["checkout", name])
         .current_dir(workspace_root)
         .output()
-        .map_err(|e| NoaError::Sync(format!("git checkout failed: {}", e)))?;
+        .map_err(|e| NoaError::Sync(format!("git checkout failed: {e}")))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(NoaError::Sync(format!("git checkout failed: {}", stderr)));
+        return Err(NoaError::Sync(format!("git checkout failed: {stderr}")));
     }
 
     Ok(())

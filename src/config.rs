@@ -56,7 +56,7 @@ fn default_sync_socket() -> String {
             std::env::var("USER").unwrap_or_else(|_| "unknown".to_string())
         )
     });
-    format!("{}/noa-sync.sock", runtime_dir)
+    format!("{runtime_dir}/noa-sync.sock")
 }
 
 fn default_sync_interval() -> u64 {
@@ -108,6 +108,7 @@ impl RepoConfig {
         self.remotes.retain(|r| r.name != name);
     }
 
+    #[must_use]
     pub fn get_remote(&self, name: &str) -> Option<&RemoteConfig> {
         self.remotes.iter().find(|r| r.name == name)
     }

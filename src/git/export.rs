@@ -15,8 +15,7 @@ fn is_safe_relative_path(path: &str) -> bool {
     let pb = PathBuf::from(path);
     for comp in pb.components() {
         match comp {
-            Component::Normal(_) => {}
-            Component::CurDir => {}
+            Component::Normal(_) | Component::CurDir => {}
             _ => return false,
         }
     }
@@ -53,19 +52,19 @@ pub fn validate_git_url(url: &str) -> Result<()> {
                 !before.is_empty() && !before.contains('/') && !before.starts_with('-')
             });
         if !has_scp_syntax {
-            return Err(NoaError::Remote(format!("invalid git URL format: {}", url)));
+            return Err(NoaError::Remote(format!("invalid git URL format: {url}")));
         }
     }
     Ok(())
 }
 
+#[must_use]
 pub fn detect_lfs_available(repo_root: &Path) -> bool {
     Command::new("git")
         .args(["lfs", "version"])
         .current_dir(repo_root)
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+        .is_ok_and(|o| o.status.success())
 }
 
 pub fn lfs_install(repo_root: &Path) {
@@ -89,14 +88,14 @@ pub fn lfs_push_all(repo_root: &Path, remote_url: &str) {
         .status();
 }
 
+#[must_use]
 pub fn has_lfs_tracking(repo_root: &Path) -> bool {
     repo_root.join(".gitattributes").exists()
         || Command::new("git")
             .args(["lfs", "track"])
             .current_dir(repo_root)
             .output()
-            .map(|o| !o.stdout.is_empty())
-            .unwrap_or(false)
+            .is_ok_and(|o| !o.stdout.is_empty())
 }
 
 pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Result<()> {
@@ -116,14 +115,13 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
         .to_string();
 
     let ws = ws_mgr.get(&head_ws).await?;
-    let snap_id = match ws {
-        Some(w) => w.head,
-        None => {
-            let head_ref = ref_store.get("HEAD").await?;
-            match head_ref {
-                Some(id) => id,
-                None => return Err(NoaError::Remote("no HEAD snapshot found".to_string())),
-            }
+    let snap_id = if let Some(w) = ws {
+        w.head
+    } else {
+        let head_ref = ref_store.get("HEAD").await?;
+        match head_ref {
+            Some(id) => id,
+            None => return Err(NoaError::Remote("no HEAD snapshot found".to_string())),
         }
     };
     let snapshot = snap_store.get(&snap_id).await?;
@@ -174,7 +172,7 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
         .args(["status", "--porcelain"])
         .current_dir(repo_root)
         .output()
-        .map_err(|e| NoaError::Remote(format!("git status failed: {}", e)))?;
+        .map_err(|e| NoaError::Remote(format!("git status failed: {e}")))?;
 
     let has_changes = !status_output.stdout.is_empty();
     if has_changes {
@@ -182,7 +180,7 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
             .args(["add", "-A"])
             .current_dir(repo_root)
             .status()
-            .map_err(|e| NoaError::Remote(format!("git add failed: {}", e)))?;
+            .map_err(|e| NoaError::Remote(format!("git add failed: {e}")))?;
 
         let msg = format!(
             "[noa export] snapshot {} from workspace {}",
@@ -196,7 +194,7 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
             .env("GIT_COMMITTER_NAME", &snapshot.author)
             .env("GIT_COMMITTER_EMAIL", "noa@noa.local")
             .status()
-            .map_err(|e| NoaError::Remote(format!("git commit failed: {}", e)))?;
+            .map_err(|e| NoaError::Remote(format!("git commit failed: {e}")))?;
     }
 
     Ok(())
@@ -208,7 +206,7 @@ pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
     Command::new("git")
         .args(["clone", url, &target.to_string_lossy()])
         .status()
-        .map_err(|e| NoaError::Remote(format!("git clone failed: {}", e)))
+        .map_err(|e| NoaError::Remote(format!("git clone failed: {e}")))
         .and_then(|s| {
             if s.success() {
                 Ok(())

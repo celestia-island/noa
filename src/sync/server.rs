@@ -36,6 +36,7 @@ fn generate_sync_token() -> String {
 }
 
 impl SyncServer {
+    #[must_use]
     pub fn new(socket_path: &Path, workspace_root: &Path, workspace_name: &str) -> Self {
         let auth_token = std::env::var("NOA_SYNC_TOKEN").unwrap_or_else(|_| generate_sync_token());
         SyncServer {
@@ -53,7 +54,7 @@ impl SyncServer {
         }
 
         let listener = UnixListener::bind(&self.socket_path)
-            .map_err(|e| NoaError::Sync(format!("failed to bind sync socket: {}", e)))?;
+            .map_err(|e| NoaError::Sync(format!("failed to bind sync socket: {e}")))?;
 
         tracing::info!(
             "Noa sync server listening on {}",
@@ -141,20 +142,19 @@ impl SyncServer {
         reader
             .read_exact(&mut len_buf)
             .await
-            .map_err(|e| NoaError::Sync(format!("read length: {}", e)))?;
+            .map_err(|e| NoaError::Sync(format!("read length: {e}")))?;
 
         let len = u32::from_be_bytes(len_buf) as usize;
         if len > MAX_MESSAGE_SIZE {
             return Err(NoaError::Sync(format!(
-                "message too large: {} bytes (max {})",
-                len, MAX_MESSAGE_SIZE
+                "message too large: {len} bytes (max {MAX_MESSAGE_SIZE})"
             )));
         }
         let mut body_buf = vec![0u8; len];
         reader
             .read_exact(&mut body_buf)
             .await
-            .map_err(|e| NoaError::Sync(format!("read body: {}", e)))?;
+            .map_err(|e| NoaError::Sync(format!("read body: {e}")))?;
 
         let json =
             std::str::from_utf8(&body_buf).map_err(|e| NoaError::Serialization(e.to_string()))?;
@@ -172,11 +172,11 @@ impl SyncServer {
         writer
             .write_all(&frame)
             .await
-            .map_err(|e| NoaError::Sync(format!("write frame: {}", e)))?;
+            .map_err(|e| NoaError::Sync(format!("write frame: {e}")))?;
         writer
             .flush()
             .await
-            .map_err(|e| NoaError::Sync(format!("flush: {}", e)))
+            .map_err(|e| NoaError::Sync(format!("flush: {e}")))
     }
 
     async fn dispatch(
@@ -187,9 +187,8 @@ impl SyncServer {
         authenticated_sessions: &Arc<Mutex<std::collections::HashSet<String>>>,
     ) -> Result<JsonRpcMessage> {
         let id = msg.id.unwrap_or(0);
-        let method = match msg.method {
-            Some(m) => m,
-            None => return Ok(JsonRpcMessage::error_response(id, -32600, "missing method")),
+        let Some(method) = msg.method else {
+            return Ok(JsonRpcMessage::error_response(id, -32600, "missing method"));
         };
 
         let params = msg.params.unwrap_or(serde_json::Value::Null);
@@ -278,7 +277,7 @@ impl SyncServer {
             _ => Ok(JsonRpcMessage::error_response(
                 id,
                 -32601,
-                &format!("method not found: {}", method),
+                &format!("method not found: {method}"),
             )),
         }
     }

@@ -15,10 +15,12 @@ use crate::error::Result;
 pub struct SnapshotId(pub String);
 
 impl SnapshotId {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0 == EMPTY_SNAPSHOT
     }
@@ -26,6 +28,7 @@ impl SnapshotId {
 
 pub const EMPTY_SNAPSHOT: &str = "noa_empty";
 
+#[must_use]
 pub fn empty_snapshot_id() -> SnapshotId {
     SnapshotId(EMPTY_SNAPSHOT.to_string())
 }
@@ -36,6 +39,7 @@ impl std::fmt::Display for SnapshotId {
     }
 }
 
+#[must_use]
 pub fn content_addressed_snapshot_id(
     tree_hash: &str,
     parent_ids: &[SnapshotId],

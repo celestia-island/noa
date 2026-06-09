@@ -10,7 +10,7 @@ pub async fn run(workspace: Option<&str>, limit: usize) -> Result<()> {
     let all = snap_store.list_all().await?;
 
     let ws_name = workspace
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .or_else(|| repo.read_head().ok());
     let filtered: Vec<_> = if let Some(ref ws) = ws_name {
         all.into_iter().filter(|s| &s.workspace == ws).collect()
@@ -29,7 +29,7 @@ pub async fn run(workspace: Option<&str>, limit: usize) -> Result<()> {
     for snap in &display {
         let msg = if snap.message.chars().count() > 50 {
             let truncated: String = snap.message.chars().take(47).collect();
-            format!("{}...", truncated)
+            format!("{truncated}...")
         } else {
             snap.message.clone()
         };

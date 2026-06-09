@@ -15,10 +15,12 @@ pub struct MergeResult {
 }
 
 impl MergeResult {
+    #[must_use]
     pub fn has_conflicts(&self) -> bool {
         self.output.has_conflicts
     }
 
+    #[must_use]
     pub fn into_tree_entries(&self, resolution: &ConflictResolution) -> TreeEntries {
         TreeEntries(self.output.resolve_with_strategy(resolution))
     }
@@ -47,16 +49,16 @@ pub fn three_way_merge(
         .copied()
         .collect();
 
+    enum Change<'a> {
+        Unchanged,
+        Modified(&'a TreeEntry),
+        Deleted,
+    }
+
     for path in all_paths {
         let base_entry = base_map.get(path);
         let ours_entry = ours_map.get(path);
         let theirs_entry = theirs_map.get(path);
-
-        enum Change<'a> {
-            Unchanged,
-            Modified(&'a TreeEntry),
-            Deleted,
-        }
 
         let ours_change = match (base_entry, ours_entry) {
             (None, None) => Change::Unchanged,
@@ -80,8 +82,7 @@ pub fn three_way_merge(
             }
             (Change::Modified(o), Change::Unchanged) => Some(MergedEntry::Clean((*o).clone())),
             (Change::Unchanged, Change::Modified(t)) => Some(MergedEntry::Clean((*t).clone())),
-            (Change::Deleted, Change::Unchanged) => None,
-            (Change::Unchanged, Change::Deleted) => None,
+            (Change::Deleted, Change::Unchanged) | (Change::Unchanged, Change::Deleted) => None,
             (Change::Modified(o), Change::Deleted) => {
                 has_conflicts = true;
                 Some(MergedEntry::Conflict {
@@ -126,6 +127,7 @@ pub fn three_way_merge(
     })
 }
 
+#[must_use]
 pub fn extract_conflicts(output: &MergeOutput) -> Vec<FileConflict> {
     output
         .entries
@@ -141,13 +143,13 @@ pub fn extract_conflicts(output: &MergeOutput) -> Vec<FileConflict> {
                 theirs_id: theirs.as_ref().map(|e| e.id.clone()),
                 base_id: base.as_ref().map(|e| e.id.clone()),
             }),
-            _ => None,
+            MergedEntry::Clean(_) => None,
         })
         .collect()
 }
 
 /// Recursively merge two trees, resolving Tree-typed entries by fetching and
-/// merging their sub-trees. Requires an ObjectStore to load/store sub-trees.
+/// merging their sub-trees. Requires an `ObjectStore` to load/store sub-trees.
 pub async fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
     base: TreeEntries,
     ours: TreeEntries,
@@ -228,30 +230,27 @@ pub async fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
             Deleted,
         }
 
-        let ours_change = match (base_entry, ours_entry) {
-            (None, None) => Change::Unchanged,
-            (None, Some(o)) => Change::Modified((*o).clone()),
-            (Some(b), Some(o)) if b.id != o.id => Change::Modified((*o).clone()),
-            (Some(_), Some(_)) => Change::Unchanged,
-            (Some(_), None) => Change::Deleted,
-        };
+        fn compute_change<'a>(
+            base_entry: Option<&'a TreeEntry>,
+            ours_entry: Option<&'a TreeEntry>,
+        ) -> Change {
+            match (base_entry, ours_entry) {
+                (None, None) => Change::Unchanged,
+                (None, Some(o)) => Change::Modified((*o).clone()),
+                (Some(b), Some(o)) if b.id != o.id => Change::Modified((*o).clone()),
+                (Some(_), Some(_)) => Change::Unchanged,
+                (Some(_), None) => Change::Deleted,
+            }
+        }
 
-        let theirs_change = match (base_entry, theirs_entry) {
-            (None, None) => Change::Unchanged,
-            (None, Some(t)) => Change::Modified((*t).clone()),
-            (Some(b), Some(t)) if b.id != t.id => Change::Modified((*t).clone()),
-            (Some(_), Some(_)) => Change::Unchanged,
-            (Some(_), None) => Change::Deleted,
-        };
+        let ours_change = compute_change(base_entry, ours_entry);
+        let theirs_change = compute_change(base_entry, theirs_entry);
 
         let merged = match (ours_change, theirs_change) {
-            (Change::Unchanged, Change::Unchanged) => {
-                base_entry.cloned().map(MergedEntry::Clean)
-            }
+            (Change::Unchanged, Change::Unchanged) => base_entry.cloned().map(MergedEntry::Clean),
             (Change::Modified(o), Change::Unchanged) => Some(MergedEntry::Clean(o)),
             (Change::Unchanged, Change::Modified(t)) => Some(MergedEntry::Clean(t)),
-            (Change::Deleted, Change::Unchanged) => None,
-            (Change::Unchanged, Change::Deleted) => None,
+            (Change::Deleted, Change::Unchanged) | (Change::Unchanged, Change::Deleted) => None,
             (Change::Modified(o), Change::Deleted) => {
                 has_conflicts = true;
                 Some(MergedEntry::Conflict {

@@ -22,16 +22,13 @@ pub fn run_interactive(
             if let Event::Key(key) = event::read()? {
                 let result =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| app.handle_key(key)));
-                match result {
-                    Ok(should_quit) => {
-                        if should_quit {
-                            break;
-                        }
-                    }
-                    Err(_) => {
-                        tracing::error!("panic in TUI key handler, exiting gracefully");
+                if let Ok(should_quit) = result {
+                    if should_quit {
                         break;
                     }
+                } else {
+                    tracing::error!("panic in TUI key handler, exiting gracefully");
+                    break;
                 }
             }
         }

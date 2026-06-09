@@ -243,17 +243,17 @@ async fn main() -> anyhow::Result<()> {
             RemoteSub::Add { name, url } => {
                 let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
                 let mut repo = libnoa::repo::Repository::open(&root)?;
-                cli::remote_cmd::run_add(&mut repo, &name, &url).await?;
+                cli::remote_cmd::run_add(&mut repo, &name, &url)?;
             }
             RemoteSub::Remove { name } => {
                 let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
                 let mut repo = libnoa::repo::Repository::open(&root)?;
-                cli::remote_cmd::run_remove(&mut repo, &name).await?;
+                cli::remote_cmd::run_remove(&mut repo, &name)?;
             }
             RemoteSub::List => {
                 let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
                 let repo = libnoa::repo::Repository::open(&root)?;
-                cli::remote_cmd::run_list(&repo).await?;
+                cli::remote_cmd::run_list(&repo)?;
             }
         },
         Some(Commands::Push { remote }) => {

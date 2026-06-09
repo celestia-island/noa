@@ -16,10 +16,7 @@ pub async fn run_resolve(
     let resolution = match strategy {
         "ours" => ConflictResolution::Ours,
         "theirs" => ConflictResolution::Theirs,
-        _ => anyhow::bail!(
-            "unknown strategy '{}', expected 'ours' or 'theirs'",
-            strategy
-        ),
+        _ => anyhow::bail!("unknown strategy '{strategy}', expected 'ours' or 'theirs'"),
     };
 
     let current = repo.read_head()?;
@@ -47,7 +44,7 @@ pub async fn run_resolve(
     let current_ws = ws_mgr
         .get(&current)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("workspace '{}' not found", current))?;
+        .ok_or_else(|| anyhow::anyhow!("workspace '{current}' not found"))?;
 
     let merge_snap_id = latest_merge
         .snapshot_id
@@ -90,7 +87,7 @@ pub async fn run_resolve(
         let target_conflict = merge_conflicts
             .iter()
             .find(|c| c.path == filter)
-            .ok_or_else(|| anyhow::anyhow!("no conflict found for path '{}'", filter))?;
+            .ok_or_else(|| anyhow::anyhow!("no conflict found for path '{filter}'"))?;
 
         let resolved_blob_id = match resolution {
             ConflictResolution::Ours => target_conflict.ours_id.as_deref(),
@@ -103,20 +100,18 @@ pub async fn run_resolve(
                 entry.id = resolved_blob_id.to_string();
             }
         }
-    } else {
-        if merge_snap.parents.len() >= 2 {
-            let base_snap = snap_store.get(&current_ws.base).await?;
-            let base_tree = obj_store
-                .get_tree(&crate::object::TreeId(base_snap.tree_hash.clone()))
-                .await?;
-            let theirs_snap = snap_store.get(&merge_snap.parents[1]).await?;
-            let theirs_tree = obj_store
-                .get_tree(&crate::object::TreeId(theirs_snap.tree_hash.clone()))
-                .await?;
+    } else if merge_snap.parents.len() >= 2 {
+        let base_snap = snap_store.get(&current_ws.base).await?;
+        let base_tree = obj_store
+            .get_tree(&crate::object::TreeId(base_snap.tree_hash.clone()))
+            .await?;
+        let theirs_snap = snap_store.get(&merge_snap.parents[1]).await?;
+        let theirs_tree = obj_store
+            .get_tree(&crate::object::TreeId(theirs_snap.tree_hash.clone()))
+            .await?;
 
-            let result = crate::merge::three_way_merge(&base_tree, &merge_tree, &theirs_tree)?;
-            resolved_entries = result.into_tree_entries(&resolution).0;
-        }
+        let result = crate::merge::three_way_merge(&base_tree, &merge_tree, &theirs_tree)?;
+        resolved_entries = result.into_tree_entries(&resolution).0;
     }
 
     let resolved_tree = crate::object::TreeEntries(resolved_entries);
@@ -133,7 +128,7 @@ pub async fn run_resolve(
 
     let now = crate::now_micros();
     let resolved_path = path_filter
-        .map(|p| p.to_string())
+        .map(std::string::ToString::to_string)
         .or_else(|| latest_merge.path.clone())
         .unwrap_or_default();
 
@@ -150,7 +145,7 @@ pub async fn run_resolve(
         workspace: current.clone(),
         author: "noa-resolve".to_string(),
         timestamp: now,
-        message: format!("resolve conflicts with strategy '{}'", strategy),
+        message: format!("resolve conflicts with strategy '{strategy}'"),
     };
     snap_store.store(&resolved_snapshot).await?;
     ws_mgr.update_head(&current, &resolved_snapshot.id).await?;
@@ -165,13 +160,12 @@ pub async fn run_resolve(
         resolved_conflict_theirs_id: Some(theirs_id.to_string()),
         snapshot_id: Some(new_snap_id.0),
         ts: now,
-        message: Some(format!("resolve {} with {}", resolved_path, strategy)),
+        message: Some(format!("resolve {resolved_path} with {strategy}")),
     })
     .await?;
 
     println!(
-        "Resolved conflict on '{}' with strategy '{}' (ours={}, theirs={})",
-        resolved_path, strategy, ours_id, theirs_id
+        "Resolved conflict on '{resolved_path}' with strategy '{strategy}' (ours={ours_id}, theirs={theirs_id})"
     );
     println!("Created resolution snapshot: {}", resolved_snapshot.id);
     println!("Run 'noa snapshot create' to commit additional changes.");

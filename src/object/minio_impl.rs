@@ -14,6 +14,7 @@ pub struct MinioObjectStore {
 }
 
 impl MinioObjectStore {
+    #[must_use]
     pub fn new(client: Client, bucket: String) -> Self {
         MinioObjectStore { client, bucket }
     }
@@ -44,7 +45,7 @@ impl MinioObjectStore {
         ];
         for &b in &blocked {
             if host == b {
-                return Err(NoaError::Config(format!("blocked SSRF endpoint: {}", host)));
+                return Err(NoaError::Config(format!("blocked SSRF endpoint: {host}")));
             }
         }
 
@@ -57,8 +58,7 @@ impl MinioObjectStore {
                         || v4.is_multicast()
                     {
                         return Err(NoaError::Config(format!(
-                            "endpoint resolves to forbidden IP: {}",
-                            ip
+                            "endpoint resolves to forbidden IP: {ip}"
                         )));
                     }
                     let octets = v4.octets();
@@ -67,8 +67,7 @@ impl MinioObjectStore {
                         || (octets[0] == 192 && octets[1] == 168)
                     {
                         return Err(NoaError::Config(format!(
-                            "endpoint resolves to private IP: {}",
-                            ip
+                            "endpoint resolves to private IP: {ip}"
                         )));
                     }
                 }
@@ -79,8 +78,7 @@ impl MinioObjectStore {
                         || v6.octets()[0] == 0xfd
                     {
                         return Err(NoaError::Config(format!(
-                            "endpoint resolves to forbidden IPv6: {}",
-                            ip
+                            "endpoint resolves to forbidden IPv6: {ip}"
                         )));
                     }
                 }

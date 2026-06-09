@@ -35,6 +35,7 @@ impl IgnoreMatcher {
         IgnoreMatcher { gi }
     }
 
+    #[must_use]
     pub fn should_skip(&self, path: &str, is_dir: bool) -> bool {
         if Self::is_noa_internal(path) {
             return true;
@@ -58,12 +59,12 @@ impl IgnoreMatcher {
         false
     }
 
+    #[must_use]
     pub fn is_ignored(&self, path: &str, is_dir: bool) -> bool {
         let p = Path::new(path);
         match self.gi.matched(p, is_dir) {
             ignore::Match::Ignore(_) => true,
-            ignore::Match::Whitelist(_) => false,
-            ignore::Match::None => false,
+            ignore::Match::Whitelist(_) | ignore::Match::None => false,
         }
     }
 
@@ -84,9 +85,8 @@ impl IgnoreMatcher {
         if depth > 10 {
             return;
         }
-        let entries = match std::fs::read_dir(dir) {
-            Ok(e) => e,
-            Err(_) => return,
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
         };
 
         for entry in entries.flatten() {

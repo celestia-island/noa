@@ -126,7 +126,7 @@ fn render_branches(f: &mut Frame, area: Rect, app: &App) {
             let agent = ws
                 .agent_id
                 .as_deref()
-                .map(|a| format!(" ({})", a))
+                .map(|a| format!(" ({a})"))
                 .unwrap_or_default();
             ListItem::new(Line::from(Span::styled(
                 format!("{}{}{}", marker, ws.name, agent),
@@ -167,7 +167,7 @@ fn render_log(f: &mut Frame, area: Rect, app: &App) {
         .map(|snap| {
             let msg = if snap.message.chars().count() > 35 {
                 let truncated: String = snap.message.chars().take(32).collect();
-                format!("{}...", truncated)
+                format!("{truncated}...")
             } else {
                 snap.message.clone()
             };
@@ -183,14 +183,14 @@ fn render_log(f: &mut Frame, area: Rect, app: &App) {
 
             let line = Line::from(vec![
                 Span::styled(
-                    format!("{:<12} ", id_short),
+                    format!("{id_short:<12} "),
                     Style::default().fg(Color::Yellow),
                 ),
                 Span::styled(
                     format!("{:<8} ", snap.workspace),
                     Style::default().fg(Color::Cyan),
                 ),
-                Span::styled(format!("{:<10} ", ts), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{ts:<10} "), Style::default().fg(Color::DarkGray)),
                 Span::raw(msg),
             ]);
             ListItem::new(line)
@@ -224,19 +224,17 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let snap = match app.selected_snapshot() {
-        Some(s) => s,
-        None => {
-            let hint = Paragraph::new("Select a snapshot to view details")
-                .style(Style::default().fg(Color::DarkGray));
-            f.render_widget(hint, inner);
-            return;
-        }
+    let Some(snap) = app.selected_snapshot() else {
+        let hint = Paragraph::new("Select a snapshot to view details")
+            .style(Style::default().fg(Color::DarkGray));
+        f.render_widget(hint, inner);
+        return;
     };
 
-    let ts = chrono::DateTime::from_timestamp(snap.timestamp as i64 / 1_000_000, 0)
-        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+    let ts = chrono::DateTime::from_timestamp(snap.timestamp as i64 / 1_000_000, 0).map_or_else(
+        || "unknown".to_string(),
+        |dt| dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+    );
 
     let parents: String = snap
         .parents
@@ -244,7 +242,7 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
         .map(|p| {
             if p.0.chars().count() > 12 {
                 let truncated: String = p.0.chars().take(12).collect();
-                format!("{}...", truncated)
+                format!("{truncated}...")
             } else {
                 p.0.clone()
             }
@@ -273,7 +271,7 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
             Span::styled("Tree:     ", Style::default().fg(Color::Yellow).bold()),
             Span::raw(if snap.tree_hash.chars().count() > 20 {
                 let truncated: String = snap.tree_hash.chars().take(20).collect();
-                format!("{}...", truncated)
+                format!("{truncated}...")
             } else {
                 snap.tree_hash.clone()
             }),

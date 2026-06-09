@@ -176,7 +176,7 @@ impl AgentLog for FileAgentLog {
 
                 for entry in &remaining {
                     let line = format::serialize_entry(entry)?;
-                    writeln!(tmp_file, "{}", line).map_err(NoaError::Io)?;
+                    writeln!(tmp_file, "{line}").map_err(NoaError::Io)?;
                 }
                 tmp_file.sync_all().map_err(NoaError::Io)?;
             }
@@ -196,9 +196,8 @@ impl AgentLog for FileAgentLog {
 fn compact_temp_path(original: &Path) -> PathBuf {
     let file_name = original
         .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "log".to_string());
-    original.with_file_name(format!(".{}.compact.tmp", file_name))
+        .map_or_else(|| "log".to_string(), |n| n.to_string_lossy().into_owned());
+    original.with_file_name(format!(".{file_name}.compact.tmp"))
 }
 
 #[cfg(test)]

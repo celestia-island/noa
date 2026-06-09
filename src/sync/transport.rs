@@ -26,6 +26,7 @@ pub struct JsonRpcError {
 }
 
 impl JsonRpcMessage {
+    #[must_use]
     pub fn request(id: u64, method: &str, params: serde_json::Value) -> Self {
         JsonRpcMessage {
             jsonrpc: "2.0".to_string(),
@@ -37,6 +38,7 @@ impl JsonRpcMessage {
         }
     }
 
+    #[must_use]
     pub fn response(id: u64, result: serde_json::Value) -> Self {
         JsonRpcMessage {
             jsonrpc: "2.0".to_string(),
@@ -48,6 +50,7 @@ impl JsonRpcMessage {
         }
     }
 
+    #[must_use]
     pub fn error_response(id: u64, code: i64, message: &str) -> Self {
         JsonRpcMessage {
             jsonrpc: "2.0".to_string(),

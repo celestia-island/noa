@@ -149,6 +149,7 @@ impl Repository {
         }
     }
 
+    #[must_use]
     pub fn exists(path: &Path) -> bool {
         path.join(NOA_DIR_NAME).exists()
     }
@@ -174,7 +175,7 @@ impl Repository {
             .create(&db_path)
             .map_err(|e| NoaError::Redb(e.to_string()))?;
         db.check_integrity()
-            .map_err(|e| NoaError::Redb(format!("database integrity check failed: {}", e)))?;
+            .map_err(|e| NoaError::Redb(format!("database integrity check failed: {e}")))?;
         Ok(db)
     }
 
@@ -238,7 +239,7 @@ impl Repository {
 
     pub fn write_head(&self, name: &str) -> Result<()> {
         let head_path = self.noa_dir.join(HEAD_FILE);
-        std::fs::write(&head_path, format!("{}\n", name))?;
+        std::fs::write(&head_path, format!("{name}\n"))?;
         Ok(())
     }
 
@@ -254,16 +255,18 @@ impl Repository {
 
     pub fn write_orig_head(&self, name: &str) -> Result<()> {
         let path = self.noa_dir.join(ORIG_HEAD_FILE);
-        std::fs::write(&path, format!("{}\n", name))?;
+        std::fs::write(&path, format!("{name}\n"))?;
         Ok(())
     }
 
+    #[must_use]
     pub fn agent_logs_dir(&self) -> PathBuf {
         self.noa_dir.join(AGENT_LOGS_DIR)
     }
 
+    #[must_use]
     pub fn agent_log_path(&self, workspace: &str) -> PathBuf {
-        self.agent_logs_dir().join(format!("{}.log", workspace))
+        self.agent_logs_dir().join(format!("{workspace}.log"))
     }
 
     pub fn save_config(&mut self) -> Result<()> {
@@ -353,7 +356,7 @@ pub fn get_current_git_branch(workspace_root: &Path) -> Result<String> {
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(workspace_root)
         .output()
-        .map_err(|e| NoaError::Sync(format!("git rev-parse failed: {}", e)))?;
+        .map_err(|e| NoaError::Sync(format!("git rev-parse failed: {e}")))?;
 
     if !output.status.success() {
         return Err(NoaError::Sync(
@@ -394,8 +397,7 @@ pub fn manage_gitattributes(root: &Path, noa_remote_url: &str) -> Result<()> {
 
     if !gitattributes_path.exists() {
         let content = format!(
-            "# Added by noa \u{2014} specifies where agent iteration data is hosted\n{}\n",
-            attr_line
+            "# Added by noa \u{2014} specifies where agent iteration data is hosted\n{attr_line}\n"
         );
         std::fs::write(&gitattributes_path, content)?;
         return Ok(());

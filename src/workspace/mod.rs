@@ -24,8 +24,7 @@ pub fn validate_workspace_name(name: &str) -> Result<()> {
         match ch {
             '/' | '\\' | '\0' => {
                 return Err(NoaError::WorkspaceNotFound(format!(
-                    "workspace name contains invalid character {:?} at position {}",
-                    ch, i
+                    "workspace name contains invalid character {ch:?} at position {i}"
                 )));
             }
             _ => {}

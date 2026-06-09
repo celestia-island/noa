@@ -12,6 +12,7 @@ pub enum Focus {
 }
 
 impl Focus {
+    #[must_use]
     pub fn cycle(self, mode: AppMode) -> Self {
         match mode {
             AppMode::Branches => match self {
@@ -21,12 +22,12 @@ impl Focus {
             },
             AppMode::Log => match self {
                 Focus::Log => Focus::Detail,
-                Focus::Detail => Focus::Log,
-                _ => Focus::Log,
+                Focus::Detail | Focus::Branches => Focus::Log,
             },
         }
     }
 
+    #[must_use]
     pub fn cycle_back(self, mode: AppMode) -> Self {
         match mode {
             AppMode::Branches => match self {
@@ -35,9 +36,8 @@ impl Focus {
                 Focus::Detail => Focus::Log,
             },
             AppMode::Log => match self {
-                Focus::Log => Focus::Detail,
+                Focus::Log | Focus::Branches => Focus::Detail,
                 Focus::Detail => Focus::Log,
-                _ => Focus::Detail,
             },
         }
     }
@@ -55,6 +55,7 @@ pub struct App {
 }
 
 impl App {
+    #[must_use]
     pub fn for_log(snapshots: Vec<crate::snapshot::Snapshot>, current_branch: String) -> Self {
         let count = snapshots.len();
         Self {
@@ -69,6 +70,7 @@ impl App {
         }
     }
 
+    #[must_use]
     pub fn for_branches(
         branches: Vec<crate::workspace::Workspace>,
         snapshots: Vec<crate::snapshot::Snapshot>,
@@ -137,6 +139,7 @@ impl App {
         }
     }
 
+    #[must_use]
     pub fn selected_snapshot(&self) -> Option<&crate::snapshot::Snapshot> {
         let idx = self.log_scroll.selected_index()?;
         self.snapshots.get(idx)

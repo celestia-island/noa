@@ -64,14 +64,10 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("invalid address '{}:{}': {}", app.host, app.port, e))?;
 
     if std::env::var("NOA_API_TOKEN").is_ok() {
-        println!(
-            "noa-server listening on {} (API token authentication enabled)",
-            addr
-        );
+        println!("noa-server listening on {addr} (API token authentication enabled)");
     } else {
         println!(
-            "noa-server listening on {} (WARNING: no authentication configured, set NOA_API_TOKEN)",
-            addr
+            "noa-server listening on {addr} (WARNING: no authentication configured, set NOA_API_TOKEN)"
         );
     }
 

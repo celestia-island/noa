@@ -21,7 +21,7 @@ pub async fn run_create(repo: &Repository, name: &str, agent: Option<&str>) -> R
         name: name.to_string(),
         head: base_snapshot.clone(),
         base: base_snapshot.clone(),
-        agent_id: agent.map(|s| s.to_string()),
+        agent_id: agent.map(std::string::ToString::to_string),
         last_seq: 0,
         created_at: now,
         updated_at: now,
@@ -39,11 +39,11 @@ pub async fn run_create(repo: &Repository, name: &str, agent: Option<&str>) -> R
         resolved_conflict_theirs_id: None,
         snapshot_id: Some(base_snapshot.0.clone()),
         ts: now,
-        message: Some(format!("workspace {} created", name)),
+        message: Some(format!("workspace {name} created")),
     })
     .await?;
 
-    println!("Created workspace '{}' (base: {})", name, base_snapshot);
+    println!("Created workspace '{name}' (base: {base_snapshot})");
     Ok(())
 }
 
@@ -52,13 +52,13 @@ pub async fn run_switch(repo: &Repository, name: &str) -> Result<()> {
     ws_mgr
         .get(name)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("workspace '{}' not found", name))?;
+        .ok_or_else(|| anyhow::anyhow!("workspace '{name}' not found"))?;
 
     let prev = repo.read_head()?;
     repo.write_orig_head(&prev)?;
     repo.write_head(name)?;
 
-    println!("Switched to workspace '{}'", name);
+    println!("Switched to workspace '{name}'");
     Ok(())
 }
 
@@ -85,13 +85,13 @@ pub async fn run_list(repo: &Repository) -> Result<()> {
 pub async fn run_delete(repo: &Repository, name: &str) -> Result<()> {
     let current = repo.read_head()?;
     if name == current {
-        anyhow::bail!("cannot delete the active workspace '{}'", name);
+        anyhow::bail!("cannot delete the active workspace '{name}'");
     }
 
     let ws_mgr = repo.workspace_manager()?;
     ws_mgr.delete(name).await?;
 
-    println!("Deleted workspace '{}'", name);
+    println!("Deleted workspace '{name}'");
     Ok(())
 }
 
@@ -99,10 +99,7 @@ pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<
     let resolution = match strategy {
         "ours" => ConflictResolution::Ours,
         "theirs" => ConflictResolution::Theirs,
-        _ => anyhow::bail!(
-            "unknown strategy '{}', expected 'ours' or 'theirs'",
-            strategy
-        ),
+        _ => anyhow::bail!("unknown strategy '{strategy}', expected 'ours' or 'theirs'"),
     };
 
     let ws_mgr = repo.workspace_manager()?;
@@ -111,11 +108,11 @@ pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<
     let from_ws = ws_mgr
         .get(from)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("workspace '{}' not found", from))?;
+        .ok_or_else(|| anyhow::anyhow!("workspace '{from}' not found"))?;
     let cur_ws = ws_mgr
         .get(&current)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("workspace '{}' not found", current))?;
+        .ok_or_else(|| anyhow::anyhow!("workspace '{current}' not found"))?;
 
     let snap_store = repo.snapshot_store()?;
     let obj_store = repo.object_store()?;
@@ -179,7 +176,7 @@ pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<
         workspace: current.clone(),
         author: "noa".to_string(),
         timestamp: crate::now_micros(),
-        message: format!("merge {} into {}", from, current),
+        message: format!("merge {from} into {current}"),
     };
 
     snap_store.store(&merge_snapshot).await?;
@@ -217,7 +214,7 @@ pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<
             },
             snapshot_id: Some(merge_snapshot.id.0.clone()),
             ts: now,
-            message: Some(format!("merge {} into {}", from, current)),
+            message: Some(format!("merge {from} into {current}")),
         })
         .await?;
 
