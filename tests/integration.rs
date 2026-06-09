@@ -1679,3 +1679,123 @@ async fn workspace_update_head_and_seq() {
     assert_eq!(u.head, SnapshotId("noa_x".into()));
     assert_eq!(u.last_seq, 42);
 }
+
+#[tokio::test]
+async fn merge_updates_last_seq() {
+    use libnoa::merge::ConflictResolution;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = Repository::init(tmp.path()).unwrap();
+    {
+        // Write initial content to default
+        let log = repo.agent_log("default").unwrap();
+        log.append(&make_log_entry(1, OpType::Write, "base.rs", Some("base"), 100))
+            .await
+            .unwrap();
+    }
+    let ws_mgr = repo.workspace_manager().unwrap();
+    let obj_store = repo.object_store().unwrap();
+    let snap_store = repo.snapshot_store().unwrap();
+
+    let engine = SnapshotEngine::new(
+        repo.agent_log("default").unwrap(),
+        snap_store.clone(),
+        obj_store.clone(),
+    );
+    let snap_base = engine
+        .compute("default", vec![], 0, "author", "base")
+        .await
+        .unwrap();
+    ws_mgr
+        .update_head_and_seq("default", &snap_base.id, 1)
+        .await
+        .unwrap();
+
+    // Create feature workspace
+    let feat_ws = Workspace {
+        name: "feat".to_string(),
+        head: snap_base.id.clone(),
+        base: snap_base.id.clone(),
+        agent_id: None,
+        last_seq: 0,
+        created_at: 2000,
+        updated_at: 2000,
+    };
+    ws_mgr.create(&feat_ws).await.unwrap();
+
+    // Add feature log entry
+    let feat_log = repo.agent_log("feat").unwrap();
+    feat_log
+        .append(&make_log_entry(1, OpType::Write, "feat.rs", Some("feat"), 300))
+        .await
+        .unwrap();
+
+    let feat_engine = SnapshotEngine::new(
+        repo.agent_log("feat").unwrap(),
+        snap_store.clone(),
+        obj_store.clone(),
+    );
+    let snap_feat = feat_engine
+        .compute("feat", vec![snap_base.id.clone()], 0, "author", "feat")
+        .await
+        .unwrap();
+    ws_mgr
+        .update_head_and_seq("feat", &snap_feat.id, 1)
+        .await
+        .unwrap();
+
+    // Verify last_seq before merge
+    let default_before = ws_mgr.get("default").await.unwrap().unwrap();
+    assert_eq!(
+        default_before.last_seq, 1,
+        "default last_seq should be 1 before merge"
+    );
+
+    // Perform merge (simulating what run_merge does)
+    let cur_snap = snap_store.get(&snap_base.id).await.unwrap();
+    let base_tree = obj_store
+        .get_tree(&libnoa::object::TreeId(cur_snap.tree_hash))
+        .await
+        .unwrap();
+    let feat_tree = obj_store
+        .get_tree(&libnoa::object::TreeId(snap_feat.tree_hash))
+        .await
+        .unwrap();
+    let result = libnoa::merge::three_way_merge(&base_tree, &base_tree, &feat_tree).unwrap();
+    assert!(!result.has_conflicts());
+    let merged = result.into_tree_entries(&ConflictResolution::Ours);
+    let tree_id = obj_store.put_tree(&merged).await.unwrap();
+
+    let merge_snap = libnoa::snapshot::Snapshot {
+        id: content_addressed_snapshot_id(
+            &tree_id.0,
+            &[snap_base.id.clone(), snap_feat.id.clone()],
+            "default",
+        ),
+        tree_hash: tree_id.0,
+        parents: vec![snap_base.id.clone(), snap_feat.id.clone()],
+        workspace: "default".to_string(),
+        author: "noa".to_string(),
+        timestamp: 5000,
+        message: "merge feat into default".to_string(),
+    };
+    snap_store.store(&merge_snap).await.unwrap();
+
+    let log = repo.agent_log("default").unwrap();
+    let new_seq = log
+        .append(&make_log_entry(0, OpType::Merge, "", None, 5000))
+        .await
+        .unwrap();
+    ws_mgr
+        .update_head_and_seq("default", &merge_snap.id, new_seq)
+        .await
+        .unwrap();
+
+    let default_after = ws_mgr.get("default").await.unwrap().unwrap();
+    assert_eq!(
+        default_after.last_seq, new_seq,
+        "default last_seq must be updated to merge log seq ({}) after merge",
+        new_seq
+    );
+    assert_eq!(default_after.head, merge_snap.id);
+}
