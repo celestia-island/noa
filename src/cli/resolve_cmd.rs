@@ -36,13 +36,7 @@ pub async fn run_resolve(
         return Ok(());
     }
 
-    let latest_merge = match merge_entries.last() {
-        Some(m) => m,
-        None => {
-            println!("No pending conflicts found.");
-            return Ok(());
-        }
-    };
+    let latest_merge = merge_entries.last().unwrap();
 
     let snap_store = repo.snapshot_store()?;
     let obj_store = repo.object_store()?;
