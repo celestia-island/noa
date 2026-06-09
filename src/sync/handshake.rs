@@ -61,11 +61,11 @@ pub fn handle_handshake_request(
                 .lines()
                 .any(|l| l.trim() == ".noa/" || l.trim() == ".noa");
             if !has_noa {
-                manage_gitignore(workspace_root);
+                manage_gitignore(workspace_root)?;
                 gitignore_updated = true;
             }
         } else {
-            manage_gitignore(workspace_root);
+            manage_gitignore(workspace_root)?;
             gitignore_updated = true;
         }
     }

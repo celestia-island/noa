@@ -58,10 +58,10 @@ impl Repository {
         let db = Arc::new(db);
         Self::create_default_workspace(&db)?;
 
-        manage_gitignore(path);
+        manage_gitignore(path)?;
 
         if let Some(url) = noa_remote {
-            manage_gitattributes(path, url);
+            manage_gitattributes(path, url)?;
         }
 
         Ok(Repository {
@@ -98,7 +98,7 @@ impl Repository {
         let db = Arc::new(db);
         Self::create_default_workspace(&db)?;
 
-        manage_gitignore(path);
+        manage_gitignore(path)?;
 
         Ok(Repository {
             root: path.to_path_buf(),
@@ -314,11 +314,11 @@ impl Repository {
                 .lines()
                 .any(|l| l.trim() == ".noa/" || l.trim() == ".noa");
             if !has_noa {
-                manage_gitignore(path);
+                manage_gitignore(path)?;
                 gitignore_updated = true;
             }
         } else {
-            manage_gitignore(path);
+            manage_gitignore(path)?;
             gitignore_updated = true;
         }
 
@@ -356,37 +356,34 @@ pub fn get_current_git_branch(workspace_root: &Path) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-pub fn manage_gitignore(root: &Path) {
+pub fn manage_gitignore(root: &Path) -> Result<()> {
     let gitignore_path = root.join(".gitignore");
 
     if !gitignore_path.exists() {
-        let content = "# Added by noa \u{2014} keep agent iteration data out of git\n.noa/\n";
-        if let Err(e) = std::fs::write(&gitignore_path, content) {
-            tracing::warn!("failed to write .gitignore: {}", e);
-        }
-        return;
+        std::fs::write(
+            &gitignore_path,
+            "# Added by noa \u{2014} keep agent iteration data out of git\n.noa/\n",
+        )?;
+        return Ok(());
     }
 
-    let content = match std::fs::read_to_string(&gitignore_path) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!("failed to read .gitignore: {}", e);
-            return;
-        }
-    };
+    let content = std::fs::read_to_string(&gitignore_path)?;
 
     for line in content.lines() {
         if line.trim() == ".noa" || line.trim() == ".noa/" {
-            return;
+            return Ok(());
         }
     }
 
-    if let Err(e) = std::fs::write(&gitignore_path, format!("{}\n.noa/\n", content.trim_end())) {
-        tracing::warn!("failed to update .gitignore: {}", e);
-    }
+    std::fs::write(
+        &gitignore_path,
+        format!("{}\n.noa/\n", content.trim_end()),
+    )?;
+
+    Ok(())
 }
 
-pub fn manage_gitattributes(root: &Path, noa_remote_url: &str) {
+pub fn manage_gitattributes(root: &Path, noa_remote_url: &str) -> Result<()> {
     let gitattributes_path = root.join(".gitattributes");
     let attr_line = format!("{}/**   noa-remote={}", ".noa", noa_remote_url);
 
@@ -395,36 +392,28 @@ pub fn manage_gitattributes(root: &Path, noa_remote_url: &str) {
             "# Added by noa \u{2014} specifies where agent iteration data is hosted\n{}\n",
             attr_line
         );
-        if let Err(e) = std::fs::write(&gitattributes_path, content) {
-            tracing::warn!("failed to write .gitattributes: {}", e);
-        }
-        return;
+        std::fs::write(&gitattributes_path, content)?;
+        return Ok(());
     }
 
-    let content = match std::fs::read_to_string(&gitattributes_path) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!("failed to read .gitattributes: {}", e);
-            return;
-        }
-    };
+    let content = std::fs::read_to_string(&gitattributes_path)?;
 
     for line in content.lines() {
         if line.contains("noa-remote=") {
-            return;
+            return Ok(());
         }
     }
 
-    if let Err(e) = std::fs::write(
+    std::fs::write(
         &gitattributes_path,
         format!(
             "{}\n# Added by noa \u{2014} specifies where agent iteration data is hosted\n{}\n",
             content.trim_end(),
             attr_line
         ),
-    ) {
-        tracing::warn!("failed to update .gitattributes: {}", e);
-    }
+    )?;
+
+    Ok(())
 }
 
 #[cfg(test)]
