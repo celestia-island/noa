@@ -457,3 +457,38 @@ fn test_svn_export_and_import() {
 
     assert!(noa_path.join(".noa/noa.redb").exists());
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn test_git_import_no_deadlock_on_single_thread_runtime() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let root = tmp.path().to_path_buf();
+
+    Command::new("git")
+        .args(["init"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+
+    std::fs::write(root.join("hello.txt"), b"hello world").unwrap();
+    git_commit(&root, "initial");
+
+    let db_path = root.join(".noa").join("noa.redb");
+    std::fs::create_dir_all(root.join(".noa").join("agent-logs")).unwrap();
+    let db = std::sync::Arc::new(redb::Database::builder().create(&db_path).unwrap());
+    {
+        let txn = db.begin_write().unwrap();
+        {
+            let _ = txn.open_table::<&[u8], &[u8]>(redb::TableDefinition::new("blobs"));
+            let _ = txn.open_table::<&[u8], &[u8]>(redb::TableDefinition::new("trees"));
+            let _ = txn.open_table::<&str, &[u8]>(redb::TableDefinition::new("snapshots"));
+            let _ = txn.open_table::<&str, &[u8]>(redb::TableDefinition::new("workspaces"));
+            let _ = txn.open_table::<&str, &[u8]>(redb::TableDefinition::new("refs"));
+        }
+        txn.commit().unwrap();
+    }
+
+    // This would deadlock before the fix on single-thread runtime
+    libnoa::git::import::import_git_to_noa(&root, db).await.unwrap();
+
+    assert!(root.join(".noa/noa.redb").exists());
+}
