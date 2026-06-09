@@ -238,7 +238,7 @@ pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
         head_ref.unwrap_or_else(crate::snapshot::empty_snapshot_id);
 
     let ws_mgr = crate::workspace::WorkspaceManager::new(Arc::clone(&db))?;
-    let now = chrono::Utc::now().timestamp_micros() as u64;
+    let now = crate::now_micros();
     ws_mgr
         .create(&crate::workspace::Workspace {
             name: "default".to_string(),

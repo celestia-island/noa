@@ -1823,7 +1823,7 @@ async fn test_duplicate_workspace_create_returns_error() {
     let repo = Repository::init_with_remotes(&root, vec![]).unwrap();
     let ws_mgr = repo.workspace_manager().unwrap();
 
-    let now = chrono::Utc::now().timestamp_micros() as u64;
+    let now = libnoa::now_micros();
     let result = ws_mgr
         .create(&Workspace {
             name: "default".to_string(),

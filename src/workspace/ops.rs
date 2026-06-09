@@ -6,7 +6,7 @@ pub async fn create(
     base_snapshot: &SnapshotId,
     agent_id: Option<String>,
 ) -> Result<Workspace> {
-    let now = chrono::Utc::now().timestamp_micros() as u64;
+    let now = crate::now_micros();
     let ws = Workspace {
         name: name.to_string(),
         head: base_snapshot.clone(),

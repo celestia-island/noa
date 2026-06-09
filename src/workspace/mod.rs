@@ -164,7 +164,7 @@ impl WorkspaceManager {
         let db = self.db.clone();
         let name = name.to_string();
         let new_head = new_head.clone();
-        let now = chrono::Utc::now().timestamp_micros() as u64;
+        let now = crate::now_micros();
         tokio::task::spawn_blocking(move || {
             let txn = redb_err!(db.begin_write())?;
             {
@@ -199,7 +199,7 @@ impl WorkspaceManager {
         let db = self.db.clone();
         let name = name.to_string();
         let new_head = new_head.clone();
-        let now = chrono::Utc::now().timestamp_micros() as u64;
+        let now = crate::now_micros();
         tokio::task::spawn_blocking(move || {
             let txn = redb_err!(db.begin_write())?;
             {

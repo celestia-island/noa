@@ -16,7 +16,7 @@ pub async fn run_create(repo: &Repository, name: &str, agent: Option<&str>) -> R
         None => crate::snapshot::empty_snapshot_id(),
     };
 
-    let now = chrono::Utc::now().timestamp_micros() as u64;
+    let now = crate::now_micros();
     let ws = crate::workspace::Workspace {
         name: name.to_string(),
         head: base_snapshot.clone(),
@@ -176,14 +176,14 @@ pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<
         parents: vec![cur_ws.head.clone(), from_ws.head.clone()],
         workspace: current.clone(),
         author: "noa".to_string(),
-        timestamp: chrono::Utc::now().timestamp_micros() as u64,
+        timestamp: crate::now_micros(),
         message: format!("merge {} into {}", from, current),
     };
 
     snap_store.store(&merge_snapshot).await?;
 
     let log = repo.agent_log(&current)?;
-    let now = chrono::Utc::now().timestamp_micros() as u64;
+    let now = crate::now_micros();
     let new_seq = log
         .append(&crate::log::LogEntry {
             seq: 0,

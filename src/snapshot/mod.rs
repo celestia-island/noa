@@ -60,6 +60,7 @@ pub struct Snapshot {
     pub parents: Vec<SnapshotId>,
     pub workspace: String,
     pub author: String,
+    /// Timestamp in microseconds since Unix epoch
     pub timestamp: u64,
     pub message: String,
 }

@@ -129,7 +129,7 @@ pub async fn run_resolve(
         .as_deref()
         .unwrap_or("?");
 
-    let now = chrono::Utc::now().timestamp_micros() as u64;
+    let now = crate::now_micros();
     let resolved_path = path_filter
         .map(|p| p.to_string())
         .or_else(|| latest_merge.path.clone())

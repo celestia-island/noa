@@ -35,6 +35,7 @@ pub struct LogEntry {
     pub resolved_conflict_theirs_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot_id: Option<String>,
+    /// Timestamp in microseconds since Unix epoch
     pub ts: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,

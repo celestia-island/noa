@@ -14,3 +14,9 @@ pub mod snapshot;
 pub mod sync;
 pub mod tui;
 pub mod workspace;
+
+/// Returns the current timestamp in microseconds since Unix epoch.
+/// This is the standard timestamp unit used across the entire Noa project.
+pub fn now_micros() -> u64 {
+    chrono::Utc::now().timestamp_micros() as u64
+}

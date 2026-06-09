@@ -78,7 +78,7 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
 
         let tree_id = self.object_store.put_tree(&sorted).await?;
 
-        let timestamp = chrono::Utc::now().timestamp_micros() as u64;
+        let timestamp = crate::now_micros();
 
         let id = content_addressed_snapshot_id(&tree_id.0, &parent_ids, workspace);
 
