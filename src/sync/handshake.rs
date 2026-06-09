@@ -38,11 +38,21 @@ pub struct NoaAuthResponse {
 pub fn handle_handshake_request(
     workspace_root: &Path,
     req: &RequestNoaHandshake,
+    expected_token: &str,
 ) -> Result<NoaHandshakeResponse> {
     if !workspace_root.join(".git").exists() {
         return Err(NoaError::Sync(
             "workspace has no git repository, noa requires git".to_string(),
         ));
+    }
+
+    match &req.token {
+        Some(token) if token == expected_token => {}
+        _ => {
+            return Err(NoaError::Sync(
+                "authentication failed: invalid or missing token".to_string(),
+            ));
+        }
     }
 
     let noa_dir = workspace_root.join(".noa");
@@ -264,6 +274,8 @@ mod tests {
         assert!(!branch.is_empty());
     }
 
+    const TEST_TOKEN: &str = "test-token-for-tests";
+
     #[test]
     fn test_handle_handshake_creates_noa() {
         let tmp = TempDir::new().unwrap();
@@ -272,8 +284,9 @@ mod tests {
             workspace_id: "test-ws".to_string(),
             remote_name: "origin".to_string(),
             remote_path: tmp.path().display().to_string(),
+            token: Some(TEST_TOKEN.to_string()),
         };
-        let resp = handle_handshake_request(tmp.path(), &req).unwrap();
+        let resp = handle_handshake_request(tmp.path(), &req, TEST_TOKEN).unwrap();
         assert!(resp.noa_initialized);
         assert!(tmp.path().join(".noa").exists());
     }
@@ -286,9 +299,10 @@ mod tests {
             workspace_id: "test-ws".to_string(),
             remote_name: "origin".to_string(),
             remote_path: tmp.path().display().to_string(),
+            token: Some(TEST_TOKEN.to_string()),
         };
-        handle_handshake_request(tmp.path(), &req).unwrap();
-        let resp2 = handle_handshake_request(tmp.path(), &req).unwrap();
+        handle_handshake_request(tmp.path(), &req, TEST_TOKEN).unwrap();
+        let resp2 = handle_handshake_request(tmp.path(), &req, TEST_TOKEN).unwrap();
         assert!(!resp2.noa_initialized);
     }
 
@@ -299,9 +313,40 @@ mod tests {
             workspace_id: "test-ws".to_string(),
             remote_name: "origin".to_string(),
             remote_path: tmp.path().display().to_string(),
+            token: Some(TEST_TOKEN.to_string()),
         };
-        let result = handle_handshake_request(tmp.path(), &req);
+        let result = handle_handshake_request(tmp.path(), &req, TEST_TOKEN);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_handle_handshake_bad_token_fails() {
+        let tmp = TempDir::new().unwrap();
+        init_git_repo(tmp.path());
+        let req = RequestNoaHandshake {
+            workspace_id: "test-ws".to_string(),
+            remote_name: "origin".to_string(),
+            remote_path: tmp.path().display().to_string(),
+            token: Some("wrong-token".to_string()),
+        };
+        let result = handle_handshake_request(tmp.path(), &req, TEST_TOKEN);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("authentication failed"));
+    }
+
+    #[test]
+    fn test_handle_handshake_missing_token_fails() {
+        let tmp = TempDir::new().unwrap();
+        init_git_repo(tmp.path());
+        let req = RequestNoaHandshake {
+            workspace_id: "test-ws".to_string(),
+            remote_name: "origin".to_string(),
+            remote_path: tmp.path().display().to_string(),
+            token: None,
+        };
+        let result = handle_handshake_request(tmp.path(), &req, TEST_TOKEN);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("authentication failed"));
     }
 
     #[test]

@@ -18,6 +18,7 @@ pub struct RequestNoaHandshake {
     pub workspace_id: String,
     pub remote_name: String,
     pub remote_path: String,
+    pub token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -21,13 +21,30 @@ pub struct SyncServer {
 const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
 const MAX_CONNECTIONS: usize = 32;
 
+fn generate_sync_token() -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+            .to_be_bytes(),
+    );
+    hasher.update(
+        std::process::id().to_be_bytes(),
+    );
+    hex::encode(hasher.finalize())
+}
+
 impl SyncServer {
     pub fn new(socket_path: &Path, workspace_root: &Path, workspace_name: &str) -> Self {
+        let auth_token = std::env::var("NOA_SYNC_TOKEN").unwrap_or_else(|_| generate_sync_token());
         SyncServer {
             socket_path: socket_path.to_path_buf(),
             workspace_root: workspace_root.to_path_buf(),
             workspace_name: workspace_name.to_string(),
-            auth_token: std::env::var("NOA_SYNC_TOKEN").unwrap_or_default(),
+            auth_token,
             authenticated_sessions: Arc::new(Mutex::new(std::collections::HashSet::new())),
         }
     }
@@ -184,12 +201,15 @@ impl SyncServer {
             "noa.handshake" => {
                 let req: RequestNoaHandshake = serde_json::from_value(params)
                     .map_err(|e| NoaError::Serialization(e.to_string()))?;
-                let resp = super::handshake::handle_handshake_request(workspace_root, &req)?;
+                let resp = super::handshake::handle_handshake_request(
+                    workspace_root,
+                    &req,
+                    auth_token,
+                )?;
 
-                if !auth_token.is_empty() {
-                    let mut sessions = authenticated_sessions.lock().await;
-                    sessions.insert(resp.workspace_id.clone());
-                }
+                let mut sessions = authenticated_sessions.lock().await;
+                sessions.insert(resp.workspace_id.clone());
+                drop(sessions);
 
                 Ok(JsonRpcMessage::response(id, serde_json::to_value(resp)?))
             }
@@ -197,7 +217,7 @@ impl SyncServer {
                 let req: NoaAuthRequest = serde_json::from_value(params)
                     .map_err(|e| NoaError::Serialization(e.to_string()))?;
 
-                if !auth_token.is_empty() {
+                {
                     let sessions = authenticated_sessions.lock().await;
                     if !sessions.contains(&req.workspace_id) {
                         return Ok(JsonRpcMessage::error_response(
@@ -234,7 +254,7 @@ impl SyncServer {
                 let sync_msg: NoaEventSyncMessage = serde_json::from_value(params)
                     .map_err(|e| NoaError::Serialization(e.to_string()))?;
 
-                if !auth_token.is_empty() {
+                {
                     let sessions = authenticated_sessions.lock().await;
                     if !sessions.contains(&sync_msg.workspace_id) {
                         return Ok(JsonRpcMessage::error_response(
