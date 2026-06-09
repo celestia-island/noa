@@ -7,7 +7,7 @@ use crate::{
     error::Result,
     ignore::IgnoreMatcher,
     log::{AgentLog, LogEntry, OpType},
-    object::{EntryKind, ObjectStore, TreeEntries, TreeEntry},
+    object::{EntryKind, ObjectStore, TreeEntries, TreeEntry, TreeId},
     snapshot::{content_addressed_snapshot_id, Snapshot, SnapshotId, SnapshotStore},
 };
 
@@ -121,13 +121,114 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
         true
     }
 
+    async fn flatten_base_entries(
+        &self,
+        base: &[TreeEntry],
+        map: &mut BTreeMap<String, TreeEntry>,
+    ) -> Result<()> {
+        let mut stack: Vec<(String, String, EntryKind)> = Vec::new();
+        for entry in base {
+            stack.push((entry.name.clone(), entry.id.clone(), entry.kind));
+        }
+        while let Some((path, id, kind)) = stack.pop() {
+            if kind == EntryKind::Tree {
+                let sub_tree = self.object_store.get_tree(&TreeId(id)).await?;
+                for child in &sub_tree.0 {
+                    let child_path = format!("{}/{}", path, child.name);
+                    stack.push((child_path, child.id.clone(), child.kind));
+                }
+            } else {
+                map.insert(path.clone(), TreeEntry {
+                    name: path,
+                    kind: EntryKind::Blob,
+                    id,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Build a hierarchical tree from a flat map.
+    /// Decomposes into layers by depth, then rebuilds bottom-up, storing sub-trees.
+    /// Avoids async recursion by using a worklist.
+    async fn build_hierarchical_tree(
+        &self,
+        flat_map: &BTreeMap<String, TreeEntry>,
+    ) -> Result<TreeEntries> {
+        // Phase 1: decompose into layers (top-down)
+        let mut layers: Vec<(Vec<TreeEntry>, Vec<(String, Vec<TreeEntry>)>)> = Vec::new();
+        let mut worklist: Vec<Vec<(String, TreeEntry)>> =
+            vec![flat_map.iter().map(|(k, v)| (k.clone(), v.clone())).collect()];
+
+        while let Some(current) = worklist.pop() {
+            let mut roots: Vec<TreeEntry> = Vec::new();
+            let mut dirs: BTreeMap<String, Vec<(String, TreeEntry)>> = BTreeMap::new();
+
+            for (path, mut entry) in current {
+                if let Some((dir, rest)) = path.split_once('/') {
+                    entry.name = rest.to_string();
+                    dirs.entry(dir.to_string())
+                        .or_default()
+                        .push((rest.to_string(), entry));
+                } else {
+                    roots.push(entry);
+                }
+            }
+
+            let mut subdirs: Vec<(String, Vec<TreeEntry>)> = Vec::new();
+            for (dir_name, mut children) in dirs {
+                let needs_deeper = children.iter().any(|(k, _)| k.contains('/'));
+                if needs_deeper {
+                    worklist.push(children.clone());
+                }
+                subdirs.push((dir_name, children.into_iter().map(|(_, e)| e).collect()));
+            }
+
+            layers.push((roots, subdirs));
+        }
+
+        // Phase 2: rebuild bottom-up, storing sub-trees
+        let mut resolved: BTreeMap<String, TreeEntry> = BTreeMap::new();
+
+        for (roots, subdirs) in layers.into_iter().rev() {
+            let mut level_map = BTreeMap::new();
+
+            for entry in roots {
+                level_map.insert(entry.name.clone(), entry);
+            }
+
+            for (dir_name, children) in subdirs {
+                let mut sub_entries = Vec::new();
+                for mut entry in children {
+                    if let Some(resolved_entry) = resolved.remove(&entry.name) {
+                        sub_entries.push(resolved_entry);
+                    } else {
+                        sub_entries.push(entry);
+                    }
+                }
+                let sub_tree = TreeEntries(sub_entries);
+                let tree_id = self.object_store.put_tree(&sub_tree).await?;
+                level_map.insert(dir_name.clone(), TreeEntry {
+                    name: dir_name,
+                    kind: EntryKind::Tree,
+                    id: tree_id.0,
+                });
+            }
+
+            resolved = level_map;
+        }
+
+        Ok(TreeEntries(resolved.into_values().collect()))
+    }
+
     async fn build_tree_from_entries_with_base(
         &self,
         base: &[TreeEntry],
         entries: &[LogEntry],
     ) -> Result<TreeEntries> {
-        let mut tree_map: BTreeMap<String, TreeEntry> =
-            base.iter().map(|e| (e.name.clone(), e.clone())).collect();
+        let mut tree_map: BTreeMap<String, TreeEntry> = BTreeMap::new();
+
+        self.flatten_base_entries(base, &mut tree_map).await?;
 
         for entry in entries {
             match entry.op {
@@ -203,7 +304,7 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
             }
         }
 
-        Ok(TreeEntries(tree_map.into_values().collect()))
+        self.build_hierarchical_tree(&tree_map).await
     }
 }
 
@@ -534,11 +635,24 @@ mod tests {
             .unwrap();
 
         let names: Vec<&str> = tree.0.iter().map(|e| e.name.as_str()).collect();
-        assert!(names.contains(&"src/main.rs"));
-        assert!(names.contains(&"normal/file.rs"));
+        assert!(names.contains(&"src"));
+        assert!(names.contains(&"normal"));
         assert!(!names.iter().any(|n| n.contains("..")));
         assert!(!names.iter().any(|n| n.starts_with('/')));
         assert_eq!(tree.0.len(), 2);
+        // Verify sub-trees contain the expected files
+        if let Some(src_entry) = tree.0.iter().find(|e| e.name == "src") {
+            assert_eq!(src_entry.kind, crate::object::EntryKind::Tree);
+            let src_tree = engine.object_store.get_tree(&TreeId(src_entry.id.clone())).await.unwrap();
+            assert_eq!(src_tree.0.len(), 1);
+            assert_eq!(src_tree.0[0].name, "main.rs");
+        }
+        if let Some(normal_entry) = tree.0.iter().find(|e| e.name == "normal") {
+            assert_eq!(normal_entry.kind, crate::object::EntryKind::Tree);
+            let normal_tree = engine.object_store.get_tree(&TreeId(normal_entry.id.clone())).await.unwrap();
+            assert_eq!(normal_tree.0.len(), 1);
+            assert_eq!(normal_tree.0[0].name, "file.rs");
+        }
     }
 
     #[test]

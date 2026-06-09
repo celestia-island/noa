@@ -108,14 +108,17 @@ impl AgentLog for FileAgentLog {
         let mut assigned_entry = entry.clone();
         assigned_entry.seq = seq;
         let line = format::serialize_entry(&assigned_entry)?;
+        let mut record = line.into_bytes();
+        record.push(b'\n');
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || {
+            use std::io::Write;
             let mut file = OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&path)
                 .map_err(NoaError::Io)?;
-            writeln!(file, "{}", line).map_err(NoaError::Io)?;
+            file.write_all(&record).map_err(NoaError::Io)?;
             file.sync_data().map_err(NoaError::Io)?;
             Ok::<_, NoaError>(seq)
         })
