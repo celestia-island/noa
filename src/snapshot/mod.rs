@@ -50,7 +50,7 @@ pub fn content_addressed_snapshot_id(
     hasher.update(workspace.as_bytes());
     let hash = hasher.finalize();
     let hex_str = hex::encode(hash);
-    SnapshotId(format!("noa_{}", &hex_str[..16]))
+    SnapshotId(format!("noa_{}", &hex_str[..32]))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

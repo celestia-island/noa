@@ -199,7 +199,7 @@ mod tests {
     async fn test_content_addressed_snapshot_id_format() {
         let id = content_addressed_snapshot_id("treehash", &[], "workspace");
         assert!(id.0.starts_with("noa_"));
-        assert_eq!(id.0.len(), 20);
+        assert_eq!(id.0.len(), 36);
     }
 
     #[tokio::test]
