@@ -9,6 +9,31 @@ use crate::{
     snapshot::SnapshotId,
 };
 
+pub fn validate_workspace_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        return Err(NoaError::WorkspaceNotFound(
+            "workspace name must not be empty".to_string(),
+        ));
+    }
+    if name.len() > 255 {
+        return Err(NoaError::WorkspaceNotFound(
+            "workspace name must be at most 255 characters".to_string(),
+        ));
+    }
+    for (i, ch) in name.char_indices() {
+        match ch {
+            '/' | '\\' | '\0' => {
+                return Err(NoaError::WorkspaceNotFound(format!(
+                    "workspace name contains invalid character {:?} at position {}",
+                    ch, i
+                )));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Workspace {
     pub name: String,
@@ -43,6 +68,7 @@ impl WorkspaceManager {
     }
 
     pub async fn create(&self, workspace: &Workspace) -> Result<()> {
+        validate_workspace_name(&workspace.name)?;
         let db = self.db.clone();
         let ws = workspace.clone();
         tokio::task::spawn_blocking(move || {
