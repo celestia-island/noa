@@ -297,4 +297,103 @@ mod tests {
         let result = FileAgentLog::open(&tmp.path().join("missing.log"));
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn test_create_on_existing_file_preserves_seq() {
+        let tmp = TempDir::new().unwrap();
+        let log_path = tmp.path().join("seq-test.log");
+        let log = FileAgentLog::create(&log_path).unwrap();
+        log.append(&make_entry(1, OpType::Write, "a.rs", 100))
+            .await
+            .unwrap();
+        log.append(&make_entry(2, OpType::Write, "b.rs", 200))
+            .await
+            .unwrap();
+        log.append(&make_entry(3, OpType::Write, "c.rs", 300))
+            .await
+            .unwrap();
+        drop(log);
+
+        let log2 = FileAgentLog::create(&log_path).unwrap();
+        let next = log2.next_seq().await.unwrap();
+        assert!(next > 3, "create() on existing file must compute next_seq from content, got {}", next);
+
+        let seq = log2.append(&make_entry(4, OpType::Write, "d.rs", 400)).await.unwrap();
+        assert!(seq > 3, "appended seq must be > 3, got {}", seq);
+    }
+
+    #[tokio::test]
+    async fn test_compact_removes_old_entries() {
+        let tmp = TempDir::new().unwrap();
+        let log_path = tmp.path().join("compact.log");
+        let log = FileAgentLog::create(&log_path).unwrap();
+        for i in 1..=5 {
+            log.append(&make_entry(i, OpType::Write, &format!("f{}.rs", i), i * 100))
+                .await
+                .unwrap();
+        }
+
+        log.compact_to(3).await.unwrap();
+
+        let entries = log.read_all().await.unwrap();
+        assert!(entries.iter().all(|e| e.seq > 3));
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_compact_preserves_order() {
+        let tmp = TempDir::new().unwrap();
+        let log_path = tmp.path().join("compact-order.log");
+        let log = FileAgentLog::create(&log_path).unwrap();
+        for i in 1..=10 {
+            log.append(&make_entry(i, OpType::Write, &format!("{}.rs", i), i * 100))
+                .await
+                .unwrap();
+        }
+
+        log.compact_to(7).await.unwrap();
+
+        let entries = log.read_all().await.unwrap();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].seq, 8);
+        assert_eq!(entries[1].seq, 9);
+        assert_eq!(entries[2].seq, 10);
+    }
+
+    #[tokio::test]
+    async fn test_compact_then_append() {
+        let tmp = TempDir::new().unwrap();
+        let log_path = tmp.path().join("compact-append.log");
+        let log = FileAgentLog::create(&log_path).unwrap();
+        for i in 1..=4 {
+            log.append(&make_entry(i, OpType::Write, &format!("{}.rs", i), i * 100))
+                .await
+                .unwrap();
+        }
+
+        log.compact_to(2).await.unwrap();
+
+        let seq = log.append(&make_entry(5, OpType::Write, "new.rs", 500)).await.unwrap();
+        assert!(seq > 4, "seq after compact+append must be > 4, got {}", seq);
+
+        let entries = log.read_all().await.unwrap();
+        assert_eq!(entries.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_compact_to_zero_removes_all() {
+        let tmp = TempDir::new().unwrap();
+        let log_path = tmp.path().join("compact-zero.log");
+        let log = FileAgentLog::create(&log_path).unwrap();
+        for i in 1..=3 {
+            log.append(&make_entry(i, OpType::Write, &format!("{}.rs", i), i * 100))
+                .await
+                .unwrap();
+        }
+
+        log.compact_to(3).await.unwrap();
+
+        let entries = log.read_all().await.unwrap();
+        assert!(entries.is_empty());
+    }
 }

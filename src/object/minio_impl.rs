@@ -25,19 +25,29 @@ impl MinioObjectStore {
             .unwrap_or(endpoint);
 
         let host_port = without_scheme.split('/').next().unwrap_or(without_scheme);
-        let host = host_port.split(':').next().unwrap_or(host_port);
+        let host = if host_port.starts_with('[') {
+            host_port
+                .trim_start_matches('[')
+                .split(']')
+                .next()
+                .unwrap_or(host_port)
+        } else {
+            host_port.split(':').next().unwrap_or(host_port)
+        };
 
         let blocked = [
             "169.254.169.254",
             "metadata.google.internal",
             "metadata",
             "100.100.100.200",
+            "localhost",
         ];
         for &b in &blocked {
             if host == b {
                 return Err(NoaError::Config(format!("blocked SSRF endpoint: {}", host)));
             }
         }
+
         if let Ok(ip) = host.parse::<std::net::IpAddr>() {
             match ip {
                 std::net::IpAddr::V4(v4) => {
@@ -215,5 +225,53 @@ impl ObjectStore for MinioObjectStore {
             .send()
             .await;
         Ok(result.is_ok())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_endpoint_blocks_aws_metadata() {
+        assert!(MinioObjectStore::validate_endpoint("http://169.254.169.254/latest").is_err());
+    }
+
+    #[test]
+    fn test_validate_endpoint_blocks_google_metadata() {
+        assert!(MinioObjectStore::validate_endpoint("http://metadata.google.internal").is_err());
+    }
+
+    #[test]
+    fn test_validate_endpoint_blocks_alicloud_metadata() {
+        assert!(MinioObjectStore::validate_endpoint("http://100.100.100.200/latest").is_err());
+    }
+
+    #[test]
+    fn test_validate_endpoint_blocks_loopback() {
+        assert!(MinioObjectStore::validate_endpoint("http://127.0.0.1:9000").is_err());
+        assert!(MinioObjectStore::validate_endpoint("http://localhost:9000").is_err());
+    }
+
+    #[test]
+    fn test_validate_endpoint_blocks_private_ip() {
+        assert!(MinioObjectStore::validate_endpoint("http://10.0.0.1:9000").is_err());
+        assert!(MinioObjectStore::validate_endpoint("http://172.16.0.1:9000").is_err());
+        assert!(MinioObjectStore::validate_endpoint("http://192.168.1.1:9000").is_err());
+    }
+
+    #[test]
+    fn test_validate_endpoint_blocks_ipv6_loopback() {
+        assert!(MinioObjectStore::validate_endpoint("http://[::1]:9000").is_err());
+    }
+
+    #[test]
+    fn test_validate_endpoint_allows_public_ip() {
+        assert!(MinioObjectStore::validate_endpoint("http://1.2.3.4:9000").is_ok());
+    }
+
+    #[test]
+    fn test_validate_endpoint_allows_domain() {
+        assert!(MinioObjectStore::validate_endpoint("https://minio.example.com").is_ok());
     }
 }

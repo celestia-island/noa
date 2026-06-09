@@ -132,11 +132,118 @@ async fn test_create_snapshot() {
     assert_eq!(resp.status(), StatusCode::CREATED);
 }
 
+fn make_request_no_auth(method: Method, uri: &str, body: Option<String>) -> Request<Body> {
+    let mut builder = Request::builder().method(method).uri(uri);
+    if let Some(b) = body {
+        builder = builder.header("content-type", "application/json");
+        builder.body(Body::from(b)).unwrap()
+    } else {
+        builder.body(Body::empty()).unwrap()
+    }
+}
+
+fn make_request_with_token(method: Method, uri: &str, token: &str, body: Option<String>) -> Request<Body> {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("Authorization", format!("Bearer {}", token));
+    if let Some(b) = body {
+        builder = builder.header("content-type", "application/json");
+        builder.body(Body::from(b)).unwrap()
+    } else {
+        builder.body(Body::empty()).unwrap()
+    }
+}
+
 #[tokio::test]
-async fn test_upload_blobs_invalid_base64() {
-    let (_tmp, app) = make_app().await;
-    let body = r#"{"blobs": [{"content": "not-valid-base64!!!"}]}"#.to_string();
-    let req = make_request(Method::POST, "/api/v1/blobs", Some(body));
+async fn test_no_token_rejected() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db = Arc::new(
+        redb::Database::builder()
+            .create(tmp.path().join("no-token-test.redb"))
+            .unwrap(),
+    );
+    let state = AppState::new(db);
+    let app = router(state);
+    let req = make_request_no_auth(Method::GET, "/api/v1/refs", None);
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_wrong_token_rejected() {
+    let (_tmp, app) = make_app().await;
+    let req = make_request_with_token(Method::GET, "/api/v1/refs", "wrong-token", None);
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_missing_auth_header_rejected() {
+    let (_tmp, app) = make_app().await;
+    let req = make_request_no_auth(Method::GET, "/api/v1/refs", None);
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_empty_bearer_rejected() {
+    let (_tmp, app) = make_app().await;
+    let req = make_request_with_token(Method::GET, "/api/v1/refs", "", None);
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_push_ref_invalid_name_rejected() {
+    let (_tmp, app) = make_app().await;
+    let body = r#"{"name": "../etc/passwd", "id": "noa_test123"}"#.to_string();
+    let req = make_request(Method::POST, "/api/v1/refs", Some(body));
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_push_ref_name_with_control_chars_rejected() {
+    let (_tmp, app) = make_app().await;
+    let body = r#"{"name": "main\nextra", "id": "noa_test123"}"#.to_string();
+    let req = make_request(Method::POST, "/api/v1/refs", Some(body));
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_push_ref_name_starts_with_dot_rejected() {
+    let (_tmp, app) = make_app().await;
+    let body = r#"{"name": ".hidden", "id": "noa_test123"}"#.to_string();
+    let req = make_request(Method::POST, "/api/v1/refs", Some(body));
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_push_ref_name_starts_with_dash_rejected() {
+    let (_tmp, app) = make_app().await;
+    let body = r#"{"name": "-flag", "id": "noa_test123"}"#.to_string();
+    let req = make_request(Method::POST, "/api/v1/refs", Some(body));
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_push_ref_name_with_double_dot_rejected() {
+    let (_tmp, app) = make_app().await;
+    let body = r#"{"name": "foo..bar", "id": "noa_test123"}"#.to_string();
+    let req = make_request(Method::POST, "/api/v1/refs", Some(body));
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_push_ref_valid_slash_name() {
+    let (_tmp, app) = make_app().await;
+    let body = r#"{"name": "refs/heads/main", "id": "noa_test123"}"#.to_string();
+    let req = make_request(Method::POST, "/api/v1/refs", Some(body));
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
 }

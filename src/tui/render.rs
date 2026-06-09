@@ -479,4 +479,40 @@ mod tests {
 
         assert_ne!(buf1, buf2);
     }
+
+    #[test]
+    fn test_utf8_long_message_no_panic() {
+        let mut app = make_log_app();
+        app.snapshots.push(make_snap(
+            "noa_cjk",
+            "default",
+            &"你好世界".repeat(20),
+            1_000_002_000_000_000,
+        ));
+        app.snapshots.push(make_snap(
+            "noa_emoji",
+            "default",
+            &"🎉🚀💎".repeat(20),
+            1_000_003_000_000_000,
+        ));
+        app.log_scroll.set_total(app.snapshots.len());
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn test_utf8_long_id_no_panic() {
+        let mut app = make_log_app();
+        app.snapshots.push(make_snap(
+            &"你好".repeat(20),
+            "default",
+            "normal message",
+            1_000_004_000_000_000,
+        ));
+        app.log_scroll.set_total(app.snapshots.len());
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+    }
 }

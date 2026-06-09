@@ -74,3 +74,36 @@ pub fn router(state: AppState) -> Router {
         ))
         .with_state(state)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_constant_time_eq_equal() {
+        assert!(constant_time_eq(b"hello", b"hello"));
+        assert!(constant_time_eq(b"", b""));
+        assert!(constant_time_eq(b"a", b"a"));
+    }
+
+    #[test]
+    fn test_constant_time_eq_not_equal() {
+        assert!(!constant_time_eq(b"hello", b"world"));
+        assert!(!constant_time_eq(b"hello", b"hellp"));
+    }
+
+    #[test]
+    fn test_constant_time_eq_different_lengths() {
+        assert!(!constant_time_eq(b"short", b"longer"));
+        assert!(!constant_time_eq(b"", b"a"));
+        assert!(!constant_time_eq(b"a", b""));
+    }
+
+    #[test]
+    fn test_constant_time_eq_single_bit_diff() {
+        let a = b"test";
+        let mut b = b"test".to_vec();
+        b[3] ^= 1;
+        assert!(!constant_time_eq(a, &b));
+    }
+}

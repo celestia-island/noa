@@ -484,4 +484,92 @@ mod tests {
         assert_eq!(tree.0.len(), 1);
         assert_eq!(tree.0[0].name, "important.log");
     }
+
+    #[tokio::test]
+    async fn test_path_traversal_entries_skipped() {
+        let tmp = TempDir::new().unwrap();
+        let db = Arc::new(
+            redb::Database::builder()
+                .create(tmp.path().join("test.redb"))
+                .unwrap(),
+        );
+
+        let log = FileAgentLog::create(&tmp.path().join("test.log")).unwrap();
+        let snapshot_store = RedbSnapshotStore::new(Arc::clone(&db)).unwrap();
+        let object_store = RedbObjectStore::new(db).unwrap();
+
+        let engine = SnapshotEngine::new(log, snapshot_store, object_store);
+
+        engine
+            .log
+            .append(&write_entry(1, "src/main.rs", "h1", 100))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&write_entry(2, "../../../etc/passwd", "h2", 200))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&write_entry(3, "/absolute/path.rs", "h3", 300))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&write_entry(4, "normal/file.rs", "h4", 400))
+            .await
+            .unwrap();
+
+        let snap = engine
+            .compute("default", vec![], 0, "test", "traversal test")
+            .await
+            .unwrap();
+
+        let tree = engine
+            .object_store
+            .get_tree(&crate::object::TreeId(snap.tree_hash))
+            .await
+            .unwrap();
+
+        let names: Vec<&str> = tree.0.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"src/main.rs"));
+        assert!(names.contains(&"normal/file.rs"));
+        assert!(!names.iter().any(|n| n.contains("..")));
+        assert!(!names.iter().any(|n| n.starts_with('/')));
+        assert_eq!(tree.0.len(), 2);
+    }
+
+    #[test]
+    fn test_is_path_within_root_valid() {
+        assert!(SnapshotEngine::<
+            crate::log::FileAgentLog,
+            crate::snapshot::RedbSnapshotStore,
+            crate::object::RedbObjectStore,
+        >::is_path_within_root(PathBuf::from("src/main.rs").as_path()));
+        assert!(SnapshotEngine::<
+            crate::log::FileAgentLog,
+            crate::snapshot::RedbSnapshotStore,
+            crate::object::RedbObjectStore,
+        >::is_path_within_root(PathBuf::from("a/b/c").as_path()));
+    }
+
+    #[test]
+    fn test_is_path_within_root_traversal() {
+        assert!(!SnapshotEngine::<
+            crate::log::FileAgentLog,
+            crate::snapshot::RedbSnapshotStore,
+            crate::object::RedbObjectStore,
+        >::is_path_within_root(PathBuf::from("../etc/passwd").as_path()));
+        assert!(!SnapshotEngine::<
+            crate::log::FileAgentLog,
+            crate::snapshot::RedbSnapshotStore,
+            crate::object::RedbObjectStore,
+        >::is_path_within_root(PathBuf::from("/absolute").as_path()));
+        assert!(!SnapshotEngine::<
+            crate::log::FileAgentLog,
+            crate::snapshot::RedbSnapshotStore,
+            crate::object::RedbObjectStore,
+        >::is_path_within_root(PathBuf::from("foo/../../bar").as_path()));
+    }
 }

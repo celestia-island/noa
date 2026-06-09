@@ -72,4 +72,38 @@ mod tests {
         let entries = deserialize_entries(content).unwrap();
         assert_eq!(entries.len(), 1);
     }
+
+    #[test]
+    fn test_deserialize_entries_skips_corrupted_lines() {
+        let content = r#"{"seq":1,"op":"write","path":"a.rs","ts":100}
+CORRUPTED LINE NOT JSON
+{"seq":2,"op":"delete","path":"b.rs","ts":200}
+also not valid {json
+{"seq":3,"op":"write","path":"c.rs","ts":300}
+"#;
+        let entries = deserialize_entries(content).unwrap();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].seq, 1);
+        assert_eq!(entries[1].seq, 2);
+        assert_eq!(entries[2].seq, 3);
+    }
+
+    #[test]
+    fn test_deserialize_entries_all_corrupted_returns_empty() {
+        let content = "not json\nalso not json\n";
+        let entries = deserialize_entries(content).unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_deserialize_entries_empty_content() {
+        let entries = deserialize_entries("").unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_deserialize_entries_only_blank_lines() {
+        let entries = deserialize_entries("\n\n\n").unwrap();
+        assert!(entries.is_empty());
+    }
 }

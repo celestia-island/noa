@@ -144,3 +144,90 @@ impl App {
         self.snapshots.get(idx)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn make_test_app() -> App {
+        App {
+            mode: AppMode::Log,
+            focus: Focus::Log,
+            branches: vec![],
+            snapshots: vec![],
+            current_branch: "default".to_string(),
+            branch_scroll: crate::tui::VirtualScroll::new(0),
+            log_scroll: crate::tui::VirtualScroll::new(0),
+            should_quit: false,
+        }
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn test_quit_on_q() {
+        let mut app = make_test_app();
+        let result = app.handle_key(key(KeyCode::Char('q')));
+        assert!(result);
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn test_quit_on_esc() {
+        let mut app = make_test_app();
+        let result = app.handle_key(key(KeyCode::Esc));
+        assert!(result);
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn test_tab_cycles_focus_in_log_mode() {
+        let mut app = make_test_app();
+        assert_eq!(app.focus, Focus::Log);
+        app.handle_key(key(KeyCode::Tab));
+        assert_eq!(app.focus, Focus::Detail);
+        app.handle_key(key(KeyCode::Tab));
+        assert_eq!(app.focus, Focus::Log);
+    }
+
+    #[test]
+    fn test_enter_focuses_detail_in_log_mode() {
+        let mut app = make_test_app();
+        app.mode = AppMode::Log;
+        app.focus = Focus::Log;
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.focus, Focus::Detail);
+    }
+
+    #[test]
+    fn test_enter_does_nothing_in_branches_mode() {
+        let mut app = make_test_app();
+        app.mode = AppMode::Branches;
+        app.focus = Focus::Log;
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.focus, Focus::Log);
+    }
+
+    #[test]
+    fn test_ctrl_b_toggles_mode() {
+        let mut app = make_test_app();
+        assert_eq!(app.mode, AppMode::Log);
+        app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        assert_eq!(app.mode, AppMode::Branches);
+        assert_eq!(app.focus, Focus::Branches);
+        app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+        assert_eq!(app.mode, AppMode::Log);
+        assert_eq!(app.focus, Focus::Log);
+    }
+
+    #[test]
+    fn test_unknown_key_does_not_quit() {
+        let mut app = make_test_app();
+        let result = app.handle_key(key(KeyCode::Char('x')));
+        assert!(!result);
+        assert!(!app.should_quit);
+    }
+}

