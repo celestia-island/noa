@@ -184,7 +184,6 @@ pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<
 
     let log = repo.agent_log(&current)?;
     let now = chrono::Utc::now().timestamp_micros() as u64;
-    let first_conflict = conflicts.first();
     let new_seq = log
         .append(&crate::log::LogEntry {
             seq: 0,
@@ -192,8 +191,28 @@ pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<
             path: None,
             blob_id: None,
             from_path: None,
-            resolved_conflict_ours_id: first_conflict.and_then(|c| c.ours_id.clone()),
-            resolved_conflict_theirs_id: first_conflict.and_then(|c| c.theirs_id.clone()),
+            resolved_conflict_ours_id: if conflicts.is_empty() {
+                None
+            } else {
+                Some(
+                    conflicts
+                        .iter()
+                        .filter_map(|c| c.ours_id.as_deref())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                )
+            },
+            resolved_conflict_theirs_id: if conflicts.is_empty() {
+                None
+            } else {
+                Some(
+                    conflicts
+                        .iter()
+                        .filter_map(|c| c.theirs_id.as_deref())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                )
+            },
             snapshot_id: Some(merge_snapshot.id.0.clone()),
             ts: now,
             message: Some(format!("merge {} into {}", from, current)),

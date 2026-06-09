@@ -1853,3 +1853,161 @@ async fn test_update_head_on_existing_workspace_succeeds() {
     let ws = ws_mgr.get("default").await.unwrap().unwrap();
     assert_eq!(ws.head, snap_id);
 }
+
+#[tokio::test]
+async fn test_merge_log_records_all_conflict_ids() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = Repository::init(tmp.path()).unwrap();
+    let ws_mgr = repo.workspace_manager().unwrap();
+    let obj_store = repo.object_store().unwrap();
+    let snap_store = repo.snapshot_store().unwrap();
+
+    // Create base snapshot with two files
+    let default_log = repo.agent_log("default").unwrap();
+    default_log
+        .append(&make_log_entry(1, OpType::Write, "a.rs", Some("base_a"), 100))
+        .await
+        .unwrap();
+    default_log
+        .append(&make_log_entry(2, OpType::Write, "b.rs", Some("base_b"), 200))
+        .await
+        .unwrap();
+    let base_engine = SnapshotEngine::new(default_log, snap_store.clone(), obj_store.clone());
+    let base_snap = base_engine
+        .compute("default", vec![], 0, "author", "base")
+        .await
+        .unwrap();
+    ws_mgr.update_head("default", &base_snap.id).await.unwrap();
+    let base_id = base_snap.id.clone();
+
+    // Create feature workspace with conflicting modifications
+    let feat = Workspace {
+        name: "feature".to_string(),
+        head: base_id.clone(),
+        base: base_id.clone(),
+        agent_id: None,
+        last_seq: 0,
+        created_at: 100,
+        updated_at: 100,
+    };
+    ws_mgr.create(&feat).await.unwrap();
+
+    // Modify both files differently in feature
+    let feat_log = repo.agent_log("feature").unwrap();
+    feat_log
+        .append(&make_log_entry(1, OpType::Write, "a.rs", Some("feat_a"), 300))
+        .await
+        .unwrap();
+    feat_log
+        .append(&make_log_entry(2, OpType::Write, "b.rs", Some("feat_b"), 400))
+        .await
+        .unwrap();
+    let feat_engine = SnapshotEngine::new(feat_log, snap_store.clone(), obj_store.clone());
+    let feat_snap = feat_engine
+        .compute("feature", vec![base_id.clone()], 0, "author", "feat changes")
+        .await
+        .unwrap();
+    ws_mgr.update_head("feature", &feat_snap.id).await.unwrap();
+
+    // Modify both files differently in default too (to create conflicts on merge)
+    let default_log = repo.agent_log("default").unwrap();
+    default_log
+        .append(&make_log_entry(3, OpType::Write, "a.rs", Some("default_a"), 500))
+        .await
+        .unwrap();
+    default_log
+        .append(&make_log_entry(4, OpType::Write, "b.rs", Some("default_b"), 600))
+        .await
+        .unwrap();
+    let default_engine = SnapshotEngine::new(default_log, snap_store.clone(), obj_store.clone());
+    let default_snap = default_engine
+        .compute("default", vec![base_id.clone()], 2, "author", "default changes")
+        .await
+        .unwrap();
+    ws_mgr.update_head("default", &default_snap.id).await.unwrap();
+
+    // Merge feature into default - should produce 2 conflicts
+    let merge_result = libnoa::merge::three_way_merge(
+        &obj_store.get_tree(&libnoa::object::TreeId(base_snap.tree_hash)).await.unwrap(),
+        &obj_store.get_tree(&libnoa::object::TreeId(default_snap.tree_hash)).await.unwrap(),
+        &obj_store.get_tree(&libnoa::object::TreeId(feat_snap.tree_hash)).await.unwrap(),
+    )
+    .unwrap();
+    let conflicts = libnoa::merge::extract_conflicts(&merge_result.output);
+    assert_eq!(conflicts.len(), 2, "must have 2 conflicts (a.rs and b.rs)");
+
+    let resolved_tree = merge_result.into_tree_entries(&libnoa::merge::ConflictResolution::Ours);
+    let new_tree_id = obj_store.put_tree(&resolved_tree).await.unwrap();
+    let merge_snap = libnoa::snapshot::Snapshot {
+        id: content_addressed_snapshot_id(
+            &new_tree_id.0,
+            &[default_snap.id.clone(), feat_snap.id.clone()],
+            "default",
+        ),
+        tree_hash: new_tree_id.0,
+        parents: vec![default_snap.id.clone(), feat_snap.id.clone()],
+        workspace: "default".to_string(),
+        author: "test".to_string(),
+        timestamp: 700,
+        message: "merge feature into default".to_string(),
+    };
+    snap_store.store(&merge_snap).await.unwrap();
+
+    let log = repo.agent_log("default").unwrap();
+    let new_seq = log
+        .append(&libnoa::log::LogEntry {
+            seq: 0,
+            op: OpType::Merge,
+            path: None,
+            blob_id: None,
+            from_path: None,
+            resolved_conflict_ours_id: if conflicts.is_empty() {
+                None
+            } else {
+                Some(
+                    conflicts
+                        .iter()
+                        .filter_map(|c| c.ours_id.as_deref())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                )
+            },
+            resolved_conflict_theirs_id: if conflicts.is_empty() {
+                None
+            } else {
+                Some(
+                    conflicts
+                        .iter()
+                        .filter_map(|c| c.theirs_id.as_deref())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                )
+            },
+            snapshot_id: Some(merge_snap.id.0.clone()),
+            ts: 800,
+            message: Some("merge feature into default".to_string()),
+        })
+        .await
+        .unwrap();
+    ws_mgr
+        .update_head_and_seq("default", &merge_snap.id, new_seq)
+        .await
+        .unwrap();
+
+    // Verify the log entry has the resolved conflict IDs for ALL conflicts
+    let entries = log.read_all().await.unwrap();
+    let merge_entry = entries.iter().find(|e| e.op == OpType::Merge).unwrap();
+    assert!(
+        merge_entry.resolved_conflict_ours_id.is_some(),
+        "merge entry should have resolved_conflict_ours_id"
+    );
+    // ours_ids should contain both blob IDs
+    let ours_ids = merge_entry.resolved_conflict_ours_id.as_deref().unwrap_or("");
+    assert!(!ours_ids.is_empty(), "ours_ids should not be empty");
+    assert_eq!(
+        ours_ids.matches(',').count(),
+        1,
+        "ours_ids should contain comma-separated IDs for both conflicts, got: '{}'",
+        ours_ids
+    );
+}
