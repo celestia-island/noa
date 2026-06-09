@@ -336,7 +336,7 @@ pub struct SyncInitResult {
     pub gitignore_updated: bool,
 }
 
-fn get_current_git_branch(workspace_root: &Path) -> Result<String> {
+pub fn get_current_git_branch(workspace_root: &Path) -> Result<String> {
     let output = std::process::Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(workspace_root)

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{NoaError, Result},
-    repo::{manage_gitignore, Repository},
+    repo::{get_current_git_branch, manage_gitignore, Repository},
 };
 
 use super::{NoaAck, RequestNoaHandshake};
@@ -175,22 +175,6 @@ pub fn handle_ready(workspace_id: &str, branch: &str, _snapshot_id: &str) -> Res
         ok: true,
         message: format!("workspace {} ready", workspace_id),
     })
-}
-
-fn get_current_git_branch(workspace_root: &Path) -> Result<String> {
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(workspace_root)
-        .output()
-        .map_err(|e| NoaError::Sync(format!("git rev-parse failed: {}", e)))?;
-
-    if !output.status.success() {
-        return Err(NoaError::Sync(
-            "failed to determine current git branch".to_string(),
-        ));
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 fn create_git_branch(workspace_root: &Path, name: &str, base: &str) -> Result<()> {

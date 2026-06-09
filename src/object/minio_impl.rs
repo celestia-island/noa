@@ -5,7 +5,7 @@ use aws_sdk_s3::{primitives::ByteStream, Client};
 
 use crate::{
     error::{NoaError, Result},
-    object::{BlobId, ObjectStore, TreeEntries, TreeId},
+    object::{sha256_hex, BlobId, ObjectStore, TreeEntries, TreeId},
 };
 
 pub struct MinioObjectStore {
@@ -132,9 +132,7 @@ impl MinioObjectStore {
 #[async_trait]
 impl ObjectStore for MinioObjectStore {
     async fn put_blob(&self, content: &[u8]) -> Result<BlobId> {
-        use sha2::{Digest, Sha256};
-        let hash = hex::encode(Sha256::digest(content));
-        let id = BlobId(hash);
+        let id = BlobId(sha256_hex(content));
 
         self.client
             .put_object()
@@ -181,9 +179,7 @@ impl ObjectStore for MinioObjectStore {
         let data =
             rmp_serde::to_vec(entries).map_err(|e| NoaError::Serialization(e.to_string()))?;
 
-        use sha2::{Digest, Sha256};
-        let hash = hex::encode(Sha256::digest(&data));
-        let id = TreeId(hash);
+        let id = TreeId(sha256_hex(&data));
 
         self.client
             .put_object()

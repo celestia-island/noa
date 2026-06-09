@@ -3,6 +3,7 @@ mod redb_impl;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 pub use minio_impl::MinioObjectStore;
 pub use redb_impl::RedbObjectStore;
@@ -69,6 +70,12 @@ impl TreeEntries {
     pub fn sort(&mut self) {
         self.0.sort_by(|a, b| a.name.cmp(&b.name));
     }
+}
+
+pub fn sha256_hex(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hex::encode(hasher.finalize())
 }
 
 #[async_trait]
