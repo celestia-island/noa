@@ -3,14 +3,12 @@ use std::{
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    sync::Mutex,
 };
 
 use super::{format, AgentLog, LogEntry};
 use crate::error::{NoaError, Result};
 
 pub struct FileAgentLog {
-    file: Mutex<File>,
     path: PathBuf,
     next_seq: std::sync::atomic::AtomicU64,
 }
@@ -20,21 +18,18 @@ impl FileAgentLog {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let file = OpenOptions::new()
+        let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .read(true)
             .open(path)
             .map_err(NoaError::Io)?;
-        let log = FileAgentLog {
-            file: Mutex::new(file),
+        let max_seq = compute_max_seq_from_file(&mut file)?;
+        drop(file);
+        Ok(FileAgentLog {
             path: path.to_path_buf(),
-            next_seq: std::sync::atomic::AtomicU64::new(1),
-        };
-        let max_seq = log.compute_max_seq()?;
-        log.next_seq
-            .store(max_seq + 1, std::sync::atomic::Ordering::SeqCst);
-        Ok(log)
+            next_seq: std::sync::atomic::AtomicU64::new(max_seq + 1),
+        })
     }
 
     pub fn open(path: &Path) -> Result<Self> {
@@ -44,62 +39,24 @@ impl FileAgentLog {
                 format!("log file not found: {}", path.display()),
             )));
         }
-        let file = OpenOptions::new()
+        let mut file = OpenOptions::new()
             .append(true)
             .read(true)
             .open(path)
             .map_err(NoaError::Io)?;
-        let log = FileAgentLog {
-            file: Mutex::new(file),
+        let max_seq = compute_max_seq_from_file(&mut file)?;
+        drop(file);
+        Ok(FileAgentLog {
             path: path.to_path_buf(),
-            next_seq: std::sync::atomic::AtomicU64::new(1),
-        };
-        let max_seq = log.compute_max_seq()?;
-        log.next_seq
-            .store(max_seq + 1, std::sync::atomic::Ordering::SeqCst);
-        Ok(log)
+            next_seq: std::sync::atomic::AtomicU64::new(max_seq + 1),
+        })
     }
+}
 
-    fn compute_max_seq(&self) -> Result<u64> {
-        let mut file = self
-            .file
-            .lock()
-            .map_err(|e| NoaError::Io(std::io::Error::other(e.to_string())))?;
+fn compute_max_seq_from_file(file: &mut File) -> Result<u64> {
+    let file_len = file.seek(SeekFrom::End(0))?;
 
-        let file_len = file.seek(SeekFrom::End(0))?;
-
-        // For small files, read all is fast enough
-        if file_len < 65536 {
-            file.seek(SeekFrom::Start(0))?;
-            let mut content = String::new();
-            file.read_to_string(&mut content)?;
-            for line in content.lines().rev() {
-                if line.trim().is_empty() {
-                    continue;
-                }
-                if let Ok(entry) = format::deserialize_entry(line) {
-                    return Ok(entry.seq);
-                }
-            }
-            return Ok(0);
-        }
-
-        // For large files, read only the last 8KB to find the last entry
-        let read_size = 8192u64.min(file_len);
-        file.seek(SeekFrom::End(-(read_size as i64)))?;
-        let mut tail = vec![0u8; read_size as usize];
-        file.read_exact(&mut tail)?;
-        let tail_str = String::from_utf8_lossy(&tail);
-        for line in tail_str.lines().rev() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            if let Ok(entry) = format::deserialize_entry(trimmed) {
-                return Ok(entry.seq);
-            }
-        }
-        // Fallback: no valid entry found in tail, read entire file
+    if file_len < 65536 {
         file.seek(SeekFrom::Start(0))?;
         let mut content = String::new();
         file.read_to_string(&mut content)?;
@@ -111,8 +68,35 @@ impl FileAgentLog {
                 return Ok(entry.seq);
             }
         }
-        Ok(0)
+        return Ok(0);
     }
+
+    let read_size = 8192u64.min(file_len);
+    file.seek(SeekFrom::End(-(read_size as i64)))?;
+    let mut tail = vec![0u8; read_size as usize];
+    file.read_exact(&mut tail)?;
+    let tail_str = String::from_utf8_lossy(&tail);
+    for line in tail_str.lines().rev() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Ok(entry) = format::deserialize_entry(trimmed) {
+            return Ok(entry.seq);
+        }
+    }
+    file.seek(SeekFrom::Start(0))?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)?;
+    for line in content.lines().rev() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Ok(entry) = format::deserialize_entry(line) {
+            return Ok(entry.seq);
+        }
+    }
+    Ok(0)
 }
 
 #[async_trait]
@@ -124,13 +108,19 @@ impl AgentLog for FileAgentLog {
         let mut assigned_entry = entry.clone();
         assigned_entry.seq = seq;
         let line = format::serialize_entry(&assigned_entry)?;
-        let mut file = self
-            .file
-            .lock()
-            .map_err(|e| NoaError::Io(std::io::Error::other(e.to_string())))?;
-        writeln!(file, "{}", line)?;
-        file.sync_data()?;
-        Ok(seq)
+        let path = self.path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .map_err(NoaError::Io)?;
+            writeln!(file, "{}", line).map_err(NoaError::Io)?;
+            file.sync_data().map_err(NoaError::Io)?;
+            Ok::<_, NoaError>(seq)
+        })
+        .await
+        .map_err(|e| NoaError::Internal(e.to_string()))?
     }
 
     async fn read_since(&self, seq: u64) -> Result<Vec<LogEntry>> {
@@ -139,14 +129,18 @@ impl AgentLog for FileAgentLog {
     }
 
     async fn read_all(&self) -> Result<Vec<LogEntry>> {
-        let mut file = self
-            .file
-            .lock()
-            .map_err(|e| NoaError::Io(std::io::Error::other(e.to_string())))?;
-        file.seek(SeekFrom::Start(0))?;
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
-        format::deserialize_entries(&content)
+        let path = self.path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut file = OpenOptions::new()
+                .read(true)
+                .open(&path)
+                .map_err(NoaError::Io)?;
+            let mut content = String::new();
+            file.read_to_string(&mut content).map_err(NoaError::Io)?;
+            format::deserialize_entries(&content)
+        })
+        .await
+        .map_err(|e| NoaError::Internal(e.to_string()))?
     }
 
     async fn next_seq(&self) -> Result<u64> {
@@ -154,53 +148,48 @@ impl AgentLog for FileAgentLog {
     }
 
     async fn compact_to(&self, up_to_seq: u64) -> Result<()> {
-        let mut file = self
-            .file
-            .lock()
-            .map_err(|e| NoaError::Io(std::io::Error::other(e.to_string())))?;
-
-        file.seek(SeekFrom::Start(0))?;
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
-        let entries = format::deserialize_entries(&content)?;
-        let remaining: Vec<LogEntry> = entries.into_iter().filter(|e| e.seq > up_to_seq).collect();
-
-        let temp_path = compact_temp_path(&self.path);
-
-        {
-            let mut tmp_file = OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(&temp_path)
+        let path = self.path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut file = OpenOptions::new()
+                .read(true)
+                .open(&path)
                 .map_err(NoaError::Io)?;
+            let mut content = String::new();
+            file.read_to_string(&mut content).map_err(NoaError::Io)?;
+            drop(file);
+            let entries = format::deserialize_entries(&content)?;
+            let remaining: Vec<LogEntry> =
+                entries.into_iter().filter(|e| e.seq > up_to_seq).collect();
 
-            for entry in &remaining {
-                let line = format::serialize_entry(entry)?;
-                writeln!(tmp_file, "{}", line)?;
+            let temp_path = compact_temp_path(&path);
+
+            {
+                let mut tmp_file = OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(&temp_path)
+                    .map_err(NoaError::Io)?;
+
+                for entry in &remaining {
+                    let line = format::serialize_entry(entry)?;
+                    writeln!(tmp_file, "{}", line).map_err(NoaError::Io)?;
+                }
+                tmp_file.sync_all().map_err(NoaError::Io)?;
             }
-            tmp_file.sync_all()?;
-        }
 
-        // Atomic rename on same filesystem: temp → original
-        // If crash occurs before rename: temp file exists, original is untouched
-        // If crash occurs during rename: kernel guarantees either old or new content
-        if let Err(e) = std::fs::rename(&temp_path, &self.path) {
-            let _ = std::fs::remove_file(&temp_path);
-            return Err(NoaError::Io(e));
-        }
+            if let Err(e) = std::fs::rename(&temp_path, &path) {
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(NoaError::Io(e));
+            }
 
-        // Clean up any stale backup from previous interrupted compactions
-        let backup_path = self.path.with_extension("bak");
-        let _ = std::fs::remove_file(&backup_path);
+            let backup_path = path.with_extension("bak");
+            let _ = std::fs::remove_file(&backup_path);
 
-        *file = OpenOptions::new()
-            .append(true)
-            .read(true)
-            .open(&self.path)
-            .map_err(NoaError::Io)?;
-
-        Ok(())
+            Ok(())
+        })
+        .await
+        .map_err(|e| NoaError::Internal(e.to_string()))?
     }
 }
 
@@ -521,15 +510,12 @@ mod tests {
         }
         drop(log);
 
-        // Simulate interrupted compaction: create a stale temp file
         let temp_path = compact_temp_path(&log_path);
         std::fs::write(&temp_path, b"trash data").unwrap();
 
-        // Simulate interrupted compaction with stale .bak file
         let bak_path = log_path.with_extension("bak");
         std::fs::write(&bak_path, b"stale backup").unwrap();
 
-        // Running compaction must clean up stale temp and .bak, and succeed
         let log2 = FileAgentLog::open(&log_path).unwrap();
         log2.compact_to(3).await.unwrap();
 
@@ -537,9 +523,7 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert!(entries.iter().all(|e| e.seq > 3));
 
-        // Verify stale files are cleaned up
         assert!(!temp_path.exists(), "stale temp file should be cleaned up");
-        // .bak should also be removed
         assert!(!bak_path.exists(), "stale .bak file should be cleaned up");
     }
 
@@ -549,7 +533,6 @@ mod tests {
         let log_path = tmp.path().join("large.log");
         let log = FileAgentLog::create(&log_path).unwrap();
 
-        // Write enough entries to exceed 65536 bytes (small file threshold)
         let mut last_seq = 0u64;
         for i in 1..=2000 {
             let entry = LogEntry {
@@ -569,7 +552,6 @@ mod tests {
 
         drop(log);
 
-        // Reopen and verify correct max_seq is computed from tail
         let reopened = FileAgentLog::open(&log_path).unwrap();
         let next = reopened.next_seq().await.unwrap();
         assert!(
