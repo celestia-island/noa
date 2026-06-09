@@ -135,13 +135,33 @@ impl WorkspaceManager {
     }
 
     pub async fn update_head(&self, name: &str, new_head: &SnapshotId) -> Result<()> {
-        let mut ws = self
-            .get(name)
-            .await?
-            .ok_or_else(|| NoaError::WorkspaceNotFound(name.to_string()))?;
-        ws.head = new_head.clone();
-        ws.updated_at = chrono::Utc::now().timestamp_micros() as u64;
-        self.put(&ws).await
+        let db = self.db.clone();
+        let name = name.to_string();
+        let new_head = new_head.clone();
+        let now = chrono::Utc::now().timestamp_micros() as u64;
+        tokio::task::spawn_blocking(move || {
+            let txn = redb_err!(db.begin_write())?;
+            {
+                let mut table = redb_err!(txn.open_table(WORKSPACES))?;
+                let ws_slice = {
+                    let guard = redb_err!(table.get(name.as_str()))?;
+                    guard
+                        .ok_or_else(|| NoaError::WorkspaceNotFound(name.clone()))?
+                        .value()
+                        .to_vec()
+                };
+                let mut ws: Workspace = rmp_serde::from_slice(&ws_slice)
+                    .map_err(|e| NoaError::Serialization(e.to_string()))?;
+                ws.head = new_head;
+                ws.updated_at = now;
+                let data = rmp_serde::to_vec(&ws)
+                    .map_err(|e| NoaError::Serialization(e.to_string()))?;
+                redb_err!(table.insert(name.as_str(), data.as_slice()))?;
+            }
+            redb_err!(txn.commit())
+        })
+        .await
+        .map_err(|e| NoaError::Sync(e.to_string()))?
     }
 
     pub async fn update_head_and_seq(
@@ -150,14 +170,34 @@ impl WorkspaceManager {
         new_head: &SnapshotId,
         last_seq: u64,
     ) -> Result<()> {
-        let mut ws = self
-            .get(name)
-            .await?
-            .ok_or_else(|| NoaError::WorkspaceNotFound(name.to_string()))?;
-        ws.head = new_head.clone();
-        ws.last_seq = last_seq;
-        ws.updated_at = chrono::Utc::now().timestamp_micros() as u64;
-        self.put(&ws).await
+        let db = self.db.clone();
+        let name = name.to_string();
+        let new_head = new_head.clone();
+        let now = chrono::Utc::now().timestamp_micros() as u64;
+        tokio::task::spawn_blocking(move || {
+            let txn = redb_err!(db.begin_write())?;
+            {
+                let mut table = redb_err!(txn.open_table(WORKSPACES))?;
+                let ws_slice = {
+                    let guard = redb_err!(table.get(name.as_str()))?;
+                    guard
+                        .ok_or_else(|| NoaError::WorkspaceNotFound(name.clone()))?
+                        .value()
+                        .to_vec()
+                };
+                let mut ws: Workspace = rmp_serde::from_slice(&ws_slice)
+                    .map_err(|e| NoaError::Serialization(e.to_string()))?;
+                ws.head = new_head;
+                ws.last_seq = last_seq;
+                ws.updated_at = now;
+                let data = rmp_serde::to_vec(&ws)
+                    .map_err(|e| NoaError::Serialization(e.to_string()))?;
+                redb_err!(table.insert(name.as_str(), data.as_slice()))?;
+            }
+            redb_err!(txn.commit())
+        })
+        .await
+        .map_err(|e| NoaError::Sync(e.to_string()))?
     }
 }
 
@@ -380,5 +420,59 @@ mod tests {
         mgr.put(&ws).await.unwrap();
         let got = mgr.get("new-ws").await.unwrap().unwrap();
         assert_eq!(got.name, "new-ws");
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_update_head_is_atomic() {
+        let (_tmp, mgr) = make_manager();
+        mgr.create(&make_workspace("concurrent-ws")).await.unwrap();
+
+        let mgr2 = mgr.clone();
+        let h1 = SnapshotId("noa_head_1".to_string());
+        let h2 = SnapshotId("noa_head_2".to_string());
+
+        let (r1, r2) = tokio::join!(
+            async { mgr.update_head("concurrent-ws", &h1).await },
+            async { mgr2.update_head("concurrent-ws", &h2).await }
+        );
+
+        let successes = vec![&r1, &r2].iter().filter(|r| r.is_ok()).count();
+        assert!(
+            successes >= 1,
+            "at least one update_head must succeed"
+        );
+
+        let ws = mgr.get("concurrent-ws").await.unwrap().unwrap();
+        assert!(
+            ws.head == h1 || ws.head == h2,
+            "head must be one of the concurrent updates, got {}",
+            ws.head
+        );
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_update_head_and_seq_is_atomic() {
+        let (_tmp, mgr) = make_manager();
+        mgr.create(&make_workspace("atomic-ws")).await.unwrap();
+
+        let mgr2 = mgr.clone();
+        let h1 = SnapshotId("noa_head_seq_1".to_string());
+        let h2 = SnapshotId("noa_head_seq_2".to_string());
+
+        let (r1, r2) = tokio::join!(
+            async { mgr.update_head_and_seq("atomic-ws", &h1, 10).await },
+            async { mgr2.update_head_and_seq("atomic-ws", &h2, 20).await }
+        );
+
+        let successes = vec![&r1, &r2].iter().filter(|r| r.is_ok()).count();
+        assert!(successes >= 1);
+
+        let ws = mgr.get("atomic-ws").await.unwrap().unwrap();
+        let expected = if ws.head == h1 { (h1, 10) } else { (h2, 20) };
+        assert_eq!(
+            (ws.head, ws.last_seq),
+            expected,
+            "head and last_seq must be consistent"
+        );
     }
 }
