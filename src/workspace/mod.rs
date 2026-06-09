@@ -385,7 +385,7 @@ mod tests {
             async { mgr.create(&ws1).await },
             async { mgr2.create(&ws2).await }
         );
-        let successes = vec![&r1, &r2].iter().filter(|r| r.is_ok()).count();
+        let successes = [&r1, &r2].iter().filter(|r| r.is_ok()).count();
         assert_eq!(successes, 1);
         let ws = mgr.get("race-ws").await.unwrap().unwrap();
         assert_eq!(ws.name, "race-ws");
@@ -436,7 +436,7 @@ mod tests {
             async { mgr2.update_head("concurrent-ws", &h2).await }
         );
 
-        let successes = vec![&r1, &r2].iter().filter(|r| r.is_ok()).count();
+        let successes = [&r1, &r2].iter().filter(|r| r.is_ok()).count();
         assert!(
             successes >= 1,
             "at least one update_head must succeed"
@@ -464,7 +464,7 @@ mod tests {
             async { mgr2.update_head_and_seq("atomic-ws", &h2, 20).await }
         );
 
-        let successes = vec![&r1, &r2].iter().filter(|r| r.is_ok()).count();
+        let successes = [&r1, &r2].iter().filter(|r| r.is_ok()).count();
         assert!(successes >= 1);
 
         let ws = mgr.get("atomic-ws").await.unwrap().unwrap();

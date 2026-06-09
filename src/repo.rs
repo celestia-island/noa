@@ -11,7 +11,7 @@ use crate::{
     log::FileAgentLog,
     object::RedbObjectStore,
     refs::RedbRefStore,
-    snapshot::{RedbSnapshotStore, SnapshotId},
+    snapshot::RedbSnapshotStore,
     workspace::WorkspaceManager,
 };
 
