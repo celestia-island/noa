@@ -6,7 +6,7 @@ pub use consolidate::Consolidator;
 
 use crate::{
     error::Result,
-    object::{TreeEntries, TreeEntry},
+    object::{EntryKind, ObjectStore, TreeEntries, TreeEntry, TreeId},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,10 +146,158 @@ pub fn extract_conflicts(output: &MergeOutput) -> Vec<FileConflict> {
         .collect()
 }
 
+/// Recursively merge two trees, resolving Tree-typed entries by fetching and
+/// merging their sub-trees. Requires an ObjectStore to load/store sub-trees.
+pub fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
+    base: TreeEntries,
+    ours: TreeEntries,
+    theirs: TreeEntries,
+    object_store: O,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<MergeResult>> + Send>> {
+    Box::pin(async move {
+        let base_map: std::collections::HashMap<String, TreeEntry> =
+            base.0.into_iter().map(|e| (e.name.clone(), e)).collect();
+        let ours_map: std::collections::HashMap<String, TreeEntry> =
+            ours.0.into_iter().map(|e| (e.name.clone(), e)).collect();
+        let theirs_map: std::collections::HashMap<String, TreeEntry> =
+            theirs.0.into_iter().map(|e| (e.name.clone(), e)).collect();
+
+        let mut entries: std::collections::BTreeMap<String, MergedEntry> =
+            std::collections::BTreeMap::new();
+        let mut has_conflicts = false;
+
+        let all_paths: std::collections::BTreeSet<String> = base_map
+            .keys()
+            .chain(ours_map.keys())
+            .chain(theirs_map.keys())
+            .cloned()
+            .collect();
+
+        for path in all_paths {
+            let base_entry = base_map.get(&path);
+            let ours_entry = ours_map.get(&path);
+            let theirs_entry = theirs_map.get(&path);
+
+            // If all three have Tree kind at the same path, recursively merge
+            if base_entry.map_or(false, |e| e.kind == EntryKind::Tree)
+                && ours_entry.map_or(false, |e| e.kind == EntryKind::Tree)
+                && theirs_entry.map_or(false, |e| e.kind == EntryKind::Tree)
+            {
+                let base_sub = object_store.get_tree(&TreeId(base_entry.unwrap().id.clone())).await?;
+                let ours_sub = object_store.get_tree(&TreeId(ours_entry.unwrap().id.clone())).await?;
+                let theirs_sub = object_store.get_tree(&TreeId(theirs_entry.unwrap().id.clone())).await?;
+
+                let sub_result = merge_trees_recursive(
+                    base_sub,
+                    ours_sub,
+                    theirs_sub,
+                    object_store.clone(),
+                )
+                .await?;
+                if sub_result.has_conflicts() {
+                    has_conflicts = true;
+                    entries.insert(
+                        path.clone(),
+                        MergedEntry::Conflict {
+                            ours: ours_entry.cloned(),
+                            theirs: theirs_entry.cloned(),
+                            base: base_entry.cloned(),
+                        },
+                    );
+                } else {
+                    let merged_tree =
+                        sub_result.output.resolve_with_strategy(&ConflictResolution::Ours);
+                    let merged_tree_id = object_store.put_tree(&TreeEntries(merged_tree)).await?;
+                    entries.insert(
+                        path.clone(),
+                        MergedEntry::Clean(TreeEntry {
+                            name: path,
+                            kind: EntryKind::Tree,
+                            id: merged_tree_id.0,
+                        }),
+                    );
+                }
+                continue;
+            }
+
+            enum Change {
+                Unchanged,
+                Modified(TreeEntry),
+                Deleted,
+            }
+
+            let ours_change = match (base_entry, ours_entry) {
+                (None, None) => Change::Unchanged,
+                (None, Some(o)) => Change::Modified((*o).clone()),
+                (Some(b), Some(o)) if b.id != o.id => Change::Modified((*o).clone()),
+                (Some(_), Some(_)) => Change::Unchanged,
+                (Some(_), None) => Change::Deleted,
+            };
+
+            let theirs_change = match (base_entry, theirs_entry) {
+                (None, None) => Change::Unchanged,
+                (None, Some(t)) => Change::Modified((*t).clone()),
+                (Some(b), Some(t)) if b.id != t.id => Change::Modified((*t).clone()),
+                (Some(_), Some(_)) => Change::Unchanged,
+                (Some(_), None) => Change::Deleted,
+            };
+
+            let merged = match (ours_change, theirs_change) {
+                (Change::Unchanged, Change::Unchanged) => {
+                    base_entry.cloned().map(MergedEntry::Clean)
+                }
+                (Change::Modified(o), Change::Unchanged) => Some(MergedEntry::Clean(o)),
+                (Change::Unchanged, Change::Modified(t)) => Some(MergedEntry::Clean(t)),
+                (Change::Deleted, Change::Unchanged) => None,
+                (Change::Unchanged, Change::Deleted) => None,
+                (Change::Modified(o), Change::Deleted) => {
+                    has_conflicts = true;
+                    Some(MergedEntry::Conflict {
+                        ours: Some(o),
+                        theirs: None,
+                        base: base_entry.cloned(),
+                    })
+                }
+                (Change::Deleted, Change::Modified(t)) => {
+                    has_conflicts = true;
+                    Some(MergedEntry::Conflict {
+                        ours: None,
+                        theirs: Some(t),
+                        base: base_entry.cloned(),
+                    })
+                }
+                (Change::Modified(o), Change::Modified(t)) => {
+                    if o.id == t.id {
+                        Some(MergedEntry::Clean(o))
+                    } else {
+                        has_conflicts = true;
+                        Some(MergedEntry::Conflict {
+                            ours: Some(o),
+                            theirs: Some(t),
+                            base: base_entry.cloned(),
+                        })
+                    }
+                }
+                (Change::Deleted, Change::Deleted) => None,
+            };
+
+            if let Some(m) = merged {
+                entries.insert(path, m);
+            }
+        }
+
+        Ok(MergeResult {
+            output: MergeOutput {
+                entries: entries.into_values().collect(),
+                has_conflicts,
+            },
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::object::EntryKind;
 
     fn entry(name: &str, id: &str) -> TreeEntry {
         TreeEntry {
