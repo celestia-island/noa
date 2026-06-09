@@ -75,6 +75,8 @@ impl MinioObjectStore {
                 std::net::IpAddr::V6(v6) => {
                     if v6.is_loopback()
                         || v6.is_multicast()
+                        || v6.octets()[0] == 0xfc
+                        || v6.octets()[0] == 0xfd
                     {
                         return Err(NoaError::Config(format!(
                             "endpoint resolves to forbidden IPv6: {}",
@@ -269,5 +271,12 @@ mod tests {
     #[test]
     fn test_validate_endpoint_allows_domain() {
         assert!(MinioObjectStore::validate_endpoint("https://minio.example.com").is_ok());
+    }
+
+    #[test]
+    fn test_validate_endpoint_blocks_ipv6_ula() {
+        assert!(MinioObjectStore::validate_endpoint("http://[fc00::1]:9000").is_err());
+        assert!(MinioObjectStore::validate_endpoint("http://[fd00::1]:9000").is_err());
+        assert!(MinioObjectStore::validate_endpoint("http://[fd12:3456::1]:9000").is_err());
     }
 }

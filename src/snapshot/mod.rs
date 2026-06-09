@@ -20,7 +20,7 @@ impl SnapshotId {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0 == EMPTY_SNAPSHOT || self.0.starts_with(EMPTY_SNAPSHOT)
+        self.0 == EMPTY_SNAPSHOT
     }
 }
 

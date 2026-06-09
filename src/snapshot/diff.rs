@@ -19,11 +19,21 @@ pub fn diff_snapshots(
 ) -> Vec<FileDiff> {
     let mut diffs = Vec::new();
 
-    let old_map: std::collections::HashMap<&str, &crate::object::TreeEntry> =
-        old_entries.iter().map(|e| (e.name.as_str(), e)).collect();
+    let mut old_map: std::collections::HashMap<&str, &crate::object::TreeEntry> =
+        std::collections::HashMap::new();
+    for e in old_entries {
+        if old_map.insert(e.name.as_str(), e).is_some() {
+            tracing::warn!("duplicate entry in old tree: {}", e.name);
+        }
+    }
 
-    let new_map: std::collections::HashMap<&str, &crate::object::TreeEntry> =
-        new_entries.iter().map(|e| (e.name.as_str(), e)).collect();
+    let mut new_map: std::collections::HashMap<&str, &crate::object::TreeEntry> =
+        std::collections::HashMap::new();
+    for e in new_entries {
+        if new_map.insert(e.name.as_str(), e).is_some() {
+            tracing::warn!("duplicate entry in new tree: {}", e.name);
+        }
+    }
 
     for entry in new_entries {
         match old_map.get(entry.name.as_str()) {
