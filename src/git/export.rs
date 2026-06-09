@@ -1,4 +1,8 @@
-use std::{path::Path, process::Command, sync::Arc};
+use std::{
+    path::{Component, Path, PathBuf},
+    process::Command,
+    sync::Arc,
+};
 
 use crate::{
     error::{NoaError, Result},
@@ -7,13 +11,33 @@ use crate::{
     snapshot::{RedbSnapshotStore, SnapshotStore},
 };
 
+fn is_safe_relative_path(path: &str) -> bool {
+    let pb = PathBuf::from(path);
+    for comp in pb.components() {
+        match comp {
+            Component::Normal(_) => {}
+            Component::CurDir => {}
+            _ => return false,
+        }
+    }
+    !path.is_empty()
+}
+
 pub fn validate_git_url(url: &str) -> Result<()> {
     if url.is_empty() {
         return Err(NoaError::Remote("empty URL".to_string()));
     }
+    if url.starts_with('-') {
+        return Err(NoaError::Remote("URL must not start with '-'".to_string()));
+    }
     if url.contains('\0') || url.contains('\n') || url.contains('\r') {
         return Err(NoaError::Remote(
             "URL contains control characters".to_string(),
+        ));
+    }
+    if url.starts_with("ext::") {
+        return Err(NoaError::Remote(
+            "ext:: transport is not allowed for security reasons".to_string(),
         ));
     }
     let looks_valid = url.starts_with("https://")
@@ -21,13 +45,18 @@ pub fn validate_git_url(url: &str) -> Result<()> {
         || url.starts_with("git://")
         || url.starts_with("ssh://")
         || url.starts_with("file:///")
-        || (url.contains(':') && !url.starts_with('-'))
         || url.starts_with('/');
     if !looks_valid {
-        return Err(NoaError::Remote(format!("invalid git URL format: {}", url)));
-    }
-    if url.starts_with('-') {
-        return Err(NoaError::Remote("URL must not start with '-'".to_string()));
+        let has_scp_syntax = url.contains(':')
+            && !url.contains("://")
+            && url.split_once(':').map_or(false, |(before, _)| {
+                !before.is_empty()
+                    && !before.contains('/')
+                    && !before.starts_with('-')
+            });
+        if !has_scp_syntax {
+            return Err(NoaError::Remote(format!("invalid git URL format: {}", url)));
+        }
     }
     Ok(())
 }
@@ -106,7 +135,24 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
         .await?;
 
     for entry in &tree.0 {
+        if !is_safe_relative_path(&entry.name) {
+            tracing::warn!(
+                "skipping unsafe path in export tree entry: {}",
+                entry.name
+            );
+            continue;
+        }
         let file_path = repo_root.join(&entry.name);
+        let canonical_root = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
+        if let Ok(canonical_file) = file_path.parent().and_then(|p| p.canonicalize().ok()) {
+            if !canonical_file.starts_with(&canonical_root) {
+                tracing::warn!(
+                    "skipping path traversal in export tree entry: {}",
+                    entry.name
+                );
+                continue;
+            }
+        }
         if let Some(parent) = file_path.parent() {
             std::fs::create_dir_all(parent)?;
         }

@@ -38,6 +38,7 @@ pub async fn run_push(remote_name: &str) -> Result<()> {
     drop(repo);
     crate::git::export_noa_to_git(&root, db).await?;
 
+    crate::git::export::validate_git_url(&remote.url)?;
     let output = std::process::Command::new("git")
         .args(["push", &remote.url])
         .current_dir(&root)
@@ -65,6 +66,7 @@ pub async fn run_pull(remote_name: &str) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("remote '{}' not found", remote_name))?
         .clone();
 
+    crate::git::export::validate_git_url(&remote.url)?;
     let output = std::process::Command::new("git")
         .args(["pull", &remote.url])
         .current_dir(&root)
