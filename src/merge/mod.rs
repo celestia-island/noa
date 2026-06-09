@@ -148,51 +148,50 @@ pub fn extract_conflicts(output: &MergeOutput) -> Vec<FileConflict> {
 
 /// Recursively merge two trees, resolving Tree-typed entries by fetching and
 /// merging their sub-trees. Requires an ObjectStore to load/store sub-trees.
-pub fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
+pub async fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
     base: TreeEntries,
     ours: TreeEntries,
     theirs: TreeEntries,
     object_store: O,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<MergeResult>> + Send>> {
-    Box::pin(async move {
-        let base_map: std::collections::HashMap<String, TreeEntry> =
-            base.0.into_iter().map(|e| (e.name.clone(), e)).collect();
-        let ours_map: std::collections::HashMap<String, TreeEntry> =
-            ours.0.into_iter().map(|e| (e.name.clone(), e)).collect();
-        let theirs_map: std::collections::HashMap<String, TreeEntry> =
-            theirs.0.into_iter().map(|e| (e.name.clone(), e)).collect();
+) -> Result<MergeResult> {
+    let base_map: std::collections::HashMap<String, TreeEntry> =
+        base.0.into_iter().map(|e| (e.name.clone(), e)).collect();
+    let ours_map: std::collections::HashMap<String, TreeEntry> =
+        ours.0.into_iter().map(|e| (e.name.clone(), e)).collect();
+    let theirs_map: std::collections::HashMap<String, TreeEntry> =
+        theirs.0.into_iter().map(|e| (e.name.clone(), e)).collect();
 
-        let mut entries: std::collections::BTreeMap<String, MergedEntry> =
-            std::collections::BTreeMap::new();
-        let mut has_conflicts = false;
+    let mut entries: std::collections::BTreeMap<String, MergedEntry> =
+        std::collections::BTreeMap::new();
+    let mut has_conflicts = false;
 
-        let all_paths: std::collections::BTreeSet<String> = base_map
-            .keys()
-            .chain(ours_map.keys())
-            .chain(theirs_map.keys())
-            .cloned()
-            .collect();
+    let all_paths: std::collections::BTreeSet<String> = base_map
+        .keys()
+        .chain(ours_map.keys())
+        .chain(theirs_map.keys())
+        .cloned()
+        .collect();
 
-        for path in all_paths {
-            let base_entry = base_map.get(&path);
-            let ours_entry = ours_map.get(&path);
-            let theirs_entry = theirs_map.get(&path);
+    for path in all_paths {
+        let base_entry = base_map.get(&path);
+        let ours_entry = ours_map.get(&path);
+        let theirs_entry = theirs_map.get(&path);
 
-            // If all three have Tree kind at the same path, recursively merge
-            if base_entry.map_or(false, |e| e.kind == EntryKind::Tree)
-                && ours_entry.map_or(false, |e| e.kind == EntryKind::Tree)
-                && theirs_entry.map_or(false, |e| e.kind == EntryKind::Tree)
+        if let (Some(base), Some(ours), Some(theirs)) = (base_entry, ours_entry, theirs_entry) {
+            if base.kind == EntryKind::Tree
+                && ours.kind == EntryKind::Tree
+                && theirs.kind == EntryKind::Tree
             {
-                let base_sub = object_store.get_tree(&TreeId(base_entry.unwrap().id.clone())).await?;
-                let ours_sub = object_store.get_tree(&TreeId(ours_entry.unwrap().id.clone())).await?;
-                let theirs_sub = object_store.get_tree(&TreeId(theirs_entry.unwrap().id.clone())).await?;
+                let base_sub = object_store.get_tree(&TreeId(base.id.clone())).await?;
+                let ours_sub = object_store.get_tree(&TreeId(ours.id.clone())).await?;
+                let theirs_sub = object_store.get_tree(&TreeId(theirs.id.clone())).await?;
 
-                let sub_result = merge_trees_recursive(
+                let sub_result = Box::pin(merge_trees_recursive(
                     base_sub,
                     ours_sub,
                     theirs_sub,
                     object_store.clone(),
-                )
+                ))
                 .await?;
                 if sub_result.has_conflicts() {
                     has_conflicts = true;
@@ -205,8 +204,9 @@ pub fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
                         },
                     );
                 } else {
-                    let merged_tree =
-                        sub_result.output.resolve_with_strategy(&ConflictResolution::Ours);
+                    let merged_tree = sub_result
+                        .output
+                        .resolve_with_strategy(&ConflictResolution::Ours);
                     let merged_tree_id = object_store.put_tree(&TreeEntries(merged_tree)).await?;
                     entries.insert(
                         path.clone(),
@@ -285,13 +285,13 @@ pub fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
                 entries.insert(path, m);
             }
         }
+    }
 
-        Ok(MergeResult {
-            output: MergeOutput {
-                entries: entries.into_values().collect(),
-                has_conflicts,
-            },
-        })
+    Ok(MergeResult {
+        output: MergeOutput {
+            entries: entries.into_values().collect(),
+            has_conflicts,
+        },
     })
 }
 

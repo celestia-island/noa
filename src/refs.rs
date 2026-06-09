@@ -62,7 +62,9 @@ impl RefStore for RedbRefStore {
                 }
                 None => Ok(None),
             }
-        }).await.map_err(|e| NoaError::Internal(e.to_string()))?
+        })
+        .await
+        .map_err(|e| NoaError::Internal(e.to_string()))?
     }
 
     async fn cas(&self, name: &str, old: Option<&SnapshotId>, new: &SnapshotId) -> Result<bool> {
@@ -104,7 +106,9 @@ impl RefStore for RedbRefStore {
                     Err(NoaError::Redb(e.to_string()))
                 }
             }
-        }).await.map_err(|e| NoaError::Internal(e.to_string()))?;
+        })
+        .await
+        .map_err(|e| NoaError::Internal(e.to_string()))?;
         result
     }
 
@@ -121,7 +125,9 @@ impl RefStore for RedbRefStore {
                 result.push((key.value().to_string(), SnapshotId(id_str)));
             }
             Ok(result)
-        }).await.map_err(|e| NoaError::Internal(e.to_string()))?
+        })
+        .await
+        .map_err(|e| NoaError::Internal(e.to_string()))?
     }
 
     async fn delete(&self, name: &str) -> Result<bool> {
@@ -136,7 +142,9 @@ impl RefStore for RedbRefStore {
             };
             redb_err!(txn.commit())?;
             Ok(existed)
-        }).await.map_err(|e| NoaError::Internal(e.to_string()))?
+        })
+        .await
+        .map_err(|e| NoaError::Internal(e.to_string()))?
     }
 }
 
@@ -313,7 +321,12 @@ mod tests {
         );
         let ok1 = r1.unwrap();
         let ok2 = r2.unwrap();
-        assert!(ok1 != ok2, "exactly one CAS should succeed, got ok1={} ok2={}", ok1, ok2);
+        assert!(
+            ok1 != ok2,
+            "exactly one CAS should succeed, got ok1={} ok2={}",
+            ok1,
+            ok2
+        );
         let final_val = store.get("main").await.unwrap().unwrap();
         assert!(final_val == v_a || final_val == v_b);
     }
@@ -328,10 +341,9 @@ mod tests {
         let store_c1 = store.clone_inner();
         let store_c2 = store.clone_inner();
 
-        let (r1, r2) = tokio::join!(
-            async { store_c1.cas("new-ref", None, &v_a).await },
-            async { store_c2.cas("new-ref", None, &v_b).await }
-        );
+        let (r1, r2) = tokio::join!(async { store_c1.cas("new-ref", None, &v_a).await }, async {
+            store_c2.cas("new-ref", None, &v_b).await
+        });
         let ok1 = r1.unwrap();
         let ok2 = r2.unwrap();
         assert!(ok1 || ok2, "at least one must succeed");
@@ -341,8 +353,14 @@ mod tests {
     #[tokio::test]
     async fn test_list_after_delete() {
         let (_tmp, store) = make_store();
-        store.cas("a", None, &SnapshotId("noa_1".to_string())).await.unwrap();
-        store.cas("b", None, &SnapshotId("noa_2".to_string())).await.unwrap();
+        store
+            .cas("a", None, &SnapshotId("noa_1".to_string()))
+            .await
+            .unwrap();
+        store
+            .cas("b", None, &SnapshotId("noa_2".to_string()))
+            .await
+            .unwrap();
         store.delete("a").await.unwrap();
         let refs = store.list().await.unwrap();
         assert_eq!(refs.len(), 1);

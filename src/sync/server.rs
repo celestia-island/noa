@@ -1,14 +1,14 @@
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+use tokio::{net::UnixListener, sync::Mutex};
 
-use tokio::net::UnixListener;
-use tokio::sync::Mutex;
-
+use super::{
+    events::EventSyncEngine, transport::JsonRpcMessage, NoaAuthRequest, NoaEventSyncAck,
+    NoaEventSyncMessage, NoaReady, RequestNoaHandshake,
+};
 use crate::error::{NoaError, Result};
-
-use super::events::EventSyncEngine;
-use super::transport::JsonRpcMessage;
-use super::{NoaAuthRequest, NoaEventSyncAck, NoaEventSyncMessage, NoaReady, RequestNoaHandshake};
 
 pub struct SyncServer {
     socket_path: PathBuf,
@@ -31,9 +31,7 @@ fn generate_sync_token() -> String {
             .as_nanos()
             .to_be_bytes(),
     );
-    hasher.update(
-        std::process::id().to_be_bytes(),
-    );
+    hasher.update(std::process::id().to_be_bytes());
     hex::encode(hasher.finalize())
 }
 
@@ -54,9 +52,8 @@ impl SyncServer {
             std::fs::remove_file(&self.socket_path)?;
         }
 
-        let listener = UnixListener::bind(&self.socket_path).map_err(|e| {
-            NoaError::Sync(format!("failed to bind sync socket: {}", e))
-        })?;
+        let listener = UnixListener::bind(&self.socket_path)
+            .map_err(|e| NoaError::Sync(format!("failed to bind sync socket: {}", e)))?;
 
         tracing::info!(
             "Noa sync server listening on {}",
@@ -201,11 +198,8 @@ impl SyncServer {
             "noa.handshake" => {
                 let req: RequestNoaHandshake = serde_json::from_value(params)
                     .map_err(|e| NoaError::Serialization(e.to_string()))?;
-                let resp = super::handshake::handle_handshake_request(
-                    workspace_root,
-                    &req,
-                    auth_token,
-                )?;
+                let resp =
+                    super::handshake::handle_handshake_request(workspace_root, &req, auth_token)?;
 
                 let mut sessions = authenticated_sessions.lock().await;
                 sessions.insert(resp.workspace_id.clone());
@@ -266,16 +260,14 @@ impl SyncServer {
                 }
 
                 let engine = EventSyncEngine::new(workspace_root, workspace_name);
-                let (applied, ok, _error_msg) = match engine
-                    .apply_pull_events(&sync_msg.events)
-                    .await
-                {
-                    Ok(n) => (n, true, None),
-                    Err(e) => {
-                        tracing::error!("event sync apply failed: {}", e);
-                        (0, false, Some(e.to_string()))
-                    }
-                };
+                let (applied, ok, _error_msg) =
+                    match engine.apply_pull_events(&sync_msg.events).await {
+                        Ok(n) => (n, true, None),
+                        Err(e) => {
+                            tracing::error!("event sync apply failed: {}", e);
+                            (0, false, Some(e.to_string()))
+                        }
+                    };
                 let ack = NoaEventSyncAck {
                     workspace_id: sync_msg.workspace_id,
                     applied,

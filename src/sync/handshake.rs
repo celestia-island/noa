@@ -1,13 +1,11 @@
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
-
+use super::{NoaAck, RequestNoaHandshake};
 use crate::{
     error::{NoaError, Result},
     repo::{get_current_git_branch, manage_gitignore, Repository},
 };
-
-use super::{NoaAck, RequestNoaHandshake};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoaHandshakeResponse {
@@ -331,7 +329,10 @@ mod tests {
         };
         let result = handle_handshake_request(tmp.path(), &req, TEST_TOKEN);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("authentication failed"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("authentication failed"));
     }
 
     #[test]
@@ -346,7 +347,10 @@ mod tests {
         };
         let result = handle_handshake_request(tmp.path(), &req, TEST_TOKEN);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("authentication failed"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("authentication failed"));
     }
 
     #[test]

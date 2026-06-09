@@ -20,9 +20,8 @@ pub fn run_interactive(
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    app.handle_key(key)
-                }));
+                let result =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| app.handle_key(key)));
                 match result {
                     Ok(should_quit) => {
                         if should_quit {

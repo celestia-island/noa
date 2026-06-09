@@ -295,7 +295,10 @@ name = "test"
 noa_remote = "https://noa.cloud/repo"
 "#;
         let config = RepoConfig::from_toml(toml_str).unwrap();
-        assert_eq!(config.noa_remote, Some("https://noa.cloud/repo".to_string()));
+        assert_eq!(
+            config.noa_remote,
+            Some("https://noa.cloud/repo".to_string())
+        );
     }
 
     #[test]

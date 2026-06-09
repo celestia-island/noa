@@ -36,7 +36,9 @@ pub async fn run_resolve(
         return Ok(());
     }
 
-    let latest_merge = merge_entries.last().unwrap();
+    let latest_merge = merge_entries
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("unexpected: merge_entries was empty after length check"))?;
 
     let snap_store = repo.snapshot_store()?;
     let obj_store = repo.object_store()?;
@@ -151,9 +153,7 @@ pub async fn run_resolve(
         message: format!("resolve conflicts with strategy '{}'", strategy),
     };
     snap_store.store(&resolved_snapshot).await?;
-    ws_mgr
-        .update_head(&current, &resolved_snapshot.id)
-        .await?;
+    ws_mgr.update_head(&current, &resolved_snapshot.id).await?;
 
     log.append(&crate::log::LogEntry {
         seq: 0,

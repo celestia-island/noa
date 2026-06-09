@@ -1689,9 +1689,15 @@ async fn merge_updates_last_seq() {
     {
         // Write initial content to default
         let log = repo.agent_log("default").unwrap();
-        log.append(&make_log_entry(1, OpType::Write, "base.rs", Some("base"), 100))
-            .await
-            .unwrap();
+        log.append(&make_log_entry(
+            1,
+            OpType::Write,
+            "base.rs",
+            Some("base"),
+            100,
+        ))
+        .await
+        .unwrap();
     }
     let ws_mgr = repo.workspace_manager().unwrap();
     let obj_store = repo.object_store().unwrap();
@@ -1726,7 +1732,13 @@ async fn merge_updates_last_seq() {
     // Add feature log entry
     let feat_log = repo.agent_log("feat").unwrap();
     feat_log
-        .append(&make_log_entry(1, OpType::Write, "feat.rs", Some("feat"), 300))
+        .append(&make_log_entry(
+            1,
+            OpType::Write,
+            "feat.rs",
+            Some("feat"),
+            300,
+        ))
         .await
         .unwrap();
 
@@ -1810,7 +1822,10 @@ async fn test_init_with_remotes_creates_default_workspace() {
 
     let ws_mgr = repo.workspace_manager().unwrap();
     let ws = ws_mgr.get("default").await.unwrap();
-    assert!(ws.is_some(), "default workspace must exist after init_with_remotes");
+    assert!(
+        ws.is_some(),
+        "default workspace must exist after init_with_remotes"
+    );
     assert_eq!(ws.unwrap().name, "default");
 }
 
@@ -1865,11 +1880,23 @@ async fn test_merge_log_records_all_conflict_ids() {
     // Create base snapshot with two files
     let default_log = repo.agent_log("default").unwrap();
     default_log
-        .append(&make_log_entry(1, OpType::Write, "a.rs", Some("base_a"), 100))
+        .append(&make_log_entry(
+            1,
+            OpType::Write,
+            "a.rs",
+            Some("base_a"),
+            100,
+        ))
         .await
         .unwrap();
     default_log
-        .append(&make_log_entry(2, OpType::Write, "b.rs", Some("base_b"), 200))
+        .append(&make_log_entry(
+            2,
+            OpType::Write,
+            "b.rs",
+            Some("base_b"),
+            200,
+        ))
         .await
         .unwrap();
     let base_engine = SnapshotEngine::new(default_log, snap_store.clone(), obj_store.clone());
@@ -1895,16 +1922,34 @@ async fn test_merge_log_records_all_conflict_ids() {
     // Modify both files differently in feature
     let feat_log = repo.agent_log("feature").unwrap();
     feat_log
-        .append(&make_log_entry(1, OpType::Write, "a.rs", Some("feat_a"), 300))
+        .append(&make_log_entry(
+            1,
+            OpType::Write,
+            "a.rs",
+            Some("feat_a"),
+            300,
+        ))
         .await
         .unwrap();
     feat_log
-        .append(&make_log_entry(2, OpType::Write, "b.rs", Some("feat_b"), 400))
+        .append(&make_log_entry(
+            2,
+            OpType::Write,
+            "b.rs",
+            Some("feat_b"),
+            400,
+        ))
         .await
         .unwrap();
     let feat_engine = SnapshotEngine::new(feat_log, snap_store.clone(), obj_store.clone());
     let feat_snap = feat_engine
-        .compute("feature", vec![base_id.clone()], 0, "author", "feat changes")
+        .compute(
+            "feature",
+            vec![base_id.clone()],
+            0,
+            "author",
+            "feat changes",
+        )
         .await
         .unwrap();
     ws_mgr.update_head("feature", &feat_snap.id).await.unwrap();
@@ -1912,25 +1957,55 @@ async fn test_merge_log_records_all_conflict_ids() {
     // Modify both files differently in default too (to create conflicts on merge)
     let default_log = repo.agent_log("default").unwrap();
     default_log
-        .append(&make_log_entry(3, OpType::Write, "a.rs", Some("default_a"), 500))
+        .append(&make_log_entry(
+            3,
+            OpType::Write,
+            "a.rs",
+            Some("default_a"),
+            500,
+        ))
         .await
         .unwrap();
     default_log
-        .append(&make_log_entry(4, OpType::Write, "b.rs", Some("default_b"), 600))
+        .append(&make_log_entry(
+            4,
+            OpType::Write,
+            "b.rs",
+            Some("default_b"),
+            600,
+        ))
         .await
         .unwrap();
     let default_engine = SnapshotEngine::new(default_log, snap_store.clone(), obj_store.clone());
     let default_snap = default_engine
-        .compute("default", vec![base_id.clone()], 2, "author", "default changes")
+        .compute(
+            "default",
+            vec![base_id.clone()],
+            2,
+            "author",
+            "default changes",
+        )
         .await
         .unwrap();
-    ws_mgr.update_head("default", &default_snap.id).await.unwrap();
+    ws_mgr
+        .update_head("default", &default_snap.id)
+        .await
+        .unwrap();
 
     // Merge feature into default - should produce 2 conflicts
     let merge_result = libnoa::merge::three_way_merge(
-        &obj_store.get_tree(&libnoa::object::TreeId(base_snap.tree_hash)).await.unwrap(),
-        &obj_store.get_tree(&libnoa::object::TreeId(default_snap.tree_hash)).await.unwrap(),
-        &obj_store.get_tree(&libnoa::object::TreeId(feat_snap.tree_hash)).await.unwrap(),
+        &obj_store
+            .get_tree(&libnoa::object::TreeId(base_snap.tree_hash))
+            .await
+            .unwrap(),
+        &obj_store
+            .get_tree(&libnoa::object::TreeId(default_snap.tree_hash))
+            .await
+            .unwrap(),
+        &obj_store
+            .get_tree(&libnoa::object::TreeId(feat_snap.tree_hash))
+            .await
+            .unwrap(),
     )
     .unwrap();
     let conflicts = libnoa::merge::extract_conflicts(&merge_result.output);
@@ -2002,7 +2077,10 @@ async fn test_merge_log_records_all_conflict_ids() {
         "merge entry should have resolved_conflict_ours_id"
     );
     // ours_ids should contain both blob IDs
-    let ours_ids = merge_entry.resolved_conflict_ours_id.as_deref().unwrap_or("");
+    let ours_ids = merge_entry
+        .resolved_conflict_ours_id
+        .as_deref()
+        .unwrap_or("");
     assert!(!ours_ids.is_empty(), "ours_ids should not be empty");
     assert_eq!(
         ours_ids.matches(',').count(),

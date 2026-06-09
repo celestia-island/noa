@@ -138,11 +138,14 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
                     stack.push((child_path, child.id.clone(), child.kind));
                 }
             } else {
-                map.insert(path.clone(), TreeEntry {
-                    name: path,
-                    kind: EntryKind::Blob,
-                    id,
-                });
+                map.insert(
+                    path.clone(),
+                    TreeEntry {
+                        name: path,
+                        kind: EntryKind::Blob,
+                        id,
+                    },
+                );
             }
         }
         Ok(())
@@ -155,10 +158,13 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
         &self,
         flat_map: &BTreeMap<String, TreeEntry>,
     ) -> Result<TreeEntries> {
+        type LayerEntry = (Vec<TreeEntry>, Vec<(String, Vec<TreeEntry>)>);
         // Phase 1: decompose into layers (top-down)
-        let mut layers: Vec<(Vec<TreeEntry>, Vec<(String, Vec<TreeEntry>)>)> = Vec::new();
-        let mut worklist: Vec<Vec<(String, TreeEntry)>> =
-            vec![flat_map.iter().map(|(k, v)| (k.clone(), v.clone())).collect()];
+        let mut layers: Vec<LayerEntry> = Vec::new();
+        let mut worklist: Vec<Vec<(String, TreeEntry)>> = vec![flat_map
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()];
 
         while let Some(current) = worklist.pop() {
             let mut roots: Vec<TreeEntry> = Vec::new();
@@ -176,7 +182,7 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
             }
 
             let mut subdirs: Vec<(String, Vec<TreeEntry>)> = Vec::new();
-            for (dir_name, mut children) in dirs {
+            for (dir_name, children) in dirs {
                 let needs_deeper = children.iter().any(|(k, _)| k.contains('/'));
                 if needs_deeper {
                     worklist.push(children.clone());
@@ -199,7 +205,7 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
 
             for (dir_name, children) in subdirs {
                 let mut sub_entries = Vec::new();
-                for mut entry in children {
+                for entry in children {
                     if let Some(resolved_entry) = resolved.remove(&entry.name) {
                         sub_entries.push(resolved_entry);
                     } else {
@@ -208,11 +214,14 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
                 }
                 let sub_tree = TreeEntries(sub_entries);
                 let tree_id = self.object_store.put_tree(&sub_tree).await?;
-                level_map.insert(dir_name.clone(), TreeEntry {
-                    name: dir_name,
-                    kind: EntryKind::Tree,
-                    id: tree_id.0,
-                });
+                level_map.insert(
+                    dir_name.clone(),
+                    TreeEntry {
+                        name: dir_name,
+                        kind: EntryKind::Tree,
+                        id: tree_id.0,
+                    },
+                );
             }
 
             resolved = level_map;
@@ -643,13 +652,21 @@ mod tests {
         // Verify sub-trees contain the expected files
         if let Some(src_entry) = tree.0.iter().find(|e| e.name == "src") {
             assert_eq!(src_entry.kind, crate::object::EntryKind::Tree);
-            let src_tree = engine.object_store.get_tree(&TreeId(src_entry.id.clone())).await.unwrap();
+            let src_tree = engine
+                .object_store
+                .get_tree(&TreeId(src_entry.id.clone()))
+                .await
+                .unwrap();
             assert_eq!(src_tree.0.len(), 1);
             assert_eq!(src_tree.0[0].name, "main.rs");
         }
         if let Some(normal_entry) = tree.0.iter().find(|e| e.name == "normal") {
             assert_eq!(normal_entry.kind, crate::object::EntryKind::Tree);
-            let normal_tree = engine.object_store.get_tree(&TreeId(normal_entry.id.clone())).await.unwrap();
+            let normal_tree = engine
+                .object_store
+                .get_tree(&TreeId(normal_entry.id.clone()))
+                .await
+                .unwrap();
             assert_eq!(normal_tree.0.len(), 1);
             assert_eq!(normal_tree.0[0].name, "file.rs");
         }
@@ -661,12 +678,16 @@ mod tests {
             crate::log::FileAgentLog,
             crate::snapshot::RedbSnapshotStore,
             crate::object::RedbObjectStore,
-        >::is_path_within_root(PathBuf::from("src/main.rs").as_path()));
+        >::is_path_within_root(
+            PathBuf::from("src/main.rs").as_path()
+        ));
         assert!(SnapshotEngine::<
             crate::log::FileAgentLog,
             crate::snapshot::RedbSnapshotStore,
             crate::object::RedbObjectStore,
-        >::is_path_within_root(PathBuf::from("a/b/c").as_path()));
+        >::is_path_within_root(
+            PathBuf::from("a/b/c").as_path()
+        ));
     }
 
     #[test]
@@ -675,17 +696,23 @@ mod tests {
             crate::log::FileAgentLog,
             crate::snapshot::RedbSnapshotStore,
             crate::object::RedbObjectStore,
-        >::is_path_within_root(PathBuf::from("../etc/passwd").as_path()));
+        >::is_path_within_root(
+            PathBuf::from("../etc/passwd").as_path()
+        ));
         assert!(!SnapshotEngine::<
             crate::log::FileAgentLog,
             crate::snapshot::RedbSnapshotStore,
             crate::object::RedbObjectStore,
-        >::is_path_within_root(PathBuf::from("/absolute").as_path()));
+        >::is_path_within_root(
+            PathBuf::from("/absolute").as_path()
+        ));
         assert!(!SnapshotEngine::<
             crate::log::FileAgentLog,
             crate::snapshot::RedbSnapshotStore,
             crate::object::RedbObjectStore,
-        >::is_path_within_root(PathBuf::from("foo/../../bar").as_path()));
+        >::is_path_within_root(
+            PathBuf::from("foo/../../bar").as_path()
+        ));
     }
 
     #[tokio::test]
@@ -706,7 +733,11 @@ mod tests {
     #[tokio::test]
     async fn test_compute_delete_only_log() {
         let (_tmp, engine) = make_engine().await;
-        engine.log.append(&delete_entry(1, "nonexistent.rs", 100)).await.unwrap();
+        engine
+            .log
+            .append(&delete_entry(1, "nonexistent.rs", 100))
+            .await
+            .unwrap();
         let snap = engine
             .compute("default", vec![], 0, "test", "delete-only")
             .await
@@ -722,7 +753,11 @@ mod tests {
     #[tokio::test]
     async fn test_compute_rename_chain() {
         let (_tmp, engine) = make_engine().await;
-        engine.log.append(&write_entry(1, "a.rs", "h1", 100)).await.unwrap();
+        engine
+            .log
+            .append(&write_entry(1, "a.rs", "h1", 100))
+            .await
+            .unwrap();
 
         let rename_entry = LogEntry {
             seq: 2,
@@ -769,10 +804,26 @@ mod tests {
     #[tokio::test]
     async fn test_compute_write_overwrite_delete_readd() {
         let (_tmp, engine) = make_engine().await;
-        engine.log.append(&write_entry(1, "f.rs", "h1", 100)).await.unwrap();
-        engine.log.append(&write_entry(2, "f.rs", "h2", 200)).await.unwrap();
-        engine.log.append(&delete_entry(3, "f.rs", 300)).await.unwrap();
-        engine.log.append(&write_entry(4, "f.rs", "h3", 400)).await.unwrap();
+        engine
+            .log
+            .append(&write_entry(1, "f.rs", "h1", 100))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&write_entry(2, "f.rs", "h2", 200))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&delete_entry(3, "f.rs", 300))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&write_entry(4, "f.rs", "h3", 400))
+            .await
+            .unwrap();
 
         let snap = engine
             .compute("ws1", vec![], 0, "test", "complex lifecycle")
@@ -791,13 +842,21 @@ mod tests {
     #[tokio::test]
     async fn test_compute_with_since_seq() {
         let (_tmp, engine) = make_engine().await;
-        engine.log.append(&write_entry(1, "a.rs", "h1", 100)).await.unwrap();
+        engine
+            .log
+            .append(&write_entry(1, "a.rs", "h1", 100))
+            .await
+            .unwrap();
         let parent = engine
             .compute("ws1", vec![], 0, "test", "parent")
             .await
             .unwrap();
 
-        engine.log.append(&write_entry(2, "b.rs", "h2", 200)).await.unwrap();
+        engine
+            .log
+            .append(&write_entry(2, "b.rs", "h2", 200))
+            .await
+            .unwrap();
         let child = engine
             .compute("ws1", vec![parent.id], 1, "test", "child since seq=1")
             .await
@@ -810,7 +869,10 @@ mod tests {
             .unwrap();
         let names: Vec<&str> = tree.0.iter().map(|e| e.name.as_str()).collect();
         assert!(names.contains(&"a.rs"), "parent entry should be inherited");
-        assert!(names.contains(&"b.rs"), "new entry from since_seq should appear");
+        assert!(
+            names.contains(&"b.rs"),
+            "new entry from since_seq should appear"
+        );
     }
 
     #[tokio::test]
@@ -827,7 +889,11 @@ mod tests {
         let matcher = IgnoreMatcher::from_repo_root(tmp.path());
         let engine = SnapshotEngine::new(log, snapshot_store, object_store).with_ignore(matcher);
 
-        engine.log.append(&write_entry(1, "good.rs", "h1", 100)).await.unwrap();
+        engine
+            .log
+            .append(&write_entry(1, "good.rs", "h1", 100))
+            .await
+            .unwrap();
 
         let rename_to_noa = LogEntry {
             seq: 2,
@@ -853,8 +919,14 @@ mod tests {
             .await
             .unwrap();
         let names: Vec<&str> = tree.0.iter().map(|e| e.name.as_str()).collect();
-        assert!(!names.contains(&"good.rs"), "source should be removed by rename");
-        assert!(!names.iter().any(|n| n.starts_with(".noa")), "target should be ignored");
+        assert!(
+            !names.contains(&"good.rs"),
+            "source should be removed by rename"
+        );
+        assert!(
+            !names.iter().any(|n| n.starts_with(".noa")),
+            "target should be ignored"
+        );
         assert!(tree.0.is_empty());
     }
 }

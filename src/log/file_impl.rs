@@ -339,9 +339,16 @@ mod tests {
 
         let log2 = FileAgentLog::create(&log_path).unwrap();
         let next = log2.next_seq().await.unwrap();
-        assert!(next > 3, "create() on existing file must compute next_seq from content, got {}", next);
+        assert!(
+            next > 3,
+            "create() on existing file must compute next_seq from content, got {}",
+            next
+        );
 
-        let seq = log2.append(&make_entry(4, OpType::Write, "d.rs", 400)).await.unwrap();
+        let seq = log2
+            .append(&make_entry(4, OpType::Write, "d.rs", 400))
+            .await
+            .unwrap();
         assert!(seq > 3, "appended seq must be > 3, got {}", seq);
     }
 
@@ -351,9 +358,14 @@ mod tests {
         let log_path = tmp.path().join("compact.log");
         let log = FileAgentLog::create(&log_path).unwrap();
         for i in 1..=5 {
-            log.append(&make_entry(i, OpType::Write, &format!("f{}.rs", i), i * 100))
-                .await
-                .unwrap();
+            log.append(&make_entry(
+                i,
+                OpType::Write,
+                &format!("f{}.rs", i),
+                i * 100,
+            ))
+            .await
+            .unwrap();
         }
 
         log.compact_to(3).await.unwrap();
@@ -396,7 +408,10 @@ mod tests {
 
         log.compact_to(2).await.unwrap();
 
-        let seq = log.append(&make_entry(5, OpType::Write, "new.rs", 500)).await.unwrap();
+        let seq = log
+            .append(&make_entry(5, OpType::Write, "new.rs", 500))
+            .await
+            .unwrap();
         assert!(seq > 4, "seq after compact+append must be > 4, got {}", seq);
 
         let entries = log.read_all().await.unwrap();
@@ -432,8 +447,15 @@ mod tests {
         }
         log.compact_to(3).await.unwrap();
 
-        let seq = log.append(&make_entry(0, OpType::Write, "after.rs", 400)).await.unwrap();
-        assert!(seq > 3, "new seq after compact-all must be > 3, got {}", seq);
+        let seq = log
+            .append(&make_entry(0, OpType::Write, "after.rs", 400))
+            .await
+            .unwrap();
+        assert!(
+            seq > 3,
+            "new seq after compact-all must be > 3, got {}",
+            seq
+        );
 
         let entries = log.read_all().await.unwrap();
         assert_eq!(entries.len(), 1);
@@ -454,7 +476,11 @@ mod tests {
         let log_path = tmp.path().join("empty-seq.log");
         let log = FileAgentLog::create(&log_path).unwrap();
         let next = log.next_seq().await.unwrap();
-        assert!(next < 2, "empty log next_seq should be 0 or 1, got {}", next);
+        assert!(
+            next < 2,
+            "empty log next_seq should be 0 or 1, got {}",
+            next
+        );
     }
 
     #[tokio::test]
@@ -481,7 +507,10 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].op, OpType::Merge);
         assert_eq!(entries[0].snapshot_id, Some("noa_snap1".to_string()));
-        assert_eq!(entries[0].message, Some("merge conflict resolved".to_string()));
+        assert_eq!(
+            entries[0].message,
+            Some("merge conflict resolved".to_string())
+        );
     }
 
     #[tokio::test]
@@ -548,7 +577,10 @@ mod tests {
                 resolved_conflict_theirs_id: None,
                 snapshot_id: Some(format!("noa_snapshot_{}", i)),
                 ts: i * 1000,
-                message: Some(format!("commit message number {} that is fairly long to increase file size", i)),
+                message: Some(format!(
+                    "commit message number {} that is fairly long to increase file size",
+                    i
+                )),
             };
             last_seq = log.append(&entry).await.unwrap();
         }

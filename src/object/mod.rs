@@ -3,10 +3,10 @@ mod redb_impl;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 pub use minio_impl::MinioObjectStore;
 pub use redb_impl::RedbObjectStore;
+use sha2::{Digest, Sha256};
 
 use crate::error::Result;
 

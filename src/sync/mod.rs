@@ -3,6 +3,8 @@ mod handshake;
 mod server;
 mod transport;
 
+use serde::{Deserialize, Serialize};
+
 pub use events::{EventSyncEngine, SyncEvent};
 pub use handshake::{
     handle_auth_request, handle_handshake_request, handle_ready, BranchSelection, NoaAuthResponse,
@@ -10,8 +12,6 @@ pub use handshake::{
 };
 pub use server::SyncServer;
 pub use transport::JsonRpcMessage;
-
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestNoaHandshake {

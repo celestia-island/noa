@@ -180,8 +180,8 @@ impl WorkspaceManager {
                     .map_err(|e| NoaError::Serialization(e.to_string()))?;
                 ws.head = new_head;
                 ws.updated_at = now;
-                let data = rmp_serde::to_vec(&ws)
-                    .map_err(|e| NoaError::Serialization(e.to_string()))?;
+                let data =
+                    rmp_serde::to_vec(&ws).map_err(|e| NoaError::Serialization(e.to_string()))?;
                 redb_err!(table.insert(name.as_str(), data.as_slice()))?;
             }
             redb_err!(txn.commit())
@@ -216,8 +216,8 @@ impl WorkspaceManager {
                 ws.head = new_head;
                 ws.last_seq = last_seq;
                 ws.updated_at = now;
-                let data = rmp_serde::to_vec(&ws)
-                    .map_err(|e| NoaError::Serialization(e.to_string()))?;
+                let data =
+                    rmp_serde::to_vec(&ws).map_err(|e| NoaError::Serialization(e.to_string()))?;
                 redb_err!(table.insert(name.as_str(), data.as_slice()))?;
             }
             redb_err!(txn.commit())
@@ -407,10 +407,9 @@ mod tests {
         let mgr2 = mgr.clone();
         let ws1 = make_workspace("race-ws");
         let ws2 = make_workspace("race-ws");
-        let (r1, r2) = tokio::join!(
-            async { mgr.create(&ws1).await },
-            async { mgr2.create(&ws2).await }
-        );
+        let (r1, r2) = tokio::join!(async { mgr.create(&ws1).await }, async {
+            mgr2.create(&ws2).await
+        });
         let successes = [&r1, &r2].iter().filter(|r| r.is_ok()).count();
         assert_eq!(successes, 1);
         let ws = mgr.get("race-ws").await.unwrap().unwrap();
@@ -422,9 +421,7 @@ mod tests {
         let (_tmp, mgr) = make_manager();
         mgr.create(&make_workspace("ws1")).await.unwrap();
         let new_head = SnapshotId("noa_updated".to_string());
-        mgr.update_head_and_seq("ws1", &new_head, 42)
-            .await
-            .unwrap();
+        mgr.update_head_and_seq("ws1", &new_head, 42).await.unwrap();
         let ws = mgr.get("ws1").await.unwrap().unwrap();
         assert_eq!(ws.head, new_head);
         assert_eq!(ws.last_seq, 42);
@@ -463,10 +460,7 @@ mod tests {
         );
 
         let successes = [&r1, &r2].iter().filter(|r| r.is_ok()).count();
-        assert!(
-            successes >= 1,
-            "at least one update_head must succeed"
-        );
+        assert!(successes >= 1, "at least one update_head must succeed");
 
         let ws = mgr.get("concurrent-ws").await.unwrap().unwrap();
         assert!(

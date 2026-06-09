@@ -179,10 +179,7 @@ pub async fn push_refs(
     validate_ref_name(&body.name)?;
     let ref_store = state.ref_store().map_err(err_json)?;
     let id = SnapshotId(body.id);
-    let old = body
-        .expected_id
-        .as_ref()
-        .map(|s| SnapshotId(s.clone()));
+    let old = body.expected_id.as_ref().map(|s| SnapshotId(s.clone()));
     let ok = ref_store
         .cas(&body.name, old.as_ref(), &id)
         .await

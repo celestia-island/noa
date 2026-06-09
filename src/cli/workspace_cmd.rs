@@ -147,13 +147,9 @@ pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<
             .await?
     };
 
-    let result = crate::merge::merge_trees_recursive(
-        base_tree,
-        ours_tree,
-        theirs_tree,
-        obj_store.clone(),
-    )
-    .await?;
+    let result =
+        crate::merge::merge_trees_recursive(base_tree, ours_tree, theirs_tree, obj_store.clone())
+            .await?;
 
     let conflicts = extract_conflicts(&result.output);
     if !conflicts.is_empty() {

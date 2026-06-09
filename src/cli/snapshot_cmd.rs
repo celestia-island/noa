@@ -40,7 +40,10 @@ pub async fn run_create(repo: &Repository, message: &str, author: &str) -> Resul
     // Only update workspace head if CAS succeeds, maintaining consistency.
     let ref_store = repo.ref_store()?;
     let current_ref = ref_store.get(&head_ws).await?;
-    match ref_store.cas(&head_ws, current_ref.as_ref(), &snapshot.id).await {
+    match ref_store
+        .cas(&head_ws, current_ref.as_ref(), &snapshot.id)
+        .await
+    {
         Ok(true) => {}
         Ok(false) => {
             anyhow::bail!(
@@ -49,10 +52,7 @@ pub async fn run_create(repo: &Repository, message: &str, author: &str) -> Resul
             );
         }
         Err(e) => {
-            anyhow::bail!(
-                "failed to update ref '{}': {}",
-                head_ws, e
-            );
+            anyhow::bail!("failed to update ref '{}': {}", head_ws, e);
         }
     }
 

@@ -72,7 +72,10 @@ impl Repository {
         })
     }
 
-    pub fn init_with_remotes(path: &Path, remotes: Vec<crate::config::RemoteConfig>) -> Result<Self> {
+    pub fn init_with_remotes(
+        path: &Path,
+        remotes: Vec<crate::config::RemoteConfig>,
+    ) -> Result<Self> {
         let noa_dir = path.join(NOA_DIR_NAME);
 
         if noa_dir.exists() {
@@ -181,15 +184,20 @@ impl Repository {
             .map_err(|e| NoaError::Redb(e.to_string()))?;
 
         // Ensure all required tables exist (redb creates them lazily on open_table)
-        write_txn.open_table::<&[u8], &[u8]>(redb::TableDefinition::new("blobs"))
+        write_txn
+            .open_table::<&[u8], &[u8]>(redb::TableDefinition::new("blobs"))
             .map_err(|e| NoaError::Redb(e.to_string()))?;
-        write_txn.open_table::<&[u8], &[u8]>(redb::TableDefinition::new("trees"))
+        write_txn
+            .open_table::<&[u8], &[u8]>(redb::TableDefinition::new("trees"))
             .map_err(|e| NoaError::Redb(e.to_string()))?;
-        write_txn.open_table::<&str, &[u8]>(redb::TableDefinition::new("snapshots"))
+        write_txn
+            .open_table::<&str, &[u8]>(redb::TableDefinition::new("snapshots"))
             .map_err(|e| NoaError::Redb(e.to_string()))?;
-        write_txn.open_table::<&str, &[u8]>(redb::TableDefinition::new("workspaces"))
+        write_txn
+            .open_table::<&str, &[u8]>(redb::TableDefinition::new("workspaces"))
             .map_err(|e| NoaError::Redb(e.to_string()))?;
-        write_txn.open_table::<&str, &[u8]>(redb::TableDefinition::new("refs"))
+        write_txn
+            .open_table::<&str, &[u8]>(redb::TableDefinition::new("refs"))
             .map_err(|e| NoaError::Redb(e.to_string()))?;
 
         write_txn
@@ -375,10 +383,7 @@ pub fn manage_gitignore(root: &Path) -> Result<()> {
         }
     }
 
-    std::fs::write(
-        &gitignore_path,
-        format!("{}\n.noa/\n", content.trim_end()),
-    )?;
+    std::fs::write(&gitignore_path, format!("{}\n.noa/\n", content.trim_end()))?;
 
     Ok(())
 }

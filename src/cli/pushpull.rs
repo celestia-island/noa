@@ -225,8 +225,7 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
         .await
         .ok()
         .flatten();
-    let head_snap_id =
-        head_ref.unwrap_or_else(crate::snapshot::empty_snapshot_id);
+    let head_snap_id = head_ref.unwrap_or_else(crate::snapshot::empty_snapshot_id);
 
     // Update the existing default workspace's head (created by init_with_remotes)
     let ws_mgr = crate::workspace::WorkspaceManager::new(db)?;

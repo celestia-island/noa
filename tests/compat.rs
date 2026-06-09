@@ -488,7 +488,9 @@ async fn test_git_import_no_deadlock_on_single_thread_runtime() {
     }
 
     // This would deadlock before the fix on single-thread runtime
-    libnoa::git::import::import_git_to_noa(&root, db).await.unwrap();
+    libnoa::git::import::import_git_to_noa(&root, db)
+        .await
+        .unwrap();
 
     assert!(root.join(".noa/noa.redb").exists());
 }

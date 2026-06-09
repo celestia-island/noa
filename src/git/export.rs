@@ -50,9 +50,7 @@ pub fn validate_git_url(url: &str) -> Result<()> {
         let has_scp_syntax = url.contains(':')
             && !url.contains("://")
             && url.split_once(':').is_some_and(|(before, _)| {
-                !before.is_empty()
-                    && !before.contains('/')
-                    && !before.starts_with('-')
+                !before.is_empty() && !before.contains('/') && !before.starts_with('-')
             });
         if !has_scp_syntax {
             return Err(NoaError::Remote(format!("invalid git URL format: {}", url)));
@@ -136,17 +134,16 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
 
     for entry in &tree.0 {
         if !is_safe_relative_path(&entry.name) {
-            tracing::warn!(
-                "skipping unsafe path in export tree entry: {}",
-                entry.name
-            );
+            tracing::warn!("skipping unsafe path in export tree entry: {}", entry.name);
             continue;
         }
         let file_path = repo_root.join(&entry.name);
         if let Some(parent) = file_path.parent() {
             if parent.exists() {
                 if let Ok(canonical_parent) = parent.canonicalize() {
-                    let canonical_root = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
+                    let canonical_root = repo_root
+                        .canonicalize()
+                        .unwrap_or_else(|_| repo_root.to_path_buf());
                     if !canonical_parent.starts_with(&canonical_root) {
                         tracing::warn!(
                             "skipping path traversal in export tree entry: {}",
@@ -234,8 +231,7 @@ pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
 
     let ref_store = crate::refs::RedbRefStore::new(Arc::clone(&db))?;
     let head_ref = ref_store.get("HEAD").await.ok().flatten();
-    let head_snap_id =
-        head_ref.unwrap_or_else(crate::snapshot::empty_snapshot_id);
+    let head_snap_id = head_ref.unwrap_or_else(crate::snapshot::empty_snapshot_id);
 
     let ws_mgr = crate::workspace::WorkspaceManager::new(Arc::clone(&db))?;
     let now = crate::now_micros();

@@ -142,7 +142,12 @@ fn make_request_no_auth(method: Method, uri: &str, body: Option<String>) -> Requ
     }
 }
 
-fn make_request_with_token(method: Method, uri: &str, token: &str, body: Option<String>) -> Request<Body> {
+fn make_request_with_token(
+    method: Method,
+    uri: &str,
+    token: &str,
+    body: Option<String>,
+) -> Request<Body> {
     let mut builder = Request::builder()
         .method(method)
         .uri(uri)

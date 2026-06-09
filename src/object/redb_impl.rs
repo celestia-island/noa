@@ -48,7 +48,9 @@ impl ObjectStore for RedbObjectStore {
             }
             redb_err!(txn.commit())?;
             Ok(id)
-        }).await.map_err(|e| NoaError::Internal(e.to_string()))?
+        })
+        .await
+        .map_err(|e| NoaError::Internal(e.to_string()))?
     }
 
     async fn get_blob(&self, id: &BlobId) -> Result<Vec<u8>> {
@@ -61,7 +63,9 @@ impl ObjectStore for RedbObjectStore {
                 Some(guard) => Ok(guard.value().to_vec()),
                 None => Err(NoaError::ObjectNotFound(id.to_string())),
             }
-        }).await.map_err(|e| NoaError::Internal(e.to_string()))?
+        })
+        .await
+        .map_err(|e| NoaError::Internal(e.to_string()))?
     }
 
     async fn has_blob(&self, id: &BlobId) -> Result<bool> {
@@ -71,7 +75,9 @@ impl ObjectStore for RedbObjectStore {
             let txn = redb_err!(db.begin_read())?;
             let table = redb_err!(txn.open_table(BLOBS))?;
             Ok(redb_err!(table.get(id.as_bytes()))?.is_some())
-        }).await.map_err(|e| NoaError::Internal(e.to_string()))?
+        })
+        .await
+        .map_err(|e| NoaError::Internal(e.to_string()))?
     }
 
     async fn put_tree(&self, entries: &TreeEntries) -> Result<TreeId> {
@@ -88,7 +94,9 @@ impl ObjectStore for RedbObjectStore {
             }
             redb_err!(txn.commit())?;
             Ok(id)
-        }).await.map_err(|e| NoaError::Internal(e.to_string()))?
+        })
+        .await
+        .map_err(|e| NoaError::Internal(e.to_string()))?
     }
 
     async fn get_tree(&self, id: &TreeId) -> Result<TreeEntries> {
@@ -102,7 +110,9 @@ impl ObjectStore for RedbObjectStore {
                     .map_err(|e| NoaError::Serialization(e.to_string())),
                 None => Err(NoaError::ObjectNotFound(id.to_string())),
             }
-        }).await.map_err(|e| NoaError::Internal(e.to_string()))?
+        })
+        .await
+        .map_err(|e| NoaError::Internal(e.to_string()))?
     }
 
     async fn has_tree(&self, id: &TreeId) -> Result<bool> {
@@ -112,7 +122,9 @@ impl ObjectStore for RedbObjectStore {
             let txn = redb_err!(db.begin_read())?;
             let table = redb_err!(txn.open_table(TREES))?;
             Ok(redb_err!(table.get(id.as_bytes()))?.is_some())
-        }).await.map_err(|e| NoaError::Internal(e.to_string()))?
+        })
+        .await
+        .map_err(|e| NoaError::Internal(e.to_string()))?
     }
 }
 

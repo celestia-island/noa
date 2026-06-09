@@ -1,6 +1,5 @@
-use std::path::{Component, Path, PathBuf};
-
 use serde::{Deserialize, Serialize};
+use std::path::{Component, Path, PathBuf};
 
 use crate::{
     error::{NoaError, Result},
@@ -182,7 +181,11 @@ impl EventSyncEngine {
                     message: event.message.clone(),
                 };
                 if let Err(e) = log.append(&log_entry).await {
-                    tracing::warn!("failed to append event to agent log (seq {}): {}", event.seq, e);
+                    tracing::warn!(
+                        "failed to append event to agent log (seq {}): {}",
+                        event.seq,
+                        e
+                    );
                 }
             }
         }
