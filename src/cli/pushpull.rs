@@ -228,22 +228,11 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
     let head_snap_id =
         head_ref.unwrap_or_else(crate::snapshot::empty_snapshot_id);
 
-    let ws_mgr = crate::workspace::WorkspaceManager::new(std::sync::Arc::clone(&db))?;
-    let now = chrono::Utc::now().timestamp_micros() as u64;
-    ws_mgr
-        .create(&crate::workspace::Workspace {
-            name: "default".to_string(),
-            head: head_snap_id.clone(),
-            base: head_snap_id.clone(),
-            agent_id: None,
-            last_seq: 0,
-            created_at: now,
-            updated_at: now,
-        })
-        .await
-        .unwrap_or_else(|e| {
-            eprintln!("warning: failed to create default workspace: {}", e);
-        });
+    // Update the existing default workspace's head (created by init_with_remotes)
+    let ws_mgr = crate::workspace::WorkspaceManager::new(db)?;
+    if let Err(e) = ws_mgr.update_head("default", &head_snap_id).await {
+        eprintln!("warning: failed to update default workspace head: {}", e);
+    }
 
     println!(
         "SVN repository exported and imported into noa: {}",

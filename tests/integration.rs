@@ -1799,3 +1799,57 @@ async fn merge_updates_last_seq() {
     );
     assert_eq!(default_after.head, merge_snap.id);
 }
+
+#[tokio::test]
+async fn test_init_with_remotes_creates_default_workspace() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let root = tmp.path().join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+
+    let repo = Repository::init_with_remotes(&root, vec![]).unwrap();
+
+    let ws_mgr = repo.workspace_manager().unwrap();
+    let ws = ws_mgr.get("default").await.unwrap();
+    assert!(ws.is_some(), "default workspace must exist after init_with_remotes");
+    assert_eq!(ws.unwrap().name, "default");
+}
+
+#[tokio::test]
+async fn test_duplicate_workspace_create_returns_error() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let root = tmp.path().join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+
+    let repo = Repository::init_with_remotes(&root, vec![]).unwrap();
+    let ws_mgr = repo.workspace_manager().unwrap();
+
+    let now = chrono::Utc::now().timestamp_micros() as u64;
+    let result = ws_mgr
+        .create(&Workspace {
+            name: "default".to_string(),
+            head: libnoa::snapshot::empty_snapshot_id(),
+            base: libnoa::snapshot::empty_snapshot_id(),
+            agent_id: None,
+            last_seq: 0,
+            created_at: now,
+            updated_at: now,
+        })
+        .await;
+    assert!(result.is_err(), "creating duplicate workspace should fail");
+}
+
+#[tokio::test]
+async fn test_update_head_on_existing_workspace_succeeds() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let root = tmp.path().join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+
+    let repo = Repository::init_with_remotes(&root, vec![]).unwrap();
+    let ws_mgr = repo.workspace_manager().unwrap();
+
+    let snap_id = libnoa::snapshot::SnapshotId("noa_test123".to_string());
+    ws_mgr.update_head("default", &snap_id).await.unwrap();
+
+    let ws = ws_mgr.get("default").await.unwrap().unwrap();
+    assert_eq!(ws.head, snap_id);
+}
