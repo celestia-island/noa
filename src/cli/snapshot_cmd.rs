@@ -36,27 +36,30 @@ pub async fn run_create(repo: &Repository, message: &str, author: &str) -> Resul
         .compute(&head_ws, parent_ids, since_seq, author, message)
         .await?;
 
-    let new_seq = crate::log::AgentLog::next_seq(&engine.log).await?;
-    ws_mgr
-        .update_head_and_seq(&head_ws, &snapshot.id, new_seq)
-        .await?;
-
+    // Update the ref store first via CAS to detect concurrent modifications.
+    // Only update workspace head if CAS succeeds, maintaining consistency.
     let ref_store = repo.ref_store()?;
-    match ref_store.cas(&head_ws, None, &snapshot.id).await {
+    let current_ref = ref_store.get(&head_ws).await?;
+    match ref_store.cas(&head_ws, current_ref.as_ref(), &snapshot.id).await {
         Ok(true) => {}
         Ok(false) => {
-            eprintln!(
-                "warning: ref '{}' already exists, snapshot {} not set as HEAD",
-                head_ws, snapshot.id
+            anyhow::bail!(
+                "concurrent modification detected: ref '{}' was modified during snapshot creation",
+                head_ws
             );
         }
         Err(e) => {
-            eprintln!(
-                "warning: failed to update ref '{}' after snapshot: {}",
+            anyhow::bail!(
+                "failed to update ref '{}': {}",
                 head_ws, e
             );
         }
     }
+
+    let new_seq = crate::log::AgentLog::next_seq(&engine.log).await?;
+    ws_mgr
+        .update_head_and_seq(&head_ws, &snapshot.id, new_seq)
+        .await?;
 
     println!(
         "Created snapshot {} in workspace '{}'",
