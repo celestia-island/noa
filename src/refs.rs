@@ -99,13 +99,9 @@ impl RefStore for RedbRefStore {
             match txn.commit() {
                 Ok(()) => Ok(true),
                 Err(e) => {
-                    let msg = e.to_string();
-                    if msg.contains("write conflict") || msg.contains("WriteConflict") {
-                        tracing::debug!("CAS write conflict for ref '{}', returning false", name);
-                        Ok(false)
-                    } else {
-                        Err(NoaError::Redb(msg))
-                    }
+                    // redb 2.x serializes write transactions, so commit errors here
+                    // are genuine I/O or corruption issues, not concurrent conflicts.
+                    Err(NoaError::Redb(e.to_string()))
                 }
             }
         }).await.map_err(|e| NoaError::Sync(e.to_string()))?;
