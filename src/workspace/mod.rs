@@ -106,10 +106,10 @@ impl WorkspaceManager {
             let txn = redb_err!(db.begin_write())?;
             {
                 let mut table = redb_err!(txn.open_table(WORKSPACES))?;
-                redb_err!(table.remove(name.as_str()))?;
+                let existed = redb_err!(table.remove(name.as_str()))?.is_some();
             }
             redb_err!(txn.commit())?;
-            Ok(true)
+            Ok(existed)
         })
         .await
         .map_err(|e| NoaError::Sync(e.to_string()))?
