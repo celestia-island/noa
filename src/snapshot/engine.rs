@@ -144,10 +144,11 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
                         }
                         let blob_id = if let Some(ref repo_root) = self.repo_root {
                             let file_path = repo_root.join(path);
-                            match std::fs::read(&file_path) {
+                            let blob_id = match tokio::fs::read(&file_path).await {
                                 Ok(content) => self.object_store.put_blob(&content).await?.0,
                                 Err(_) => log_blob_id.clone(),
-                            }
+                            };
+                            blob_id
                         } else {
                             log_blob_id.clone()
                         };
