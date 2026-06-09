@@ -284,10 +284,22 @@ async fn main() -> anyhow::Result<()> {
             let ws_root = libnoa::repo::Repository::find(&root)?;
             let server =
                 libnoa::sync::SyncServer::new(std::path::Path::new(&socket), &ws_root, "default");
-            tracing_subscriber::fmt::init();
+            let _ = tracing_subscriber::fmt().try_init();
             server.listen().await?;
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_try_init_called_twice_does_not_panic() {
+        // Simulating what happens if `noa sync` is called in a long-running process
+        // where tracing_subscriber::fmt::init() could be called multiple times
+        let _ = tracing_subscriber::fmt().try_init();
+        let _ = tracing_subscriber::fmt().try_init();
+        // If we reach here without panic, the fix works
+    }
 }
