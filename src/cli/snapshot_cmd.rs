@@ -79,8 +79,9 @@ pub async fn run_list(repo: &Repository) -> Result<()> {
         "ID", "WORKSPACE", "AUTHOR", "MESSAGE"
     );
     for snap in all {
-        let msg = if snap.message.len() > 40 {
-            format!("{}...", &snap.message[..37])
+        let msg = if snap.message.chars().count() > 40 {
+            let truncated: String = snap.message.chars().take(37).collect();
+            format!("{}...", truncated)
         } else {
             snap.message
         };
@@ -128,4 +129,25 @@ pub async fn run_diff(repo: &Repository, a: &str, b: &str) -> Result<()> {
         println!("  {:<10} {}", kind, diff.path);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_utf8_truncation_no_panic() {
+        let msg = "你好世界".repeat(20);
+        // This would panic with byte slicing (&msg[..37])
+        let truncated: String = msg.chars().take(37).collect();
+        assert_eq!(truncated.chars().count(), 37);
+
+        let emoji_msg = "🎉🚀💎".repeat(20);
+        let truncated_emoji: String = emoji_msg.chars().take(37).collect();
+        assert_eq!(truncated_emoji.chars().count(), 37);
+    }
+
+    #[test]
+    fn test_short_message_not_truncated() {
+        let msg = "short msg";
+        assert!(msg.chars().count() <= 40);
+    }
 }
