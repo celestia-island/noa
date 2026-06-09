@@ -131,7 +131,6 @@ impl AgentLog for FileAgentLog {
         let remaining: Vec<LogEntry> = entries.into_iter().filter(|e| e.seq > up_to_seq).collect();
 
         let temp_path = compact_temp_path(&self.path);
-        let backup_path = self.path.with_extension("bak");
 
         {
             let mut tmp_file = OpenOptions::new()
@@ -148,23 +147,17 @@ impl AgentLog for FileAgentLog {
             tmp_file.sync_all()?;
         }
 
-        if self.path.exists() {
-            if let Err(e) = std::fs::rename(&self.path, &backup_path) {
-                let _ = std::fs::remove_file(&temp_path);
-                return Err(NoaError::Io(e));
-            }
-        }
-
+        // Atomic rename on same filesystem: temp → original
+        // If crash occurs before rename: temp file exists, original is untouched
+        // If crash occurs during rename: kernel guarantees either old or new content
         if let Err(e) = std::fs::rename(&temp_path, &self.path) {
-            if let Err(e2) = std::fs::rename(&backup_path, &self.path) {
-                tracing::error!("compaction rollback failed, log file may be lost: {}", e2);
-            }
+            let _ = std::fs::remove_file(&temp_path);
             return Err(NoaError::Io(e));
         }
 
-        if let Err(e) = std::fs::remove_file(&backup_path) {
-            tracing::warn!("failed to remove compaction backup file {}: {}", backup_path.display(), e);
-        }
+        // Clean up any stale backup from previous interrupted compactions
+        let backup_path = self.path.with_extension("bak");
+        let _ = std::fs::remove_file(&backup_path);
 
         *file = OpenOptions::new()
             .append(true)
@@ -479,5 +472,39 @@ mod tests {
 
         let entries = log.read_all().await.unwrap();
         assert_eq!(entries.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_compact_interrupted_temp_file_left_behind() {
+        let tmp = TempDir::new().unwrap();
+        let log_path = tmp.path().join("interrupted.log");
+        let log = FileAgentLog::create(&log_path).unwrap();
+        for i in 1..=5 {
+            log.append(&make_entry(i, OpType::Write, &format!("{}.rs", i), i * 100))
+                .await
+                .unwrap();
+        }
+        drop(log);
+
+        // Simulate interrupted compaction: create a stale temp file
+        let temp_path = compact_temp_path(&log_path);
+        std::fs::write(&temp_path, b"trash data").unwrap();
+
+        // Simulate interrupted compaction with stale .bak file
+        let bak_path = log_path.with_extension("bak");
+        std::fs::write(&bak_path, b"stale backup").unwrap();
+
+        // Running compaction must clean up stale temp and .bak, and succeed
+        let log2 = FileAgentLog::open(&log_path).unwrap();
+        log2.compact_to(3).await.unwrap();
+
+        let entries = log2.read_all().await.unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().all(|e| e.seq > 3));
+
+        // Verify stale files are cleaned up
+        assert!(!temp_path.exists(), "stale temp file should be cleaned up");
+        // .bak should also be removed
+        assert!(!bak_path.exists(), "stale .bak file should be cleaned up");
     }
 }
