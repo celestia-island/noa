@@ -142,14 +142,6 @@ fn render_branches(f: &mut Frame, area: Rect, app: &App) {
             state.select(Some(idx));
         }
     }
-
-    let list = List::new(items).highlight_style(Style::default().bg(Color::DarkGray).bold());
-    let mut state = ListState::default();
-    if focused {
-        if let Some(idx) = app.branch_scroll.selected_index() {
-            state.select(Some(idx));
-        }
-    }
     f.render_stateful_widget(list, inner, &mut state);
 }
 

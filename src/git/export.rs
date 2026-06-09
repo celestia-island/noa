@@ -143,14 +143,18 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
             continue;
         }
         let file_path = repo_root.join(&entry.name);
-        let canonical_root = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
-        if let Ok(canonical_file) = file_path.parent().and_then(|p| p.canonicalize().ok()) {
-            if !canonical_file.starts_with(&canonical_root) {
-                tracing::warn!(
-                    "skipping path traversal in export tree entry: {}",
-                    entry.name
-                );
-                continue;
+        if let Some(parent) = file_path.parent() {
+            if parent.exists() {
+                if let Ok(canonical_parent) = parent.canonicalize() {
+                    let canonical_root = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
+                    if !canonical_parent.starts_with(&canonical_root) {
+                        tracing::warn!(
+                            "skipping path traversal in export tree entry: {}",
+                            entry.name
+                        );
+                        continue;
+                    }
+                }
             }
         }
         if let Some(parent) = file_path.parent() {

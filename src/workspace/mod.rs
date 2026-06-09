@@ -51,14 +51,11 @@ impl WorkspaceManager {
             let txn = redb_err!(db.begin_write())?;
             {
                 let mut table = redb_err!(txn.open_table(WORKSPACES))?;
-                match redb_err!(table.get(&ws.name))? {
-                    Some(_) => {
-                        return Err(NoaError::WorkspaceAlreadyExists(ws.name.clone()));
-                    }
-                    None => {
-                        redb_err!(table.insert(ws.name.as_str(), data.as_slice()))?;
-                    }
+                let exists = redb_err!(table.get(ws.name.as_str()))?.is_some();
+                if exists {
+                    return Err(NoaError::WorkspaceAlreadyExists(ws.name.clone()));
                 }
+                redb_err!(table.insert(ws.name.as_str(), data.as_slice()))?;
             }
             redb_err!(txn.commit())
         })
@@ -72,7 +69,7 @@ impl WorkspaceManager {
         tokio::task::spawn_blocking(move || {
             let txn = redb_err!(db.begin_read())?;
             let table = redb_err!(txn.open_table(WORKSPACES))?;
-            match redb_err!(table.get(&name))? {
+            match redb_err!(table.get(name.as_str()))? {
                 Some(guard) => {
                     let ws: Workspace = rmp_serde::from_slice(guard.value())
                         .map_err(|e| NoaError::Serialization(e.to_string()))?;
@@ -109,7 +106,7 @@ impl WorkspaceManager {
             let txn = redb_err!(db.begin_write())?;
             {
                 let mut table = redb_err!(txn.open_table(WORKSPACES))?;
-                redb_err!(table.remove(&name))?;
+                redb_err!(table.remove(name.as_str()))?;
             }
             redb_err!(txn.commit())?;
             Ok(true)

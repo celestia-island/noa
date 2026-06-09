@@ -56,7 +56,7 @@ pub struct ApiError {
     pub error: String,
 }
 
-fn err_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
+fn err_json(_msg: impl ToString) -> (StatusCode, Json<ApiError>) {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(ApiError {
@@ -65,7 +65,7 @@ fn err_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
     )
 }
 
-fn not_found_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
+fn not_found_json(_msg: impl ToString) -> (StatusCode, Json<ApiError>) {
     (
         StatusCode::NOT_FOUND,
         Json(ApiError {

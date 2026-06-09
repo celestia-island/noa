@@ -167,7 +167,7 @@ impl Repository {
 
     fn open_db(noa_dir: &Path) -> Result<Database> {
         let db_path = noa_dir.join(DB_NAME);
-        let db = Database::builder()
+        let mut db = Database::builder()
             .create(&db_path)
             .map_err(|e| NoaError::Redb(e.to_string()))?;
         db.check_integrity()

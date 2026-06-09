@@ -44,10 +44,10 @@ impl RefStore for RedbRefStore {
     async fn get(&self, name: &str) -> Result<Option<SnapshotId>> {
         let db = self.db.clone();
         let name = name.to_string();
-        let result = tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             let txn = redb_err!(db.begin_read())?;
             let table = redb_err!(txn.open_table(REFS))?;
-            match redb_err!(table.get(&name))? {
+            match redb_err!(table.get(name.as_str()))? {
                 Some(guard) => {
                     let id_str = String::from_utf8(guard.value().to_vec())
                         .map_err(|e| NoaError::Serialization(e.to_string()))?;
@@ -55,8 +55,7 @@ impl RefStore for RedbRefStore {
                 }
                 None => Ok(None),
             }
-        }).await.map_err(|e| NoaError::Sync(e.to_string()))?;
-        result
+        }).await.map_err(|e| NoaError::Sync(e.to_string()))?
     }
 
     async fn cas(&self, name: &str, old: Option<&SnapshotId>, new: &SnapshotId) -> Result<bool> {
@@ -69,7 +68,7 @@ impl RefStore for RedbRefStore {
             {
                 let mut table = redb_err!(txn.open_table(REFS))?;
 
-                let current: Option<SnapshotId> = match redb_err!(table.get(&name))? {
+                let current: Option<SnapshotId> = match redb_err!(table.get(&*name))? {
                     Some(guard) => {
                         let s = String::from_utf8(guard.value().to_vec())
                             .map_err(|e| NoaError::Serialization(e.to_string()))?;
@@ -88,7 +87,7 @@ impl RefStore for RedbRefStore {
                     return Ok(false);
                 }
 
-                redb_err!(table.insert(&name, new.0.as_bytes()))?;
+                redb_err!(table.insert(&*name, new.0.as_bytes()))?;
             }
             match txn.commit() {
                 Ok(()) => Ok(true),
@@ -129,7 +128,7 @@ impl RefStore for RedbRefStore {
             let txn = redb_err!(db.begin_write())?;
             {
                 let mut table = redb_err!(txn.open_table(REFS))?;
-                redb_err!(table.remove(&name))?;
+                redb_err!(table.remove(name.as_str()))?;
             }
             redb_err!(txn.commit())?;
             Ok(true)
