@@ -121,6 +121,7 @@ impl AgentLog for FileAgentLog {
         let remaining: Vec<LogEntry> = entries.into_iter().filter(|e| e.seq > up_to_seq).collect();
 
         let temp_path = compact_temp_path(&self.path);
+        let backup_path = self.path.with_extension("bak");
 
         {
             let mut tmp_file = OpenOptions::new()
@@ -137,7 +138,19 @@ impl AgentLog for FileAgentLog {
             tmp_file.sync_all()?;
         }
 
-        std::fs::rename(&temp_path, &self.path)?;
+        if self.path.exists() {
+            if let Err(e) = std::fs::rename(&self.path, &backup_path) {
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(NoaError::Io(e));
+            }
+        }
+
+        if let Err(e) = std::fs::rename(&temp_path, &self.path) {
+            let _ = std::fs::rename(&backup_path, &self.path);
+            return Err(NoaError::Io(e));
+        }
+
+        let _ = std::fs::remove_file(&backup_path);
 
         *file = OpenOptions::new()
             .append(true)

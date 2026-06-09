@@ -43,66 +43,83 @@ impl RedbObjectStore {
 #[async_trait::async_trait]
 impl ObjectStore for RedbObjectStore {
     async fn put_blob(&self, content: &[u8]) -> Result<BlobId> {
-        let hash = sha256_hex(content);
-        let id = BlobId(hash);
-
-        let txn = redb_err!(self.db.begin_write())?;
-        {
-            let mut table = redb_err!(txn.open_table(BLOBS))?;
-            redb_err!(table.insert(id.as_bytes(), content))?;
-        }
-        redb_err!(txn.commit())?;
-
-        Ok(id)
+        let db = self.db.clone();
+        let content = content.to_vec();
+        tokio::task::spawn_blocking(move || {
+            let hash = sha256_hex(&content);
+            let id = BlobId(hash);
+            let txn = redb_err!(db.begin_write())?;
+            {
+                let mut table = redb_err!(txn.open_table(BLOBS))?;
+                redb_err!(table.insert(id.as_bytes(), content.as_slice()))?;
+            }
+            redb_err!(txn.commit())?;
+            Ok(id)
+        }).await.map_err(|e| NoaError::Sync(e.to_string()))?
     }
 
     async fn get_blob(&self, id: &BlobId) -> Result<Vec<u8>> {
-        let txn = redb_err!(self.db.begin_read())?;
-        let table = redb_err!(txn.open_table(BLOBS))?;
-
-        match redb_err!(table.get(id.as_bytes()))? {
-            Some(guard) => Ok(guard.value().to_vec()),
-            None => Err(NoaError::ObjectNotFound(id.to_string())),
-        }
+        let db = self.db.clone();
+        let id = id.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = redb_err!(db.begin_read())?;
+            let table = redb_err!(txn.open_table(BLOBS))?;
+            match redb_err!(table.get(id.as_bytes()))? {
+                Some(guard) => Ok(guard.value().to_vec()),
+                None => Err(NoaError::ObjectNotFound(id.to_string())),
+            }
+        }).await.map_err(|e| NoaError::Sync(e.to_string()))?
     }
 
     async fn has_blob(&self, id: &BlobId) -> Result<bool> {
-        let txn = redb_err!(self.db.begin_read())?;
-        let table = redb_err!(txn.open_table(BLOBS))?;
-        Ok(redb_err!(table.get(id.as_bytes()))?.is_some())
+        let db = self.db.clone();
+        let id = id.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = redb_err!(db.begin_read())?;
+            let table = redb_err!(txn.open_table(BLOBS))?;
+            Ok(redb_err!(table.get(id.as_bytes()))?.is_some())
+        }).await.map_err(|e| NoaError::Sync(e.to_string()))?
     }
 
     async fn put_tree(&self, entries: &TreeEntries) -> Result<TreeId> {
+        let db = self.db.clone();
         let data =
             rmp_serde::to_vec(entries).map_err(|e| NoaError::Serialization(e.to_string()))?;
-        let hash = sha256_hex(&data);
-        let id = TreeId(hash);
-
-        let txn = redb_err!(self.db.begin_write())?;
-        {
-            let mut table = redb_err!(txn.open_table(TREES))?;
-            redb_err!(table.insert(id.as_bytes(), data.as_slice()))?;
-        }
-        redb_err!(txn.commit())?;
-
-        Ok(id)
+        tokio::task::spawn_blocking(move || {
+            let hash = sha256_hex(&data);
+            let id = TreeId(hash);
+            let txn = redb_err!(db.begin_write())?;
+            {
+                let mut table = redb_err!(txn.open_table(TREES))?;
+                redb_err!(table.insert(id.as_bytes(), data.as_slice()))?;
+            }
+            redb_err!(txn.commit())?;
+            Ok(id)
+        }).await.map_err(|e| NoaError::Sync(e.to_string()))?
     }
 
     async fn get_tree(&self, id: &TreeId) -> Result<TreeEntries> {
-        let txn = redb_err!(self.db.begin_read())?;
-        let table = redb_err!(txn.open_table(TREES))?;
-
-        match redb_err!(table.get(id.as_bytes()))? {
-            Some(guard) => rmp_serde::from_slice(guard.value())
-                .map_err(|e| NoaError::Serialization(e.to_string())),
-            None => Err(NoaError::ObjectNotFound(id.to_string())),
-        }
+        let db = self.db.clone();
+        let id = id.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = redb_err!(db.begin_read())?;
+            let table = redb_err!(txn.open_table(TREES))?;
+            match redb_err!(table.get(id.as_bytes()))? {
+                Some(guard) => rmp_serde::from_slice(guard.value())
+                    .map_err(|e| NoaError::Serialization(e.to_string())),
+                None => Err(NoaError::ObjectNotFound(id.to_string())),
+            }
+        }).await.map_err(|e| NoaError::Sync(e.to_string()))?
     }
 
     async fn has_tree(&self, id: &TreeId) -> Result<bool> {
-        let txn = redb_err!(self.db.begin_read())?;
-        let table = redb_err!(txn.open_table(TREES))?;
-        Ok(redb_err!(table.get(id.as_bytes()))?.is_some())
+        let db = self.db.clone();
+        let id = id.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = redb_err!(db.begin_read())?;
+            let table = redb_err!(txn.open_table(TREES))?;
+            Ok(redb_err!(table.get(id.as_bytes()))?.is_some())
+        }).await.map_err(|e| NoaError::Sync(e.to_string()))?
     }
 }
 

@@ -138,9 +138,7 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
                                 continue;
                             }
                         }
-                        if self.repo_root.is_some()
-                            && !Self::is_path_within_root(PathBuf::from(path).as_path())
-                        {
+                        if !Self::is_path_within_root(PathBuf::from(path).as_path()) {
                             tracing::warn!("skipping path traversal in log entry: {}", path);
                             continue;
                         }

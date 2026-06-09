@@ -42,69 +42,98 @@ impl RedbRefStore {
 #[async_trait]
 impl RefStore for RedbRefStore {
     async fn get(&self, name: &str) -> Result<Option<SnapshotId>> {
-        let txn = redb_err!(self.db.begin_read())?;
-        let table = redb_err!(txn.open_table(REFS))?;
-        match redb_err!(table.get(name))? {
-            Some(guard) => {
-                let id_str = String::from_utf8(guard.value().to_vec())
-                    .map_err(|e| NoaError::Serialization(e.to_string()))?;
-                Ok(Some(SnapshotId(id_str)))
+        let db = self.db.clone();
+        let name = name.to_string();
+        let result = tokio::task::spawn_blocking(move || {
+            let txn = redb_err!(db.begin_read())?;
+            let table = redb_err!(txn.open_table(REFS))?;
+            match redb_err!(table.get(&name))? {
+                Some(guard) => {
+                    let id_str = String::from_utf8(guard.value().to_vec())
+                        .map_err(|e| NoaError::Serialization(e.to_string()))?;
+                    Ok(Some(SnapshotId(id_str)))
+                }
+                None => Ok(None),
             }
-            None => Ok(None),
-        }
+        }).await.map_err(|e| NoaError::Sync(e.to_string()))?;
+        result
     }
 
     async fn cas(&self, name: &str, old: Option<&SnapshotId>, new: &SnapshotId) -> Result<bool> {
-        let txn = redb_err!(self.db.begin_write())?;
-        {
-            let mut table = redb_err!(txn.open_table(REFS))?;
+        let db = self.db.clone();
+        let name = name.to_string();
+        let old = old.cloned();
+        let new = new.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let txn = redb_err!(db.begin_write())?;
+            {
+                let mut table = redb_err!(txn.open_table(REFS))?;
 
-            let current: Option<SnapshotId> = match redb_err!(table.get(name))? {
-                Some(guard) => {
-                    let s = String::from_utf8(guard.value().to_vec())
-                        .map_err(|e| NoaError::Serialization(e.to_string()))?;
-                    Some(SnapshotId(s))
+                let current: Option<SnapshotId> = match redb_err!(table.get(&name))? {
+                    Some(guard) => {
+                        let s = String::from_utf8(guard.value().to_vec())
+                            .map_err(|e| NoaError::Serialization(e.to_string()))?;
+                        Some(SnapshotId(s))
+                    }
+                    None => None,
+                };
+
+                let matches = match (&old, &current) {
+                    (None, None) => true,
+                    (Some(expected), Some(cur)) => expected == cur,
+                    _ => false,
+                };
+
+                if !matches {
+                    return Ok(false);
                 }
-                None => None,
-            };
 
-            let matches = match (old, &current) {
-                (None, None) => true,
-                (Some(expected), Some(current)) => expected == current,
-                _ => false,
-            };
-
-            if !matches {
-                return Ok(false);
+                redb_err!(table.insert(&name, new.0.as_bytes()))?;
             }
-
-            redb_err!(table.insert(name, new.0.as_bytes()))?;
-        }
-        redb_err!(txn.commit())?;
-        Ok(true)
+            match txn.commit() {
+                Ok(()) => Ok(true),
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("write conflict") || msg.contains("WriteConflict") {
+                        tracing::debug!("CAS write conflict for ref '{}', returning false", name);
+                        Ok(false)
+                    } else {
+                        Err(NoaError::Redb(msg))
+                    }
+                }
+            }
+        }).await.map_err(|e| NoaError::Sync(e.to_string()))?;
+        result
     }
 
     async fn list(&self) -> Result<Vec<(String, SnapshotId)>> {
-        let txn = redb_err!(self.db.begin_read())?;
-        let table = redb_err!(txn.open_table(REFS))?;
-        let mut result = Vec::new();
-        for entry in redb_err!(table.iter())? {
-            let (key, value) = redb_err!(entry)?;
-            let id_str = String::from_utf8(value.value().to_vec())
-                .map_err(|e| NoaError::Serialization(e.to_string()))?;
-            result.push((key.value().to_string(), SnapshotId(id_str)));
-        }
-        Ok(result)
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = redb_err!(db.begin_read())?;
+            let table = redb_err!(txn.open_table(REFS))?;
+            let mut result = Vec::new();
+            for entry in redb_err!(table.iter())? {
+                let (key, value) = redb_err!(entry)?;
+                let id_str = String::from_utf8(value.value().to_vec())
+                    .map_err(|e| NoaError::Serialization(e.to_string()))?;
+                result.push((key.value().to_string(), SnapshotId(id_str)));
+            }
+            Ok(result)
+        }).await.map_err(|e| NoaError::Sync(e.to_string()))?
     }
 
     async fn delete(&self, name: &str) -> Result<bool> {
-        let txn = redb_err!(self.db.begin_write())?;
-        {
-            let mut table = redb_err!(txn.open_table(REFS))?;
-            redb_err!(table.remove(name))?;
-        }
-        redb_err!(txn.commit())?;
-        Ok(true)
+        let db = self.db.clone();
+        let name = name.to_string();
+        tokio::task::spawn_blocking(move || {
+            let txn = redb_err!(db.begin_write())?;
+            {
+                let mut table = redb_err!(txn.open_table(REFS))?;
+                redb_err!(table.remove(&name))?;
+            }
+            redb_err!(txn.commit())?;
+            Ok(true)
+        }).await.map_err(|e| NoaError::Sync(e.to_string()))?
     }
 }
 
