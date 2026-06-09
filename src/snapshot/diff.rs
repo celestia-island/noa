@@ -1,3 +1,5 @@
+use crate::object::{EntryKind, ObjectStore, TreeEntry, TreeId};
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +61,75 @@ pub fn diff_snapshots(
     }
 
     diffs
+}
+
+/// Recursively diff two tree entry lists, descending into Tree-typed entries.
+/// Requires an ObjectStore to resolve sub-trees. Paths in the result include
+/// the full path from the root (e.g., "src/main.rs").
+pub fn diff_trees<O: ObjectStore + Clone + 'static>(
+    old_entries: Vec<TreeEntry>,
+    new_entries: Vec<TreeEntry>,
+    object_store: O,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<FileDiff>> + Send>> {
+    Box::pin(async move {
+        let mut diffs = Vec::new();
+
+        let mut old_map: std::collections::HashMap<String, &TreeEntry> =
+            std::collections::HashMap::new();
+        for e in &old_entries {
+            old_map.insert(e.name.clone(), e);
+        }
+
+        let mut new_map: std::collections::HashMap<String, &TreeEntry> =
+            std::collections::HashMap::new();
+        for e in &new_entries {
+            new_map.insert(e.name.clone(), e);
+        }
+
+        for entry in &new_entries {
+            match old_map.get(&entry.name) {
+                None => diffs.push(FileDiff {
+                    path: entry.name.clone(),
+                    kind: DiffKind::Added,
+                }),
+                Some(old) if old.id != entry.id => {
+                    if old.kind == EntryKind::Tree && entry.kind == EntryKind::Tree {
+                        let old_id = TreeId(old.id.clone());
+                        let new_id = TreeId(entry.id.clone());
+                        let (old_sub_res, new_sub_res) = tokio::join!(
+                            object_store.get_tree(&old_id),
+                            object_store.get_tree(&new_id),
+                        );
+                        if let (Ok(old_sub), Ok(new_sub)) = (old_sub_res, new_sub_res) {
+                            let sub_diffs =
+                                diff_trees(old_sub.0, new_sub.0, object_store.clone()).await;
+                            for mut d in sub_diffs {
+                                d.path = format!("{}/{}", entry.name, d.path);
+                                diffs.push(d);
+                            }
+                        }
+                    } else {
+                        diffs.push(FileDiff {
+                            path: entry.name.clone(),
+                            kind: DiffKind::Modified,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        for entry in &old_entries {
+            if !new_map.contains_key(&entry.name) {
+                diffs.push(FileDiff {
+                    path: entry.name.clone(),
+                    kind: DiffKind::Deleted,
+                });
+            }
+        }
+
+        diffs
+    })
 }
 
 #[cfg(test)]
