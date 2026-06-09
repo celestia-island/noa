@@ -167,9 +167,12 @@ impl Repository {
 
     fn open_db(noa_dir: &Path) -> Result<Database> {
         let db_path = noa_dir.join(DB_NAME);
-        Database::builder()
+        let db = Database::builder()
             .create(&db_path)
-            .map_err(|e| NoaError::Redb(e.to_string()))
+            .map_err(|e| NoaError::Redb(e.to_string()))?;
+        db.check_integrity()
+            .map_err(|e| NoaError::Redb(format!("database integrity check failed: {}", e)))?;
+        Ok(db)
     }
 
     fn init_tables(db: &Database) -> Result<()> {
@@ -355,13 +358,18 @@ pub fn manage_gitignore(root: &Path) {
 
     if !gitignore_path.exists() {
         let content = "# Added by noa \u{2014} keep agent iteration data out of git\n.noa/\n";
-        let _ = std::fs::write(&gitignore_path, content);
+        if let Err(e) = std::fs::write(&gitignore_path, content) {
+            tracing::warn!("failed to write .gitignore: {}", e);
+        }
         return;
     }
 
     let content = match std::fs::read_to_string(&gitignore_path) {
         Ok(c) => c,
-        Err(_) => return,
+        Err(e) => {
+            tracing::warn!("failed to read .gitignore: {}", e);
+            return;
+        }
     };
 
     for line in content.lines() {
@@ -370,7 +378,9 @@ pub fn manage_gitignore(root: &Path) {
         }
     }
 
-    let _ = std::fs::write(&gitignore_path, format!("{}\n.noa/\n", content.trim_end()));
+    if let Err(e) = std::fs::write(&gitignore_path, format!("{}\n.noa/\n", content.trim_end())) {
+        tracing::warn!("failed to update .gitignore: {}", e);
+    }
 }
 
 pub fn manage_gitattributes(root: &Path, noa_remote_url: &str) {
@@ -382,13 +392,18 @@ pub fn manage_gitattributes(root: &Path, noa_remote_url: &str) {
             "# Added by noa \u{2014} specifies where agent iteration data is hosted\n{}\n",
             attr_line
         );
-        let _ = std::fs::write(&gitattributes_path, content);
+        if let Err(e) = std::fs::write(&gitattributes_path, content) {
+            tracing::warn!("failed to write .gitattributes: {}", e);
+        }
         return;
     }
 
     let content = match std::fs::read_to_string(&gitattributes_path) {
         Ok(c) => c,
-        Err(_) => return,
+        Err(e) => {
+            tracing::warn!("failed to read .gitattributes: {}", e);
+            return;
+        }
     };
 
     for line in content.lines() {
@@ -397,14 +412,16 @@ pub fn manage_gitattributes(root: &Path, noa_remote_url: &str) {
         }
     }
 
-    let _ = std::fs::write(
+    if let Err(e) = std::fs::write(
         &gitattributes_path,
         format!(
             "{}\n# Added by noa \u{2014} specifies where agent iteration data is hosted\n{}\n",
             content.trim_end(),
             attr_line
         ),
-    );
+    ) {
+        tracing::warn!("failed to update .gitattributes: {}", e);
+    }
 }
 
 #[cfg(test)]

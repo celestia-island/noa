@@ -43,57 +43,97 @@ impl WorkspaceManager {
     }
 
     pub async fn create(&self, workspace: &Workspace) -> Result<()> {
-        if self.get(&workspace.name).await?.is_some() {
-            return Err(NoaError::WorkspaceAlreadyExists(workspace.name.clone()));
-        }
-        self.put(workspace).await
+        let db = self.db.clone();
+        let ws = workspace.clone();
+        tokio::task::spawn_blocking(move || {
+            let data =
+                rmp_serde::to_vec(&ws).map_err(|e| NoaError::Serialization(e.to_string()))?;
+            let txn = redb_err!(db.begin_write())?;
+            {
+                let mut table = redb_err!(txn.open_table(WORKSPACES))?;
+                match redb_err!(table.get(&ws.name))? {
+                    Some(_) => {
+                        return Err(NoaError::WorkspaceAlreadyExists(ws.name.clone()));
+                    }
+                    None => {
+                        redb_err!(table.insert(ws.name.as_str(), data.as_slice()))?;
+                    }
+                }
+            }
+            redb_err!(txn.commit())
+        })
+        .await
+        .map_err(|e| NoaError::Sync(e.to_string()))?
     }
 
     pub async fn get(&self, name: &str) -> Result<Option<Workspace>> {
-        let txn = redb_err!(self.db.begin_read())?;
-        let table = redb_err!(txn.open_table(WORKSPACES))?;
-        match redb_err!(table.get(name))? {
-            Some(guard) => {
-                let ws: Workspace = rmp_serde::from_slice(guard.value())
-                    .map_err(|e| NoaError::Serialization(e.to_string()))?;
-                Ok(Some(ws))
+        let db = self.db.clone();
+        let name = name.to_string();
+        tokio::task::spawn_blocking(move || {
+            let txn = redb_err!(db.begin_read())?;
+            let table = redb_err!(txn.open_table(WORKSPACES))?;
+            match redb_err!(table.get(&name))? {
+                Some(guard) => {
+                    let ws: Workspace = rmp_serde::from_slice(guard.value())
+                        .map_err(|e| NoaError::Serialization(e.to_string()))?;
+                    Ok(Some(ws))
+                }
+                None => Ok(None),
             }
-            None => Ok(None),
-        }
+        })
+        .await
+        .map_err(|e| NoaError::Sync(e.to_string()))?
     }
 
     pub async fn put(&self, workspace: &Workspace) -> Result<()> {
+        let db = self.db.clone();
         let data =
             rmp_serde::to_vec(workspace).map_err(|e| NoaError::Serialization(e.to_string()))?;
-        let txn = redb_err!(self.db.begin_write())?;
-        {
-            let mut table = redb_err!(txn.open_table(WORKSPACES))?;
-            redb_err!(table.insert(workspace.name.as_str(), data.as_slice()))?;
-        }
-        redb_err!(txn.commit())
+        let name = workspace.name.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = redb_err!(db.begin_write())?;
+            {
+                let mut table = redb_err!(txn.open_table(WORKSPACES))?;
+                redb_err!(table.insert(name.as_str(), data.as_slice()))?;
+            }
+            redb_err!(txn.commit())
+        })
+        .await
+        .map_err(|e| NoaError::Sync(e.to_string()))?
     }
 
     pub async fn delete(&self, name: &str) -> Result<bool> {
-        let txn = redb_err!(self.db.begin_write())?;
-        {
-            let mut table = redb_err!(txn.open_table(WORKSPACES))?;
-            redb_err!(table.remove(name))?;
-        }
-        redb_err!(txn.commit())?;
-        Ok(true)
+        let db = self.db.clone();
+        let name = name.to_string();
+        tokio::task::spawn_blocking(move || {
+            let txn = redb_err!(db.begin_write())?;
+            {
+                let mut table = redb_err!(txn.open_table(WORKSPACES))?;
+                redb_err!(table.remove(&name))?;
+            }
+            redb_err!(txn.commit())?;
+            Ok(true)
+        })
+        .await
+        .map_err(|e| NoaError::Sync(e.to_string()))?
     }
 
     pub async fn list(&self) -> Result<Vec<Workspace>> {
-        let txn = redb_err!(self.db.begin_read())?;
-        let table = redb_err!(txn.open_table(WORKSPACES))?;
-        let mut result = Vec::new();
-        for entry in redb_err!(table.iter())? {
-            let (_, value) = redb_err!(entry)?;
-            let ws: Workspace = rmp_serde::from_slice(value.value())
-                .map_err(|e| NoaError::Serialization(e.to_string()))?;
-            result.push(ws);
-        }
-        Ok(result)
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = redb_err!(db.begin_read())?;
+            let table = redb_err!(txn.open_table(WORKSPACES))?;
+            let mut result = Vec::new();
+            for entry in redb_err!(table.iter())? {
+                let (_, value) = redb_err!(entry)?;
+                let ws: Workspace = rmp_serde::from_slice(value.value())
+                    .map_err(|e| NoaError::Serialization(e.to_string()))?;
+                result.push(ws);
+            }
+            Ok(result)
+        })
+        .await
+        .map_err(|e| NoaError::Sync(e.to_string()))?
     }
 
     pub async fn update_head(&self, name: &str, new_head: &SnapshotId) -> Result<()> {

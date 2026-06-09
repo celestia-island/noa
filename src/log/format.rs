@@ -16,11 +16,19 @@ pub fn deserialize_entry(line: &str) -> Result<LogEntry> {
 }
 
 pub fn deserialize_entries(content: &str) -> Result<Vec<LogEntry>> {
-    content
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(deserialize_entry)
-        .collect()
+    let mut entries = Vec::new();
+    for (line_num, line) in content.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        match deserialize_entry(line) {
+            Ok(entry) => entries.push(entry),
+            Err(e) => {
+                tracing::warn!("skipping corrupted log line {}: {}", line_num + 1, e);
+            }
+        }
+    }
+    Ok(entries)
 }
 
 #[cfg(test)]

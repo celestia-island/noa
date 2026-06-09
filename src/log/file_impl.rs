@@ -31,6 +31,9 @@ impl FileAgentLog {
             path: path.to_path_buf(),
             next_seq: std::sync::atomic::AtomicU64::new(1),
         };
+        let max_seq = log.compute_max_seq()?;
+        log.next_seq
+            .store(max_seq + 1, std::sync::atomic::Ordering::SeqCst);
         Ok(log)
     }
 
@@ -62,11 +65,19 @@ impl FileAgentLog {
             .file
             .lock()
             .map_err(|e| NoaError::Io(std::io::Error::other(e.to_string())))?;
+        file.seek(SeekFrom::End(-2)).ok();
+        let mut tail = String::new();
         file.seek(SeekFrom::Start(0))?;
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
-        let entries = format::deserialize_entries(&content)?;
-        Ok(entries.iter().map(|e| e.seq).max().unwrap_or(0))
+        file.read_to_string(&mut tail)?;
+        for line in tail.lines().rev() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(entry) = format::deserialize_entry(line) {
+                return Ok(entry.seq);
+            }
+        }
+        Ok(0)
     }
 }
 
@@ -84,7 +95,7 @@ impl AgentLog for FileAgentLog {
             .lock()
             .map_err(|e| NoaError::Io(std::io::Error::other(e.to_string())))?;
         writeln!(file, "{}", line)?;
-        file.sync_all()?;
+        file.sync_data()?;
         Ok(seq)
     }
 
