@@ -56,7 +56,9 @@ pub struct ApiError {
     pub error: String,
 }
 
-fn err_json(_msg: impl ToString) -> (StatusCode, Json<ApiError>) {
+fn err_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
+    let msg = msg.to_string();
+    tracing::error!("internal server error: {}", msg);
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(ApiError {
@@ -65,7 +67,9 @@ fn err_json(_msg: impl ToString) -> (StatusCode, Json<ApiError>) {
     )
 }
 
-fn not_found_json(_msg: impl ToString) -> (StatusCode, Json<ApiError>) {
+fn not_found_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
+    let msg = msg.to_string();
+    tracing::debug!("resource not found: {}", msg);
     (
         StatusCode::NOT_FOUND,
         Json(ApiError {
@@ -290,9 +294,10 @@ pub async fn get_tree(
     validate_hash_id(&hash)?;
     let store = state.object_store().map_err(err_json)?;
     match store.get_tree(&TreeId(hash)).await {
-        Ok(entries) => Ok(Json(
-            serde_json::to_value(&entries).unwrap_or_else(|_| serde_json::json!({})),
-        )),
+        Ok(entries) => match serde_json::to_value(&entries) {
+            Ok(v) => Ok(Json(v)),
+            Err(e) => Err(err_json(format!("TreeEntries serialization failed: {}", e))),
+        },
         Err(crate::error::NoaError::ObjectNotFound(_)) => Err(not_found_json("tree not found")),
         Err(e) => Err(err_json(e)),
     }

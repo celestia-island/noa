@@ -42,7 +42,21 @@ pub async fn run_create(repo: &Repository, message: &str, author: &str) -> Resul
         .await?;
 
     let ref_store = repo.ref_store()?;
-    ref_store.cas(&head_ws, None, &snapshot.id).await.ok();
+    match ref_store.cas(&head_ws, None, &snapshot.id).await {
+        Ok(true) => {}
+        Ok(false) => {
+            eprintln!(
+                "warning: ref '{}' already exists, snapshot {} not set as HEAD",
+                head_ws, snapshot.id
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "warning: failed to update ref '{}' after snapshot: {}",
+                head_ws, e
+            );
+        }
+    }
 
     println!(
         "Created snapshot {} in workspace '{}'",

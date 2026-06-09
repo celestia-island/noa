@@ -50,7 +50,8 @@ pub async fn run_push(remote_name: &str) -> Result<()> {
         }
         println!("Pushed to {} ({})", remote_name, remote.url);
     } else {
-        anyhow::bail!("git push failed");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git push failed: {}", stderr.trim());
     }
 
     Ok(())
@@ -73,7 +74,8 @@ pub async fn run_pull(remote_name: &str) -> Result<()> {
         .output()?;
 
     if !output.status.success() {
-        anyhow::bail!("git pull failed");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git pull failed: {}", stderr.trim());
     }
 
     if crate::git::export::detect_lfs_available(&root)
@@ -94,7 +96,9 @@ pub async fn run_pull(remote_name: &str) -> Result<()> {
         .flatten();
     if let Some(snap_id) = head_ref {
         let ws_mgr = crate::workspace::WorkspaceManager::new(db)?;
-        ws_mgr.update_head(&head_ws, &snap_id).await.ok();
+        if let Err(e) = ws_mgr.update_head(&head_ws, &snap_id).await {
+            eprintln!("warning: failed to update workspace head after pull: {}", e);
+        }
     }
 
     println!("Pulled from {} and re-imported into noa", remote_name);
@@ -237,7 +241,9 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
             updated_at: now,
         })
         .await
-        .ok();
+        .unwrap_or_else(|e| {
+            eprintln!("warning: failed to create default workspace: {}", e);
+        });
 
     println!(
         "SVN repository exported and imported into noa: {}",

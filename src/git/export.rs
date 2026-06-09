@@ -49,7 +49,7 @@ pub fn validate_git_url(url: &str) -> Result<()> {
     if !looks_valid {
         let has_scp_syntax = url.contains(':')
             && !url.contains("://")
-            && url.split_once(':').map_or(false, |(before, _)| {
+            && url.split_once(':').is_some_and(|(before, _)| {
                 !before.is_empty()
                     && !before.contains('/')
                     && !before.starts_with('-')

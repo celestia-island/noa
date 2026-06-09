@@ -199,9 +199,11 @@ fn create_git_branch(workspace_root: &Path, name: &str, base: &str) -> Result<()
         .current_dir(workspace_root)
         .output();
 
-    if existing.is_ok() && existing.unwrap().status.success() {
-        checkout_git_branch(workspace_root, name)?;
-        return Ok(());
+    if let Ok(output) = existing {
+        if output.status.success() {
+            checkout_git_branch(workspace_root, name)?;
+            return Ok(());
+        }
     }
 
     let output = std::process::Command::new("git")

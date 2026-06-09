@@ -51,10 +51,7 @@ impl RemoteBackend for GitBackend {
                 message: format!("{}\n{}", stdout, stderr).trim().to_string(),
             })
         } else {
-            Ok(PushResult {
-                ok: false,
-                message: stderr,
-            })
+            Err(NoaError::Remote(format!("git push failed: {}", stderr)))
         }
     }
 

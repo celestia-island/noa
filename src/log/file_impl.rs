@@ -65,7 +65,6 @@ impl FileAgentLog {
             .file
             .lock()
             .map_err(|e| NoaError::Io(std::io::Error::other(e.to_string())))?;
-        file.seek(SeekFrom::End(-2)).ok();
         let mut tail = String::new();
         file.seek(SeekFrom::Start(0))?;
         file.read_to_string(&mut tail)?;
@@ -157,11 +156,15 @@ impl AgentLog for FileAgentLog {
         }
 
         if let Err(e) = std::fs::rename(&temp_path, &self.path) {
-            let _ = std::fs::rename(&backup_path, &self.path);
+            if let Err(e2) = std::fs::rename(&backup_path, &self.path) {
+                tracing::error!("compaction rollback failed, log file may be lost: {}", e2);
+            }
             return Err(NoaError::Io(e));
         }
 
-        let _ = std::fs::remove_file(&backup_path);
+        if let Err(e) = std::fs::remove_file(&backup_path) {
+            tracing::warn!("failed to remove compaction backup file {}: {}", backup_path.display(), e);
+        }
 
         *file = OpenOptions::new()
             .append(true)

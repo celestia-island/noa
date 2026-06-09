@@ -246,7 +246,7 @@ impl SyncServer {
                 }
 
                 let engine = EventSyncEngine::new(workspace_root, workspace_name);
-                let (applied, ok, error_msg) = match engine
+                let (applied, ok, _error_msg) = match engine
                     .apply_pull_events(&sync_msg.events)
                     .await
                 {
@@ -256,19 +256,11 @@ impl SyncServer {
                         (0, false, Some(e.to_string()))
                     }
                 };
-                let mut ack = NoaEventSyncAck {
+                let ack = NoaEventSyncAck {
                     workspace_id: sync_msg.workspace_id,
                     applied,
                     ok,
                 };
-                if let Some(msg) = error_msg {
-                    ack = NoaEventSyncAck {
-                        workspace_id: ack.workspace_id,
-                        applied: 0,
-                        ok: false,
-                    };
-                    let _ = msg;
-                }
                 Ok(JsonRpcMessage::response(id, serde_json::to_value(ack)?))
             }
             _ => Ok(JsonRpcMessage::error_response(

@@ -181,7 +181,9 @@ impl EventSyncEngine {
                     ts: event.ts,
                     message: event.message.clone(),
                 };
-                let _ = log.append(&log_entry).await;
+                if let Err(e) = log.append(&log_entry).await {
+                    tracing::warn!("failed to append event to agent log (seq {}): {}", event.seq, e);
+                }
             }
         }
 
