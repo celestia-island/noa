@@ -14,7 +14,7 @@ impl IgnoreMatcher {
             let _ = builder.add(&ignore_file);
         }
 
-        Self::add_nested_gitignores(root, &mut builder);
+        Self::add_nested_gitignores(root, &mut builder, 0);
 
         let exclude_path = root.join(".git").join("info").join("exclude");
         if exclude_path.exists() {
@@ -74,7 +74,10 @@ impl IgnoreMatcher {
         }
     }
 
-    fn add_nested_gitignores(dir: &Path, builder: &mut GitignoreBuilder) {
+    fn add_nested_gitignores(dir: &Path, builder: &mut GitignoreBuilder, depth: usize) {
+        if depth > 10 {
+            return;
+        }
         let entries = match std::fs::read_dir(dir) {
             Ok(e) => e,
             Err(_) => return,
@@ -91,7 +94,7 @@ impl IgnoreMatcher {
                 if gi.exists() {
                     let _ = builder.add(&gi);
                 }
-                Self::add_nested_gitignores(&path, builder);
+                Self::add_nested_gitignores(&path, builder, depth + 1);
             }
         }
     }

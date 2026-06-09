@@ -112,6 +112,13 @@ pub fn handle_auth_request(
         BranchSelection::Current => base_branch.clone(),
     };
 
+    tracing::info!(
+        "auth decision: workspace_root={} selection={:?} branch={}",
+        workspace_root.display(),
+        selection,
+        base_branch
+    );
+
     Ok(NoaAuthResponse {
         workspace_id: String::new(),
         selected_branch,

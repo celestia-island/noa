@@ -60,7 +60,7 @@ fn err_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(ApiError {
-            error: msg.to_string(),
+            error: "internal server error".to_string(),
         }),
     )
 }
@@ -69,7 +69,7 @@ fn not_found_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
     (
         StatusCode::NOT_FOUND,
         Json(ApiError {
-            error: msg.to_string(),
+            error: "resource not found".to_string(),
         }),
     )
 }

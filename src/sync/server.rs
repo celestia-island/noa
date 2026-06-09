@@ -38,11 +38,7 @@ impl SyncServer {
         }
 
         let listener = UnixListener::bind(&self.socket_path).map_err(|e| {
-            NoaError::Sync(format!(
-                "failed to bind {}: {}",
-                self.socket_path.display(),
-                e
-            ))
+            NoaError::Sync(format!("failed to bind sync socket: {}", e))
         })?;
 
         tracing::info!(
@@ -250,15 +246,29 @@ impl SyncServer {
                 }
 
                 let engine = EventSyncEngine::new(workspace_root, workspace_name);
-                let applied = engine
+                let (applied, ok, error_msg) = match engine
                     .apply_pull_events(&sync_msg.events)
                     .await
-                    .unwrap_or(0);
-                let ack = NoaEventSyncAck {
+                {
+                    Ok(n) => (n, true, None),
+                    Err(e) => {
+                        tracing::error!("event sync apply failed: {}", e);
+                        (0, false, Some(e.to_string()))
+                    }
+                };
+                let mut ack = NoaEventSyncAck {
                     workspace_id: sync_msg.workspace_id,
                     applied,
-                    ok: true,
+                    ok,
                 };
+                if let Some(msg) = error_msg {
+                    ack = NoaEventSyncAck {
+                        workspace_id: ack.workspace_id,
+                        applied: 0,
+                        ok: false,
+                    };
+                    let _ = msg;
+                }
                 Ok(JsonRpcMessage::response(id, serde_json::to_value(ack)?))
             }
             _ => Ok(JsonRpcMessage::error_response(
