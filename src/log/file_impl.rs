@@ -65,10 +65,45 @@ impl FileAgentLog {
             .file
             .lock()
             .map_err(|e| NoaError::Io(std::io::Error::other(e.to_string())))?;
-        let mut tail = String::new();
+
+        let file_len = file.seek(SeekFrom::End(0))?;
+
+        // For small files, read all is fast enough
+        if file_len < 65536 {
+            file.seek(SeekFrom::Start(0))?;
+            let mut content = String::new();
+            file.read_to_string(&mut content)?;
+            for line in content.lines().rev() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                if let Ok(entry) = format::deserialize_entry(line) {
+                    return Ok(entry.seq);
+                }
+            }
+            return Ok(0);
+        }
+
+        // For large files, read only the last 8KB to find the last entry
+        let read_size = 8192u64.min(file_len);
+        file.seek(SeekFrom::End(-(read_size as i64)))?;
+        let mut tail = vec![0u8; read_size as usize];
+        file.read_exact(&mut tail)?;
+        let tail_str = String::from_utf8_lossy(&tail);
+        for line in tail_str.lines().rev() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Ok(entry) = format::deserialize_entry(trimmed) {
+                return Ok(entry.seq);
+            }
+        }
+        // Fallback: no valid entry found in tail, read entire file
         file.seek(SeekFrom::Start(0))?;
-        file.read_to_string(&mut tail)?;
-        for line in tail.lines().rev() {
+        let mut content = String::new();
+        file.read_to_string(&mut content)?;
+        for line in content.lines().rev() {
             if line.trim().is_empty() {
                 continue;
             }
@@ -506,5 +541,45 @@ mod tests {
         assert!(!temp_path.exists(), "stale temp file should be cleaned up");
         // .bak should also be removed
         assert!(!bak_path.exists(), "stale .bak file should be cleaned up");
+    }
+
+    #[tokio::test]
+    async fn test_compute_max_seq_large_file_tail() {
+        let tmp = TempDir::new().unwrap();
+        let log_path = tmp.path().join("large.log");
+        let log = FileAgentLog::create(&log_path).unwrap();
+
+        // Write enough entries to exceed 65536 bytes (small file threshold)
+        let mut last_seq = 0u64;
+        for i in 1..=2000 {
+            let entry = LogEntry {
+                seq: i,
+                op: OpType::Write,
+                path: Some(format!("src/very/long/path/to/file/number/{}/module.rs", i)),
+                blob_id: Some("abcd1234efgh5678ijkl9012mnop3456qrst7890".to_string()),
+                from_path: None,
+                resolved_conflict_ours_id: None,
+                resolved_conflict_theirs_id: None,
+                snapshot_id: Some(format!("noa_snapshot_{}", i)),
+                ts: i * 1000,
+                message: Some(format!("commit message number {} that is fairly long to increase file size", i)),
+            };
+            last_seq = log.append(&entry).await.unwrap();
+        }
+
+        drop(log);
+
+        // Reopen and verify correct max_seq is computed from tail
+        let reopened = FileAgentLog::open(&log_path).unwrap();
+        let next = reopened.next_seq().await.unwrap();
+        assert!(
+            next > last_seq,
+            "next_seq {} should be > last_appended_seq {}",
+            next,
+            last_seq
+        );
+
+        let entries = reopened.read_all().await.unwrap();
+        assert_eq!(entries.len() as u64, last_seq);
     }
 }
