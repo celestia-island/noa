@@ -143,9 +143,13 @@ fn render_branches(f: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    let inner_height = inner.height.saturating_sub(1) as usize;
-    let mut scroll = app.branch_scroll.clone();
-    scroll.set_visible_height(inner_height);
+    let list = List::new(items).highlight_style(Style::default().bg(Color::DarkGray).bold());
+    let mut state = ListState::default();
+    if focused {
+        if let Some(idx) = app.branch_scroll.selected_index() {
+            state.select(Some(idx));
+        }
+    }
     f.render_stateful_widget(list, inner, &mut state);
 }
 
@@ -169,15 +173,17 @@ fn render_log(f: &mut Frame, area: Rect, app: &App) {
     let items: Vec<ListItem> = display
         .iter()
         .map(|snap| {
-            let msg = if snap.message.len() > 35 {
-                format!("{}...", &snap.message[..32])
+            let msg = if snap.message.chars().count() > 35 {
+                let truncated: String = snap.message.chars().take(32).collect();
+                format!("{}...", truncated)
             } else {
                 snap.message.clone()
             };
-            let id_short = if snap.id.0.len() > 12 {
-                &snap.id.0[..12]
+            let id_display: String = snap.id.0.chars().take(12).collect();
+            let id_short = if snap.id.0.chars().count() > 12 {
+                id_display
             } else {
-                &snap.id.0
+                snap.id.0.clone()
             };
             let ts = chrono::DateTime::from_timestamp(snap.timestamp as i64 / 1_000_000, 0)
                 .map(|dt| dt.format("%m/%d %H:%M").to_string())
@@ -244,8 +250,9 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
         .parents
         .iter()
         .map(|p| {
-            if p.0.len() > 12 {
-                format!("{}...", &p.0[..12])
+            if p.0.chars().count() > 12 {
+                let truncated: String = p.0.chars().take(12).collect();
+                format!("{}...", truncated)
             } else {
                 p.0.clone()
             }
@@ -272,8 +279,9 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
         ]),
         Line::from(vec![
             Span::styled("Tree:     ", Style::default().fg(Color::Yellow).bold()),
-            Span::raw(if snap.tree_hash.len() > 20 {
-                format!("{}...", &snap.tree_hash[..20])
+            Span::raw(if snap.tree_hash.chars().count() > 20 {
+                let truncated: String = snap.tree_hash.chars().take(20).collect();
+                format!("{}...", truncated)
             } else {
                 snap.tree_hash.clone()
             }),

@@ -113,6 +113,11 @@ impl App {
                     self.focus = Focus::Log;
                 }
             }
+            (_, KeyCode::Enter) => {
+                if self.mode == AppMode::Log && self.focus == Focus::Log {
+                    self.focus = Focus::Detail;
+                }
+            }
             _ => {}
         }
         false

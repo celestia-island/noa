@@ -20,12 +20,12 @@ pub fn setup_terminal() -> Result<Tui> {
 }
 
 pub fn cleanup_terminal(terminal: &mut Tui) -> Result<()> {
-    disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
         DisableMouseCapture
     )?;
     terminal.show_cursor()?;
+    disable_raw_mode()?;
     Ok(())
 }
