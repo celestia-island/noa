@@ -52,6 +52,9 @@ pub enum NoaError {
 
     #[error("sync error: {0}")]
     Sync(String),
+
+    #[error("internal error: {0}")]
+    Internal(String),
 }
 
 pub type Result<T> = std::result::Result<T, NoaError>;

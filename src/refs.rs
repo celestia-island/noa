@@ -62,7 +62,7 @@ impl RefStore for RedbRefStore {
                 }
                 None => Ok(None),
             }
-        }).await.map_err(|e| NoaError::Sync(e.to_string()))?
+        }).await.map_err(|e| NoaError::Internal(e.to_string()))?
     }
 
     async fn cas(&self, name: &str, old: Option<&SnapshotId>, new: &SnapshotId) -> Result<bool> {
@@ -104,7 +104,7 @@ impl RefStore for RedbRefStore {
                     Err(NoaError::Redb(e.to_string()))
                 }
             }
-        }).await.map_err(|e| NoaError::Sync(e.to_string()))?;
+        }).await.map_err(|e| NoaError::Internal(e.to_string()))?;
         result
     }
 
@@ -121,7 +121,7 @@ impl RefStore for RedbRefStore {
                 result.push((key.value().to_string(), SnapshotId(id_str)));
             }
             Ok(result)
-        }).await.map_err(|e| NoaError::Sync(e.to_string()))?
+        }).await.map_err(|e| NoaError::Internal(e.to_string()))?
     }
 
     async fn delete(&self, name: &str) -> Result<bool> {
@@ -136,7 +136,7 @@ impl RefStore for RedbRefStore {
             };
             redb_err!(txn.commit())?;
             Ok(existed)
-        }).await.map_err(|e| NoaError::Sync(e.to_string()))?
+        }).await.map_err(|e| NoaError::Internal(e.to_string()))?
     }
 }
 

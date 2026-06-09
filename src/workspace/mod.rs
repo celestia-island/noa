@@ -60,7 +60,7 @@ impl WorkspaceManager {
             redb_err!(txn.commit())
         })
         .await
-        .map_err(|e| NoaError::Sync(e.to_string()))?
+        .map_err(|e| NoaError::Internal(e.to_string()))?
     }
 
     pub async fn get(&self, name: &str) -> Result<Option<Workspace>> {
@@ -79,7 +79,7 @@ impl WorkspaceManager {
             }
         })
         .await
-        .map_err(|e| NoaError::Sync(e.to_string()))?
+        .map_err(|e| NoaError::Internal(e.to_string()))?
     }
 
     pub async fn put(&self, workspace: &Workspace) -> Result<()> {
@@ -96,7 +96,7 @@ impl WorkspaceManager {
             redb_err!(txn.commit())
         })
         .await
-        .map_err(|e| NoaError::Sync(e.to_string()))?
+        .map_err(|e| NoaError::Internal(e.to_string()))?
     }
 
     pub async fn delete(&self, name: &str) -> Result<bool> {
@@ -113,7 +113,7 @@ impl WorkspaceManager {
             Ok(existed)
         })
         .await
-        .map_err(|e| NoaError::Sync(e.to_string()))?
+        .map_err(|e| NoaError::Internal(e.to_string()))?
     }
 
     pub async fn list(&self) -> Result<Vec<Workspace>> {
@@ -131,7 +131,7 @@ impl WorkspaceManager {
             Ok(result)
         })
         .await
-        .map_err(|e| NoaError::Sync(e.to_string()))?
+        .map_err(|e| NoaError::Internal(e.to_string()))?
     }
 
     pub async fn update_head(&self, name: &str, new_head: &SnapshotId) -> Result<()> {
@@ -161,7 +161,7 @@ impl WorkspaceManager {
             redb_err!(txn.commit())
         })
         .await
-        .map_err(|e| NoaError::Sync(e.to_string()))?
+        .map_err(|e| NoaError::Internal(e.to_string()))?
     }
 
     pub async fn update_head_and_seq(
@@ -197,7 +197,7 @@ impl WorkspaceManager {
             redb_err!(txn.commit())
         })
         .await
-        .map_err(|e| NoaError::Sync(e.to_string()))?
+        .map_err(|e| NoaError::Internal(e.to_string()))?
     }
 }
 

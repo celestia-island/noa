@@ -180,13 +180,17 @@ impl Repository {
             .begin_write()
             .map_err(|e| NoaError::Redb(e.to_string()))?;
 
-        {
-            let _ = write_txn.open_table(redb::TableDefinition::<&[u8], &[u8]>::new("blobs"));
-            let _ = write_txn.open_table(redb::TableDefinition::<&[u8], &[u8]>::new("trees"));
-            let _ = write_txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("snapshots"));
-            let _ = write_txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("workspaces"));
-            let _ = write_txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("refs"));
-        }
+        // Ensure all required tables exist (redb creates them lazily on open_table)
+        write_txn.open_table::<&[u8], &[u8]>(redb::TableDefinition::new("blobs"))
+            .map_err(|e| NoaError::Redb(e.to_string()))?;
+        write_txn.open_table::<&[u8], &[u8]>(redb::TableDefinition::new("trees"))
+            .map_err(|e| NoaError::Redb(e.to_string()))?;
+        write_txn.open_table::<&str, &[u8]>(redb::TableDefinition::new("snapshots"))
+            .map_err(|e| NoaError::Redb(e.to_string()))?;
+        write_txn.open_table::<&str, &[u8]>(redb::TableDefinition::new("workspaces"))
+            .map_err(|e| NoaError::Redb(e.to_string()))?;
+        write_txn.open_table::<&str, &[u8]>(redb::TableDefinition::new("refs"))
+            .map_err(|e| NoaError::Redb(e.to_string()))?;
 
         write_txn
             .commit()
