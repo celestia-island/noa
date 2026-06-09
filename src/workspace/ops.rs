@@ -20,7 +20,7 @@ pub async fn create(
     Ok(ws)
 }
 
-pub async fn switch(
+pub async fn ensure_exists(
     mgr: &WorkspaceManager,
     name: &str,
 ) -> Result<()> {
@@ -73,13 +73,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ops_switch() {
+    async fn test_ops_ensure_exists() {
         let (_tmp, mgr) = make_mgr();
         create(&mgr, "ws1", &SnapshotId("noa_base".to_string()), None)
             .await
             .unwrap();
-        assert!(switch(&mgr, "ws1").await.is_ok());
-        assert!(switch(&mgr, "missing").await.is_err());
+        assert!(ensure_exists(&mgr, "ws1").await.is_ok());
+        assert!(ensure_exists(&mgr, "missing").await.is_err());
     }
 
     #[tokio::test]

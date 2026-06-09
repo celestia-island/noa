@@ -177,6 +177,7 @@ pub async fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
         let ours_entry = ours_map.get(&path);
         let theirs_entry = theirs_map.get(&path);
 
+        // If all three sides have the entry and all are directories, recurse
         if let (Some(base), Some(ours), Some(theirs)) = (base_entry, ours_entry, theirs_entry) {
             if base.kind == EntryKind::Tree
                 && ours.kind == EntryKind::Tree
@@ -219,71 +220,71 @@ pub async fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
                 }
                 continue;
             }
+        }
 
-            enum Change {
-                Unchanged,
-                Modified(TreeEntry),
-                Deleted,
+        enum Change {
+            Unchanged,
+            Modified(TreeEntry),
+            Deleted,
+        }
+
+        let ours_change = match (base_entry, ours_entry) {
+            (None, None) => Change::Unchanged,
+            (None, Some(o)) => Change::Modified((*o).clone()),
+            (Some(b), Some(o)) if b.id != o.id => Change::Modified((*o).clone()),
+            (Some(_), Some(_)) => Change::Unchanged,
+            (Some(_), None) => Change::Deleted,
+        };
+
+        let theirs_change = match (base_entry, theirs_entry) {
+            (None, None) => Change::Unchanged,
+            (None, Some(t)) => Change::Modified((*t).clone()),
+            (Some(b), Some(t)) if b.id != t.id => Change::Modified((*t).clone()),
+            (Some(_), Some(_)) => Change::Unchanged,
+            (Some(_), None) => Change::Deleted,
+        };
+
+        let merged = match (ours_change, theirs_change) {
+            (Change::Unchanged, Change::Unchanged) => {
+                base_entry.cloned().map(MergedEntry::Clean)
             }
-
-            let ours_change = match (base_entry, ours_entry) {
-                (None, None) => Change::Unchanged,
-                (None, Some(o)) => Change::Modified((*o).clone()),
-                (Some(b), Some(o)) if b.id != o.id => Change::Modified((*o).clone()),
-                (Some(_), Some(_)) => Change::Unchanged,
-                (Some(_), None) => Change::Deleted,
-            };
-
-            let theirs_change = match (base_entry, theirs_entry) {
-                (None, None) => Change::Unchanged,
-                (None, Some(t)) => Change::Modified((*t).clone()),
-                (Some(b), Some(t)) if b.id != t.id => Change::Modified((*t).clone()),
-                (Some(_), Some(_)) => Change::Unchanged,
-                (Some(_), None) => Change::Deleted,
-            };
-
-            let merged = match (ours_change, theirs_change) {
-                (Change::Unchanged, Change::Unchanged) => {
-                    base_entry.cloned().map(MergedEntry::Clean)
-                }
-                (Change::Modified(o), Change::Unchanged) => Some(MergedEntry::Clean(o)),
-                (Change::Unchanged, Change::Modified(t)) => Some(MergedEntry::Clean(t)),
-                (Change::Deleted, Change::Unchanged) => None,
-                (Change::Unchanged, Change::Deleted) => None,
-                (Change::Modified(o), Change::Deleted) => {
+            (Change::Modified(o), Change::Unchanged) => Some(MergedEntry::Clean(o)),
+            (Change::Unchanged, Change::Modified(t)) => Some(MergedEntry::Clean(t)),
+            (Change::Deleted, Change::Unchanged) => None,
+            (Change::Unchanged, Change::Deleted) => None,
+            (Change::Modified(o), Change::Deleted) => {
+                has_conflicts = true;
+                Some(MergedEntry::Conflict {
+                    ours: Some(o),
+                    theirs: None,
+                    base: base_entry.cloned(),
+                })
+            }
+            (Change::Deleted, Change::Modified(t)) => {
+                has_conflicts = true;
+                Some(MergedEntry::Conflict {
+                    ours: None,
+                    theirs: Some(t),
+                    base: base_entry.cloned(),
+                })
+            }
+            (Change::Modified(o), Change::Modified(t)) => {
+                if o.id == t.id {
+                    Some(MergedEntry::Clean(o))
+                } else {
                     has_conflicts = true;
                     Some(MergedEntry::Conflict {
                         ours: Some(o),
-                        theirs: None,
-                        base: base_entry.cloned(),
-                    })
-                }
-                (Change::Deleted, Change::Modified(t)) => {
-                    has_conflicts = true;
-                    Some(MergedEntry::Conflict {
-                        ours: None,
                         theirs: Some(t),
                         base: base_entry.cloned(),
                     })
                 }
-                (Change::Modified(o), Change::Modified(t)) => {
-                    if o.id == t.id {
-                        Some(MergedEntry::Clean(o))
-                    } else {
-                        has_conflicts = true;
-                        Some(MergedEntry::Conflict {
-                            ours: Some(o),
-                            theirs: Some(t),
-                            base: base_entry.cloned(),
-                        })
-                    }
-                }
-                (Change::Deleted, Change::Deleted) => None,
-            };
-
-            if let Some(m) = merged {
-                entries.insert(path, m);
             }
+            (Change::Deleted, Change::Deleted) => None,
+        };
+
+        if let Some(m) = merged {
+            entries.insert(path, m);
         }
     }
 
