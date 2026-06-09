@@ -8,6 +8,8 @@ use tower::ServiceExt;
 
 use libnoa::server::{router, AppState};
 
+const TEST_API_TOKEN: &str = "test-token-for-ci";
+
 async fn make_app() -> (tempfile::TempDir, axum::Router) {
     let tmp = tempfile::TempDir::new().unwrap();
     let db = Arc::new(
@@ -15,13 +17,16 @@ async fn make_app() -> (tempfile::TempDir, axum::Router) {
             .create(tmp.path().join("server-test.redb"))
             .unwrap(),
     );
-    let state = AppState::new(db);
+    let state = AppState::new(db).with_api_token(TEST_API_TOKEN.to_string());
     let app = router(state);
     (tmp, app)
 }
 
 fn make_request(method: Method, uri: &str, body: Option<String>) -> Request<Body> {
-    let mut builder = Request::builder().method(method).uri(uri);
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("Authorization", format!("Bearer {}", TEST_API_TOKEN));
     if let Some(b) = body {
         builder = builder.header("content-type", "application/json");
         builder.body(Body::from(b)).unwrap()
