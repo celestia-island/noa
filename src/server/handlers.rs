@@ -87,7 +87,19 @@ fn validate_hash_id(id: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
             }),
         ));
     }
-    if !id.chars().all(|c| c.is_ascii_hexdigit() || c == '_') {
+    if !id.starts_with("noa_") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "hash id must start with 'noa_'".to_string(),
+            }),
+        ));
+    }
+    if !id
+        .chars()
+        .skip(4)
+        .all(|c| c.is_ascii_hexdigit() || c == '_')
+    {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError {

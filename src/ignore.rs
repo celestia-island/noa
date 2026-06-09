@@ -21,10 +21,16 @@ impl IgnoreMatcher {
             let _ = builder.add(&exclude_path);
         }
 
-        let gi = builder.build().unwrap_or_else(|_| {
-            let b = GitignoreBuilder::new(root);
-            b.build().unwrap()
-        });
+        let gi = match builder.build() {
+            Ok(gi) => gi,
+            Err(e) => {
+                tracing::warn!(
+                    "failed to build gitignore matcher ({}), falling back to empty",
+                    e
+                );
+                Gitignore::empty()
+            }
+        };
 
         IgnoreMatcher { gi }
     }

@@ -186,9 +186,6 @@ impl AgentLog for FileAgentLog {
                 return Err(NoaError::Io(e));
             }
 
-            let backup_path = path.with_extension("bak");
-            let _ = std::fs::remove_file(&backup_path);
-
             Ok(())
         })
         .await
@@ -545,9 +542,6 @@ mod tests {
         let temp_path = compact_temp_path(&log_path);
         std::fs::write(&temp_path, b"trash data").unwrap();
 
-        let bak_path = log_path.with_extension("bak");
-        std::fs::write(&bak_path, b"stale backup").unwrap();
-
         let log2 = FileAgentLog::open(&log_path).unwrap();
         log2.compact_to(3).await.unwrap();
 
@@ -556,7 +550,6 @@ mod tests {
         assert!(entries.iter().all(|e| e.seq > 3));
 
         assert!(!temp_path.exists(), "stale temp file should be cleaned up");
-        assert!(!bak_path.exists(), "stale .bak file should be cleaned up");
     }
 
     #[tokio::test]

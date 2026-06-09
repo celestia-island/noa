@@ -74,7 +74,7 @@ async fn test_upload_blob_and_get() {
 #[tokio::test]
 async fn test_get_blob_not_found() {
     let (_tmp, app) = make_app().await;
-    let req = make_request(Method::GET, "/api/v1/blob/deadbeef00000000", None);
+    let req = make_request(Method::GET, "/api/v1/blob/noa_deadbeef00000000", None);
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
@@ -82,7 +82,7 @@ async fn test_get_blob_not_found() {
 #[tokio::test]
 async fn test_get_tree_not_found() {
     let (_tmp, app) = make_app().await;
-    let req = make_request(Method::GET, "/api/v1/tree/deadbeef00000000", None);
+    let req = make_request(Method::GET, "/api/v1/tree/noa_deadbeef00000000", None);
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }

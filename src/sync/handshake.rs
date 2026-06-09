@@ -58,7 +58,7 @@ pub fn handle_handshake_request(
     let mut gitignore_updated = false;
 
     if !noa_dir.exists() {
-        let _repo = Repository::init(workspace_root)?;
+        Repository::init(workspace_root)?;
         noa_initialized = true;
         gitignore_updated = true;
     } else {
@@ -78,7 +78,6 @@ pub fn handle_handshake_request(
         }
     }
 
-    let _repo = Repository::open(workspace_root)?;
     let current_branch = get_current_git_branch(workspace_root)?;
 
     let repo_id = format!("{}:{}", req.workspace_id, workspace_root.display());

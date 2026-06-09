@@ -57,7 +57,7 @@ pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Resul
         parents: vec![],
         workspace: "default".to_string(),
         author,
-        timestamp: time.seconds as u64,
+        timestamp: (time.seconds as u64) * 1_000_000,
         message,
     };
     snap_store.store(&snapshot).await?;

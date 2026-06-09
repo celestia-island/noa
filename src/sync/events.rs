@@ -192,10 +192,6 @@ impl EventSyncEngine {
 
         Ok(applied)
     }
-
-    pub async fn queue_local_events(&self, since_seq: u64) -> Result<Vec<SyncEvent>> {
-        self.collect_push_events(since_seq).await
-    }
 }
 
 #[cfg(test)]
