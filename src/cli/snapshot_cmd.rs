@@ -17,7 +17,7 @@ pub async fn run_create(repo: &Repository, message: &str, author: &str) -> Resul
 
     let (parent_ids, since_seq) = match ws_mgr.get(&head_ws).await? {
         Some(ws) => {
-            let parents = if ws.head.0 == "noa_empty" || ws.head.0.starts_with("noa_empty") {
+            let parents = if ws.head.is_empty() {
                 vec![]
             } else {
                 vec![ws.head.clone()]

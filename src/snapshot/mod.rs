@@ -18,6 +18,16 @@ impl SnapshotId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.0 == EMPTY_SNAPSHOT || self.0.starts_with(EMPTY_SNAPSHOT)
+    }
+}
+
+pub const EMPTY_SNAPSHOT: &str = "noa_empty";
+
+pub fn empty_snapshot_id() -> SnapshotId {
+    SnapshotId(EMPTY_SNAPSHOT.to_string())
 }
 
 impl std::fmt::Display for SnapshotId {

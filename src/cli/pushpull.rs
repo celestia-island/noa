@@ -226,7 +226,7 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
         .ok()
         .flatten();
     let head_snap_id =
-        head_ref.unwrap_or_else(|| crate::snapshot::SnapshotId("noa_empty".to_string()));
+        head_ref.unwrap_or_else(crate::snapshot::empty_snapshot_id);
 
     let ws_mgr = crate::workspace::WorkspaceManager::new(std::sync::Arc::clone(&db))?;
     let now = chrono::Utc::now().timestamp_micros() as u64;

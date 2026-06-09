@@ -350,7 +350,7 @@ pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
     let ref_store = crate::refs::RedbRefStore::new(Arc::clone(&db))?;
     let head_ref = ref_store.get("HEAD").await.ok().flatten();
     let head_snap_id =
-        head_ref.unwrap_or_else(|| crate::snapshot::SnapshotId("noa_empty".to_string()));
+        head_ref.unwrap_or_else(crate::snapshot::empty_snapshot_id);
 
     let ws_mgr = crate::workspace::WorkspaceManager::new(Arc::clone(&db))?;
     let now = chrono::Utc::now().timestamp_micros() as u64;

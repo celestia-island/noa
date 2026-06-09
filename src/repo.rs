@@ -196,8 +196,8 @@ impl Repository {
     fn create_default_workspace(db: &Arc<Database>) -> Result<()> {
         let ws = crate::workspace::Workspace {
             name: "default".to_string(),
-            head: SnapshotId("noa_empty".to_string()),
-            base: SnapshotId("noa_empty".to_string()),
+            head: crate::snapshot::empty_snapshot_id(),
+            base: crate::snapshot::empty_snapshot_id(),
             agent_id: None,
             last_seq: 0,
             created_at: 0,

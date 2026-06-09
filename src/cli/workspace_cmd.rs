@@ -13,7 +13,7 @@ pub async fn run_create(repo: &Repository, name: &str, agent: Option<&str>) -> R
 
     let base_snapshot = match ws_mgr.get(&repo.read_head()?).await? {
         Some(ws) => ws.head.clone(),
-        None => crate::snapshot::SnapshotId("noa_empty".to_string()),
+        None => crate::snapshot::empty_snapshot_id(),
     };
 
     let now = chrono::Utc::now().timestamp_micros() as u64;
@@ -122,7 +122,7 @@ pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<
 
     let empty_tree = crate::object::TreeEntries(vec![]);
 
-    let base_tree = if cur_ws.base.0 == "noa_empty" {
+    let base_tree = if cur_ws.base.is_empty() {
         empty_tree.clone()
     } else {
         let base_snap = snap_store.get(&cur_ws.base).await?;
@@ -130,7 +130,7 @@ pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<
             .get_tree(&crate::object::TreeId(base_snap.tree_hash))
             .await?
     };
-    let ours_tree = if cur_ws.head.0 == "noa_empty" {
+    let ours_tree = if cur_ws.head.is_empty() {
         empty_tree.clone()
     } else {
         let ours_snap = snap_store.get(&cur_ws.head).await?;
@@ -138,7 +138,7 @@ pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<
             .get_tree(&crate::object::TreeId(ours_snap.tree_hash))
             .await?
     };
-    let theirs_tree = if from_ws.head.0 == "noa_empty" {
+    let theirs_tree = if from_ws.head.is_empty() {
         empty_tree
     } else {
         let their_snap = snap_store.get(&from_ws.head).await?;
