@@ -128,6 +128,13 @@ cargo build --release
 
 ```toml
 [dependencies]
+libnoa = "0.3.0"
+```
+
+Or from git:
+
+```toml
+[dependencies]
 libnoa = { git = "https://github.com/celestia-island/noa" }
 ```
 
@@ -291,29 +298,33 @@ libnoa exposes a Rust API for embedding noa functionality into other tools:
 use libnoa::repo::Repository;
 use libnoa::snapshot::SnapshotEngine;
 use libnoa::log::FileAgentLog;
+use libnoa::workspace::Workspace;
+use libnoa::snapshot::SnapshotId;
 
 // Open a repository
 let repo = Repository::open(&path)?;
 
 // Create a workspace
 let ws_mgr = repo.workspace_manager()?;
+let now = chrono::Utc::now().timestamp_micros() as u64;
 ws_mgr.create(&Workspace {
     name: "feat-x".into(),
-    head: base_snap_id.clone(),
-    base: base_snap_id.clone(),
+    head: SnapshotId("noa_empty".into()),
+    base: SnapshotId("noa_empty".into()),
     agent_id: Some("my-agent".into()),
+    last_seq: 0,
     created_at: now,
     updated_at: now,
 }).await?;
 
 // Build a snapshot from agent logs
 let engine = SnapshotEngine::new(
-    FileAgentLog::new(&path, "my-agent")?,
+    repo.agent_log("feat-x")?,
     repo.snapshot_store()?,
     repo.object_store()?,
 )
 .with_repo_root(repo.root.clone());
-let snapshot = engine.compute("feat-x", vec![], "author", "message").await?;
+let snapshot = engine.compute("feat-x", vec![], 0, "author", "message").await?;
 
 // Export snapshot to git
 libnoa::git::export_noa_to_git(&repo.root, repo.db.clone()).await?;

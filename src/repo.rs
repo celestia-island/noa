@@ -318,7 +318,6 @@ impl Repository {
             gitignore_updated = true;
         }
 
-        let _repo = Repository::open(path)?;
         let current_branch = get_current_git_branch(path)?;
 
         Ok(SyncInitResult {

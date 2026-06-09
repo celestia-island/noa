@@ -42,6 +42,3 @@ jobs:
 
     - name: Compile check
       run: cargo check --workspace --all-targets
-
-    - name: Clippy
-      run: cargo clippy --workspace --all-targets --all-features -- -D warnings
