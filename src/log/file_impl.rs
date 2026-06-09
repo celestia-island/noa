@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use std::{
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
-    path::Path,
+    path::{Path, PathBuf},
     sync::Mutex,
 };
 
@@ -11,6 +11,7 @@ use crate::error::{NoaError, Result};
 
 pub struct FileAgentLog {
     file: Mutex<File>,
+    path: PathBuf,
     next_seq: std::sync::atomic::AtomicU64,
 }
 
@@ -27,6 +28,7 @@ impl FileAgentLog {
             .map_err(NoaError::Io)?;
         let log = FileAgentLog {
             file: Mutex::new(file),
+            path: path.to_path_buf(),
             next_seq: std::sync::atomic::AtomicU64::new(1),
         };
         Ok(log)
@@ -46,6 +48,7 @@ impl FileAgentLog {
             .map_err(NoaError::Io)?;
         let log = FileAgentLog {
             file: Mutex::new(file),
+            path: path.to_path_buf(),
             next_seq: std::sync::atomic::AtomicU64::new(1),
         };
         let max_seq = log.compute_max_seq()?;
@@ -117,17 +120,41 @@ impl AgentLog for FileAgentLog {
         let entries = format::deserialize_entries(&content)?;
         let remaining: Vec<LogEntry> = entries.into_iter().filter(|e| e.seq > up_to_seq).collect();
 
-        file.seek(SeekFrom::Start(0))?;
-        file.set_len(0)?;
+        let temp_path = compact_temp_path(&self.path);
 
-        for entry in &remaining {
-            let line = format::serialize_entry(entry)?;
-            writeln!(file, "{}", line)?;
+        {
+            let mut tmp_file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&temp_path)
+                .map_err(NoaError::Io)?;
+
+            for entry in &remaining {
+                let line = format::serialize_entry(entry)?;
+                writeln!(tmp_file, "{}", line)?;
+            }
+            tmp_file.sync_all()?;
         }
-        file.sync_all()?;
+
+        std::fs::rename(&temp_path, &self.path)?;
+
+        *file = OpenOptions::new()
+            .append(true)
+            .read(true)
+            .open(&self.path)
+            .map_err(NoaError::Io)?;
 
         Ok(())
     }
+}
+
+fn compact_temp_path(original: &Path) -> PathBuf {
+    let file_name = original
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "log".to_string());
+    original.with_file_name(format!(".{}.compact.tmp", file_name))
 }
 
 #[cfg(test)]

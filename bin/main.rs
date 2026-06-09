@@ -129,6 +129,8 @@ enum WorkspaceSub {
     },
     Merge {
         from: String,
+        #[arg(short, long, default_value = "ours")]
+        strategy: String,
     },
 }
 
@@ -231,10 +233,10 @@ async fn main() -> anyhow::Result<()> {
                 let repo = libnoa::repo::Repository::open(&root)?;
                 cli::workspace_cmd::run_delete(&repo, &name).await?;
             }
-            WorkspaceSub::Merge { from } => {
+            WorkspaceSub::Merge { from, strategy } => {
                 let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
                 let repo = libnoa::repo::Repository::open(&root)?;
-                cli::workspace_cmd::run_merge(&repo, &from).await?;
+                cli::workspace_cmd::run_merge(&repo, &from, &strategy).await?;
             }
         },
         Some(Commands::Remote { cmd }) => match cmd {

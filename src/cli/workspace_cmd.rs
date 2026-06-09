@@ -95,7 +95,16 @@ pub async fn run_delete(repo: &Repository, name: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn run_merge(repo: &Repository, from: &str) -> Result<()> {
+pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<()> {
+    let resolution = match strategy {
+        "ours" => ConflictResolution::Ours,
+        "theirs" => ConflictResolution::Theirs,
+        _ => anyhow::bail!(
+            "unknown strategy '{}', expected 'ours' or 'theirs'",
+            strategy
+        ),
+    };
+
     let ws_mgr = repo.workspace_manager()?;
     let current = repo.read_head()?;
 
@@ -147,12 +156,13 @@ pub async fn run_merge(repo: &Repository, from: &str) -> Result<()> {
             println!("  CONFLICT: {}", c.path);
         }
         println!(
-            "{} conflict(s) found. Resolving with --strategy=ours by default.",
-            conflicts.len()
+            "{} conflict(s) found. Resolving with --strategy={}.",
+            conflicts.len(),
+            strategy
         );
     }
 
-    let resolved_tree = result.into_tree_entries(&ConflictResolution::Ours);
+    let resolved_tree = result.into_tree_entries(&resolution);
 
     let new_tree_id = obj_store.put_tree(&resolved_tree).await?;
 
@@ -194,11 +204,12 @@ pub async fn run_merge(repo: &Repository, from: &str) -> Result<()> {
         println!("Merged {} into {} -> {}", from, current, merge_snapshot.id);
     } else {
         println!(
-            "Merged {} into {} -> {} ({} conflict(s) auto-resolved with ours)",
+            "Merged {} into {} -> {} ({} conflict(s) auto-resolved with {})",
             from,
             current,
             merge_snapshot.id,
-            conflicts.len()
+            conflicts.len(),
+            strategy
         );
     }
     Ok(())

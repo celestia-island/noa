@@ -110,6 +110,8 @@ pub async fn list_refs(
 pub struct PushRefsRequest {
     pub name: String,
     pub id: String,
+    #[serde(default)]
+    pub expected_id: Option<String>,
 }
 
 pub async fn push_refs(
@@ -118,11 +120,24 @@ pub async fn push_refs(
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     let ref_store = state.ref_store().map_err(err_json)?;
     let id = SnapshotId(body.id);
-    ref_store
-        .cas(&body.name, None, &id)
+    let old = body
+        .expected_id
+        .as_ref()
+        .map(|s| SnapshotId(s.clone()));
+    let ok = ref_store
+        .cas(&body.name, old.as_ref(), &id)
         .await
         .map_err(err_json)?;
-    Ok(StatusCode::CREATED)
+    if ok {
+        Ok(StatusCode::CREATED)
+    } else {
+        Err((
+            StatusCode::CONFLICT,
+            Json(ApiError {
+                error: "CAS conflict: ref value has changed".to_string(),
+            }),
+        ))
+    }
 }
 
 #[derive(Deserialize)]

@@ -97,7 +97,9 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
         if self.compact_on_snapshot {
             if let Ok(all) = self.log.read_all().await {
                 if let Some(max_seq) = all.iter().map(|e| e.seq).max() {
-                    let _ = self.log.compact_to(max_seq).await;
+                    if let Err(e) = self.log.compact_to(max_seq).await {
+                        tracing::warn!("log compaction failed (non-fatal): {}", e);
+                    }
                 }
             }
         }

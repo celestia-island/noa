@@ -172,43 +172,14 @@ pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
             }
         })?;
 
-    let db_path = target.join(".noa").join("noa.redb");
-    std::fs::create_dir_all(target.join(".noa").join("agent-logs"))?;
-
-    let db = Arc::new(
-        redb::Database::builder()
-            .create(&db_path)
-            .map_err(|e| NoaError::Redb(e.to_string()))?,
-    );
-
-    {
-        let txn = db
-            .begin_write()
-            .map_err(|e| NoaError::Redb(e.to_string()))?;
-        {
-            let _ = txn.open_table(redb::TableDefinition::<&[u8], &[u8]>::new("blobs"));
-            let _ = txn.open_table(redb::TableDefinition::<&[u8], &[u8]>::new("trees"));
-            let _ = txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("snapshots"));
-            let _ = txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("workspaces"));
-            let _ = txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("refs"));
-        }
-        txn.commit().map_err(|e| NoaError::Redb(e.to_string()))?;
-    }
-
-    let config = crate::config::RepoConfig {
-        name: "default".to_string(),
-        remotes: vec![crate::config::RemoteConfig {
-            name: "origin".to_string(),
-            url: url.to_string(),
-            protocol: "git".to_string(),
-        }],
-        noa_remote: None,
-        sync: None,
+    let config = crate::config::RemoteConfig {
+        name: "origin".to_string(),
+        url: url.to_string(),
+        protocol: "git".to_string(),
     };
-    config.save_to_dir(&target.join(".noa"))?;
+    let repo = crate::repo::Repository::init_with_remotes(target, vec![config])?;
 
-    std::fs::write(target.join(".noa").join("HEAD"), "default\n")?;
-
+    let db = Arc::clone(&repo.db);
     super::import::import_git_to_noa(target, Arc::clone(&db)).await?;
 
     let ref_store = crate::refs::RedbRefStore::new(Arc::clone(&db))?;
@@ -230,19 +201,6 @@ pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
         })
         .await
         .ok();
-
-    let gitignore_path = target.join(".gitignore");
-    if !gitignore_path.exists() {
-        std::fs::write(&gitignore_path, "# Added by noa\n.noa/\n")?;
-    } else {
-        let content = std::fs::read_to_string(&gitignore_path)?;
-        if !content
-            .lines()
-            .any(|l| l.trim() == ".noa/" || l.trim() == ".noa")
-        {
-            std::fs::write(&gitignore_path, format!("{}\n.noa/\n", content.trim_end()))?;
-        }
-    }
 
     if detect_lfs_available(target) {
         lfs_install(target);

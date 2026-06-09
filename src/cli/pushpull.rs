@@ -204,43 +204,14 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
         .env("GIT_COMMITTER_EMAIL", "noa@noa.local")
         .status()?;
 
-    let db_path = target.join(".noa").join("noa.redb");
-    std::fs::create_dir_all(target.join(".noa").join("agent-logs"))?;
-
-    let db = std::sync::Arc::new(
-        redb::Database::builder()
-            .create(&db_path)
-            .map_err(|e| anyhow::anyhow!("db create failed: {}", e))?,
-    );
-
-    {
-        let txn = db
-            .begin_write()
-            .map_err(|e| anyhow::anyhow!("db write failed: {}", e))?;
-        {
-            let _ = txn.open_table(redb::TableDefinition::<&[u8], &[u8]>::new("blobs"));
-            let _ = txn.open_table(redb::TableDefinition::<&[u8], &[u8]>::new("trees"));
-            let _ = txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("snapshots"));
-            let _ = txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("workspaces"));
-            let _ = txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("refs"));
-        }
-        txn.commit()
-            .map_err(|e| anyhow::anyhow!("db commit failed: {}", e))?;
-    }
-
-    let config = crate::config::RepoConfig {
-        name: "default".to_string(),
-        remotes: vec![crate::config::RemoteConfig {
-            name: "svn-origin".to_string(),
-            url: url.to_string(),
-            protocol: "svn".to_string(),
-        }],
-        noa_remote: None,
-        sync: None,
+    let remote_config = crate::config::RemoteConfig {
+        name: "svn-origin".to_string(),
+        url: url.to_string(),
+        protocol: "svn".to_string(),
     };
-    config.save_to_dir(&target.join(".noa"))?;
-    std::fs::write(target.join(".noa").join("HEAD"), "default\n")?;
+    let repo = crate::repo::Repository::init_with_remotes(&target, vec![remote_config])?;
 
+    let db = std::sync::Arc::clone(&repo.db);
     crate::git::import::import_git_to_noa(&target, std::sync::Arc::clone(&db)).await?;
 
     let ref_store = crate::refs::RedbRefStore::new(std::sync::Arc::clone(&db))?;
@@ -265,19 +236,6 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
         })
         .await
         .ok();
-
-    let gitignore_path = target.join(".gitignore");
-    if !gitignore_path.exists() {
-        std::fs::write(&gitignore_path, "# Added by noa\n.noa/\n")?;
-    } else {
-        let content = std::fs::read_to_string(&gitignore_path)?;
-        if !content
-            .lines()
-            .any(|l| l.trim() == ".noa/" || l.trim() == ".noa")
-        {
-            std::fs::write(&gitignore_path, format!("{}\n.noa/\n", content.trim_end()))?;
-        }
-    }
 
     println!(
         "SVN repository exported and imported into noa: {}",

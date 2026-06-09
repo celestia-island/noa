@@ -72,6 +72,42 @@ impl Repository {
         })
     }
 
+    pub fn init_with_remotes(path: &Path, remotes: Vec<crate::config::RemoteConfig>) -> Result<Self> {
+        let noa_dir = path.join(NOA_DIR_NAME);
+
+        if noa_dir.exists() {
+            return Err(NoaError::RepoAlreadyExists(noa_dir.display().to_string()));
+        }
+
+        std::fs::create_dir_all(&noa_dir)?;
+        std::fs::create_dir_all(noa_dir.join(AGENT_LOGS_DIR))?;
+
+        let config = RepoConfig {
+            name: "default".to_string(),
+            remotes,
+            noa_remote: None,
+            sync: None,
+        };
+        config.save_to_dir(&noa_dir)?;
+
+        std::fs::write(noa_dir.join(HEAD_FILE), "default\n")?;
+
+        let db = Self::open_db(&noa_dir)?;
+        Self::init_tables(&db)?;
+
+        let db = Arc::new(db);
+        Self::create_default_workspace(&db)?;
+
+        manage_gitignore(path);
+
+        Ok(Repository {
+            root: path.to_path_buf(),
+            noa_dir,
+            db,
+            config,
+        })
+    }
+
     pub fn open(path: &Path) -> Result<Self> {
         let noa_dir = path.join(NOA_DIR_NAME);
 
