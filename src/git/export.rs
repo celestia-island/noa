@@ -132,6 +132,48 @@ mod tests {
         assert!(validate_git_url("not-a-url").is_err());
         assert!(validate_git_url("random string").is_err());
     }
+
+    #[test]
+    fn test_validate_git_url_backtick_injection() {
+        assert!(validate_git_url("repo`rm -rf /`").is_err());
+    }
+
+    #[test]
+    fn test_validate_git_url_dollar_injection() {
+        assert!(validate_git_url("$(whoami)").is_err());
+    }
+
+    #[test]
+    fn test_validate_git_url_semicolon() {
+        assert!(validate_git_url("x;rm -rf /").is_err());
+    }
+
+    #[test]
+    fn test_validate_git_url_pipe() {
+        assert!(validate_git_url("x|cat /etc/passwd").is_err());
+    }
+
+    #[test]
+    fn test_validate_git_url_git_clone_flag() {
+        assert!(validate_git_url("--config=user.name=evil").is_err());
+    }
+
+    #[test]
+    fn test_validate_git_url_newline_in_scheme() {
+        assert!(validate_git_url("https://x.com\nextra/path").is_err());
+    }
+
+    #[test]
+    fn test_is_safe_relative_path_dot_dot_substring() {
+        assert!(is_safe_relative_path("foo..bar.rs"));
+        assert!(is_safe_relative_path("a..rs"));
+    }
+
+    #[test]
+    fn test_is_safe_relative_path_only_dot_dot() {
+        assert!(!is_safe_relative_path(".."));
+        assert!(!is_safe_relative_path("../"));
+    }
 }
 
 pub fn detect_lfs_available(repo_root: &Path) -> bool {

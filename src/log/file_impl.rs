@@ -399,4 +399,85 @@ mod tests {
         let entries = log.read_all().await.unwrap();
         assert!(entries.is_empty());
     }
+
+    #[tokio::test]
+    async fn test_append_after_compact_all() {
+        let tmp = TempDir::new().unwrap();
+        let log_path = tmp.path().join("compact-all-append.log");
+        let log = FileAgentLog::create(&log_path).unwrap();
+        for i in 1..=3 {
+            log.append(&make_entry(i, OpType::Write, &format!("{}.rs", i), i * 100))
+                .await
+                .unwrap();
+        }
+        log.compact_to(3).await.unwrap();
+
+        let seq = log.append(&make_entry(0, OpType::Write, "after.rs", 400)).await.unwrap();
+        assert!(seq > 3, "new seq after compact-all must be > 3, got {}", seq);
+
+        let entries = log.read_all().await.unwrap();
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_read_empty_log() {
+        let tmp = TempDir::new().unwrap();
+        let log_path = tmp.path().join("empty.log");
+        let log = FileAgentLog::create(&log_path).unwrap();
+        let entries = log.read_all().await.unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_next_seq_empty_log() {
+        let tmp = TempDir::new().unwrap();
+        let log_path = tmp.path().join("empty-seq.log");
+        let log = FileAgentLog::create(&log_path).unwrap();
+        let next = log.next_seq().await.unwrap();
+        assert!(next < 2, "empty log next_seq should be 0 or 1, got {}", next);
+    }
+
+    #[tokio::test]
+    async fn test_entry_with_all_fields() {
+        let tmp = TempDir::new().unwrap();
+        let log_path = tmp.path().join("full-entry.log");
+        let log = FileAgentLog::create(&log_path).unwrap();
+
+        let entry = LogEntry {
+            seq: 1,
+            op: OpType::Merge,
+            path: Some("src/main.rs".to_string()),
+            blob_id: Some("abc123".to_string()),
+            from_path: Some("src/old.rs".to_string()),
+            resolved_conflict_ours_id: Some("ours1".to_string()),
+            resolved_conflict_theirs_id: Some("theirs1".to_string()),
+            snapshot_id: Some("noa_snap1".to_string()),
+            ts: 12345,
+            message: Some("merge conflict resolved".to_string()),
+        };
+        log.append(&entry).await.unwrap();
+
+        let entries = log.read_all().await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].op, OpType::Merge);
+        assert_eq!(entries[0].snapshot_id, Some("noa_snap1".to_string()));
+        assert_eq!(entries[0].message, Some("merge conflict resolved".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_compact_noop_when_no_entries_to_remove() {
+        let tmp = TempDir::new().unwrap();
+        let log_path = tmp.path().join("compact-noop.log");
+        let log = FileAgentLog::create(&log_path).unwrap();
+        for i in 1..=3 {
+            log.append(&make_entry(i, OpType::Write, &format!("{}.rs", i), i * 100))
+                .await
+                .unwrap();
+        }
+
+        log.compact_to(0).await.unwrap();
+
+        let entries = log.read_all().await.unwrap();
+        assert_eq!(entries.len(), 3);
+    }
 }
