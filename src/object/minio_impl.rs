@@ -62,7 +62,16 @@ impl MinioObjectStore {
                         )));
                     }
                 }
-                std::net::IpAddr::V6(_) => {}
+                std::net::IpAddr::V6(v6) => {
+                    if v6.is_loopback()
+                        || v6.is_multicast()
+                    {
+                        return Err(NoaError::Config(format!(
+                            "endpoint resolves to forbidden IPv6: {}",
+                            ip
+                        )));
+                    }
+                }
             }
         }
         Ok(())

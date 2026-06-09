@@ -94,6 +94,60 @@ fn validate_hash_id(id: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
     Ok(())
 }
 
+fn validate_ref_name(name: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
+    if name.is_empty() || name.len() > 128 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "ref name must be 1-128 characters".to_string(),
+            }),
+        ));
+    }
+    if name.contains('\0') || name.contains('\n') || name.contains('\r') {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "ref name contains control characters".to_string(),
+            }),
+        ));
+    }
+    if name.starts_with('.') || name.starts_with('-') || name.ends_with('.') {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "ref name has invalid start/end character".to_string(),
+            }),
+        ));
+    }
+    if name.contains("..") || name.contains('~') || name.contains('^') || name.contains(':') {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "ref name contains forbidden sequences".to_string(),
+            }),
+        ));
+    }
+    for component in name.split('/') {
+        if component.is_empty() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiError {
+                    error: "ref name contains empty component".to_string(),
+                }),
+            ));
+        }
+        if component == "." || component == ".." {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiError {
+                    error: "ref name contains '.' or '..' component".to_string(),
+                }),
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub async fn list_refs(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ApiError>)> {
@@ -118,6 +172,7 @@ pub async fn push_refs(
     State(state): State<AppState>,
     Json(body): Json<PushRefsRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+    validate_ref_name(&body.name)?;
     let ref_store = state.ref_store().map_err(err_json)?;
     let id = SnapshotId(body.id);
     let old = body

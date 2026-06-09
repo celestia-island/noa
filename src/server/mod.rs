@@ -15,9 +15,9 @@ async fn auth_middleware(
     req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    let expected = &state.api_token;
-    if expected.is_empty() {
-        return Ok(next.run(req).await);
+    if state.api_token.is_empty() {
+        tracing::warn!("NOA_API_TOKEN not set — rejecting all API requests");
+        return Err(StatusCode::UNAUTHORIZED);
     }
 
     let auth_header = req
@@ -28,7 +28,7 @@ async fn auth_middleware(
     match auth_header {
         Some(val) if val.starts_with("Bearer ") => {
             let token = &val[7..];
-            if token == expected {
+            if constant_time_eq(token.as_bytes(), state.api_token.as_bytes()) {
                 Ok(next.run(req).await)
             } else {
                 Err(StatusCode::UNAUTHORIZED)
@@ -36,6 +36,17 @@ async fn auth_middleware(
         }
         _ => Err(StatusCode::UNAUTHORIZED),
     }
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut result: u8 = 0;
+    for (x, y) in a.iter().zip(b.iter()) {
+        result |= x ^ y;
+    }
+    result == 0
 }
 
 pub fn router(state: AppState) -> Router {
