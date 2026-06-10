@@ -64,7 +64,7 @@ fn default_sync_interval() -> u64 {
 }
 
 fn default_branch_prefix() -> String {
-    "entelecheia/agent-".to_string()
+    "agent/".to_string()
 }
 
 impl Default for RepoConfig {
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn test_default_branch_prefix() {
-        assert_eq!(default_branch_prefix(), "entelecheia/agent-");
+        assert_eq!(default_branch_prefix(), "agent/");
     }
 
     #[test]
@@ -288,7 +288,7 @@ socket_path = "/custom/path.sock"
         let sync = config.sync.unwrap();
         assert_eq!(sync.socket_path, "/custom/path.sock");
         assert_eq!(sync.sync_interval_secs, 30);
-        assert_eq!(sync.default_branch_prefix, "entelecheia/agent-");
+        assert_eq!(sync.default_branch_prefix, "agent/");
         assert!(!sync.auto_gitignore);
     }
 

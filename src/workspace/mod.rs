@@ -64,7 +64,7 @@ impl WorkspaceManager {
 
     fn ensure_table(&self) -> Result<()> {
         let txn = self.db.begin_write()?;
-        let _ = txn.open_table(WORKSPACES);
+        txn.open_table(WORKSPACES)?;
         txn.commit()?;
         Ok(())
     }

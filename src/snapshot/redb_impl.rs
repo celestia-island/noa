@@ -23,8 +23,8 @@ impl RedbSnapshotStore {
 
     fn ensure_table(&self) -> Result<()> {
         let txn = self.db.begin_write()?;
-        let _ = txn.open_table(SNAPSHOTS);
-        let _ = txn.open_table(PARENT_INDEX);
+        txn.open_table(SNAPSHOTS)?;
+        txn.open_table(PARENT_INDEX)?;
         txn.commit()?;
         Ok(())
     }

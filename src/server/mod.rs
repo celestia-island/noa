@@ -115,16 +115,8 @@ async fn auth_middleware(
 }
 
 pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    let max_len = a.len().max(b.len());
-    let mut result: u8 = 0;
-    for i in 0..max_len {
-        let x = a.get(i).copied().unwrap_or(0);
-        let y = b.get(i).copied().unwrap_or(0);
-        result |= x ^ y;
-        std::hint::black_box(result);
-    }
-    let ok = result.wrapping_sub(1) >> 7;
-    ok == 1
+    use subtle::ConstantTimeEq;
+    a.ct_eq(b).into()
 }
 
 pub fn router(state: AppState) -> Router {

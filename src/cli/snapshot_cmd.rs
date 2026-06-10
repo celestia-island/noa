@@ -122,7 +122,13 @@ pub async fn run_diff(repo: &Repository, a: &str, b: &str) -> Result<()> {
         .get_tree(&crate::object::TreeId(snap_b.tree_hash))
         .await?;
 
-    let diffs = crate::snapshot::diff_snapshots(&tree_a.0, &tree_b.0);
+    let diffs = crate::snapshot::diff_snapshots_recursive(
+        &tree_a.0,
+        &tree_b.0,
+        "",
+        &obj_store,
+    )
+    .await;
 
     if diffs.is_empty() {
         println!("No differences between {a} and {b}");

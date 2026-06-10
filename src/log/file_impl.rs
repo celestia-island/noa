@@ -13,7 +13,7 @@ use crate::error::Result;
 
 pub struct FileAgentLog {
     path: PathBuf,
-    next_seq: std::sync::atomic::AtomicU64,
+    next_seq: std::sync::Arc<std::sync::atomic::AtomicU64>,
     compact_lock: tokio::sync::Mutex<()>,
 }
 
@@ -31,7 +31,7 @@ impl FileAgentLog {
         let max_seq = compute_max_seq_from_file(&mut file)?;
         Ok(FileAgentLog {
             path: path.to_path_buf(),
-            next_seq: std::sync::atomic::AtomicU64::new(max_seq + 1),
+            next_seq: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(max_seq + 1)),
             compact_lock: tokio::sync::Mutex::new(()),
         })
     }
@@ -45,7 +45,7 @@ impl FileAgentLog {
         let max_seq = compute_max_seq_from_file(&mut file)?;
         Ok(FileAgentLog {
             path: path.to_path_buf(),
-            next_seq: std::sync::atomic::AtomicU64::new(max_seq + 1),
+            next_seq: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(max_seq + 1)),
             compact_lock: tokio::sync::Mutex::new(()),
         })
     }
@@ -134,8 +134,16 @@ impl AgentLog for FileAgentLog {
     }
 
     async fn read_since(&self, seq: u64) -> Result<Vec<LogEntry>> {
-        let entries = self.read_all().await?;
-        Ok(entries.into_iter().filter(|e| e.seq > seq).collect())
+        let path = self.path.clone();
+        tokio::task::spawn_blocking(move || {
+            if !path.exists() {
+                return Ok(Vec::new());
+            }
+            let mut file = OpenOptions::new().read(true).open(&path)?;
+            let mut reader = std::io::BufReader::new(&mut file);
+            format::deserialize_entries_since(&mut reader, seq)
+        })
+        .await?
     }
 
     async fn read_all(&self) -> Result<Vec<LogEntry>> {
@@ -159,6 +167,8 @@ impl AgentLog for FileAgentLog {
     async fn compact_to(&self, up_to_seq: u64) -> Result<()> {
         let _guard = self.compact_lock.lock().await;
         let path = self.path.clone();
+        let path = self.path.clone();
+        let next_seq = std::sync::Arc::clone(&self.next_seq);
         tokio::task::spawn_blocking(move || {
             cleanup_stale_temp(&path);
             if !path.exists() {
@@ -193,6 +203,11 @@ impl AgentLog for FileAgentLog {
                 let _ = std::fs::remove_file(&temp_path);
                 return Err(e.into());
             }
+
+            let max_remaining = remaining.iter().map(|e| e.seq).max().unwrap_or(0);
+            let current = next_seq.load(std::sync::atomic::Ordering::Acquire);
+            let new = current.max(max_remaining + 1);
+            next_seq.store(new, std::sync::atomic::Ordering::Release);
 
             Ok(())
         })

@@ -28,7 +28,7 @@ impl RedbRefStore {
 
     fn ensure_table(&self) -> Result<()> {
         let txn = self.db.begin_write()?;
-        let _ = txn.open_table(REFS);
+        txn.open_table(REFS)?;
         txn.commit()?;
         Ok(())
     }

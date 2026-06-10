@@ -65,7 +65,7 @@ pub fn validate_git_url(url: &str) -> Result<()> {
                 !before.is_empty() && !before.contains('/') && !before.starts_with('-')
             });
         if !has_scp_syntax {
-            anyhow::bail!(format!("invalid git URL format: {url}"));
+            anyhow::bail!("invalid git URL format: {url}");
         }
     }
     Ok(())
@@ -96,9 +96,7 @@ pub fn lfs_pull(repo_root: &Path) -> Result<()> {
         .status()
         .with_context(|| "git lfs pull failed")?;
     if !status.success() {
-        anyhow::bail!(format!(
-            "git lfs pull exited with non-zero status: {status}"
-        ));
+        anyhow::bail!("git lfs pull exited with non-zero status: {status}");
     }
     Ok(())
 }
@@ -111,9 +109,7 @@ pub fn lfs_push_all(repo_root: &Path, remote_url: &str) -> Result<()> {
         .status()
         .with_context(|| "git lfs push --all failed")?;
     if !status.success() {
-        anyhow::bail!(format!(
-            "git lfs push --all exited with non-zero status: {status}"
-        ));
+        anyhow::bail!("git lfs push --all exited with non-zero status: {status}");
     }
     Ok(())
 }
@@ -130,6 +126,18 @@ pub fn has_lfs_tracking(repo_root: &Path) -> bool {
 
 pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Result<()> {
     let repo_root = repo_root.to_path_buf();
+
+    // Warn if the git working tree has untracked or modified files
+    let status_output = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(&repo_root)
+        .output()
+        .with_context(|| "git status failed")?;
+    if !status_output.stdout.is_empty() {
+        tracing::warn!(
+            "git working tree has uncommitted changes; they will be included in the export commit"
+        );
+    }
 
     let snap_store = RedbSnapshotStore::new(Arc::clone(&db))?;
     let ref_store = RedbRefStore::new(Arc::clone(&db))?;

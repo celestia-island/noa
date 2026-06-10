@@ -197,7 +197,7 @@ fn create_git_branch(workspace_root: &Path, name: &str, base: &str) -> Result<()
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(format!("git checkout -b failed: {stderr}"));
+        anyhow::bail!("git checkout -b failed: {stderr}");
     }
 
     Ok(())
@@ -212,7 +212,7 @@ fn checkout_git_branch(workspace_root: &Path, name: &str) -> Result<()> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(format!("git checkout failed: {stderr}"));
+        anyhow::bail!("git checkout failed: {stderr}");
     }
 
     Ok(())

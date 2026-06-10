@@ -53,7 +53,7 @@ impl RemoteBackend for GitBackend {
                 message: format!("{stdout}\n{stderr}").trim().to_string(),
             })
         } else {
-            anyhow::bail!(format!("git push failed: {stderr}"))
+            anyhow::bail!("git push failed: {stderr}")
         }
     }
 

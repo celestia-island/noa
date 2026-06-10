@@ -22,8 +22,8 @@ impl RedbObjectStore {
 
     fn ensure_tables(&self) -> Result<()> {
         let txn = self.db.begin_write()?;
-        let _ = txn.open_table(BLOBS);
-        let _ = txn.open_table(TREES);
+        txn.open_table(BLOBS)?;
+        txn.open_table(TREES)?;
         txn.commit()?;
         Ok(())
     }

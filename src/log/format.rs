@@ -26,6 +26,34 @@ pub fn deserialize_entries(content: &str) -> Result<Vec<LogEntry>> {
     Ok(entries)
 }
 
+pub fn deserialize_entries_since(
+    reader: &mut impl std::io::BufRead,
+    since_seq: u64,
+) -> Result<Vec<LogEntry>> {
+    let mut entries = Vec::new();
+    let mut line = String::new();
+    let mut line_num = 0u64;
+    while reader.read_line(&mut line)? > 0 {
+        line_num += 1;
+        if line.trim().is_empty() {
+            line.clear();
+            continue;
+        }
+        match deserialize_entry(&line) {
+            Ok(entry) => {
+                if entry.seq > since_seq {
+                    entries.push(entry);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("skipping corrupted log line {}: {}", line_num, e);
+            }
+        }
+        line.clear();
+    }
+    Ok(entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
