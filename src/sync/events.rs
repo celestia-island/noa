@@ -38,6 +38,15 @@ fn sanitize_path(base: &Path, user_path: &str) -> Option<PathBuf> {
     }
 }
 
+fn verify_path_safe(base: &Path, resolved: &Path) -> bool {
+    if let Ok(resolved_canonical) = resolved.canonicalize() {
+        if let Ok(base_canonical) = base.canonicalize() {
+            return resolved_canonical.starts_with(&base_canonical);
+        }
+    }
+    resolved.starts_with(base)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncEvent {
     pub seq: u64,
@@ -134,11 +143,16 @@ impl EventSyncEngine {
                             match obj_store.get_blob(&blob_id).await {
                                 Ok(data) => {
                                     let fp = file_path.clone();
-                                    tokio::task::spawn_blocking(move || {
+                                    let wr = workspace_root.clone();
+                                    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                                        if !verify_path_safe(&wr, &fp) {
+                                            anyhow::bail!("path safety check failed after async gap: {}", fp.display());
+                                        }
                                         if let Some(parent) = fp.parent() {
                                             std::fs::create_dir_all(parent)?;
                                         }
-                                        std::fs::write(&fp, &data)
+                                        std::fs::write(&fp, &data)?;
+                                        Ok(())
                                     })
                                     .await??;
                                     applied += 1;
@@ -152,7 +166,11 @@ impl EventSyncEngine {
                     }
                     "delete" => {
                         let fp = file_path.clone();
+                        let wr = workspace_root.clone();
                         tokio::task::spawn_blocking(move || {
+                            if !verify_path_safe(&wr, &fp) {
+                                anyhow::bail!("path safety check failed for delete: {}", fp.display());
+                            }
                             if fp.exists() {
                                 std::fs::remove_file(&fp)?;
                             }
@@ -166,7 +184,14 @@ impl EventSyncEngine {
                             let from_sanitized = sanitize_path(&workspace_root, from);
                             if let Some(from_path) = from_sanitized {
                                 let fp = file_path.clone();
+                                let wr = workspace_root.clone();
                                 tokio::task::spawn_blocking(move || {
+                                    if !verify_path_safe(&wr, &fp) {
+                                        anyhow::bail!("path safety check failed for rename dest: {}", fp.display());
+                                    }
+                                    if !verify_path_safe(&wr, &from_path) {
+                                        anyhow::bail!("path safety check failed for rename src: {}", from_path.display());
+                                    }
                                     if from_path.exists() {
                                         if let Err(e) = std::fs::rename(&from_path, &fp) {
                                             if e.kind() == std::io::ErrorKind::CrossesDevices {

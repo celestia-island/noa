@@ -40,8 +40,8 @@ impl SyncServer {
             Ok(token) => token,
             Err(_) => {
                 let token = generate_sync_token()?;
-                eprintln!(
-                    "Noa sync server generated token: {token}\n\
+                tracing::info!(
+                    "Noa sync server generated a random auth token. \
                      Set NOA_SYNC_TOKEN env var to use a fixed token."
                 );
                 token
@@ -269,12 +269,20 @@ impl SyncServer {
                     req.workspace_id,
                     req.suggested_branch
                 );
+                let branch_prefix = crate::config::RepoConfig::load_from_dir(
+                    &workspace_root.join(crate::repo::NOA_DIR_NAME),
+                )
+                .ok()
+                .and_then(|cfg| cfg.sync)
+                .map(|s| s.default_branch_prefix)
+                .unwrap_or_else(|| "entelecheia/agent-".to_string());
+
                 let resp = super::handshake::handle_auth_request(
                     workspace_root,
                     &req.workspace_id,
                     &super::handshake::BranchSelection::Current,
                     &req.suggested_branch,
-                    "entelecheia/agent-",
+                    &branch_prefix,
                 )?;
                 Ok(JsonRpcMessage::response(id, serde_json::to_value(resp)?))
             }
