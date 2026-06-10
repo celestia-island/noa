@@ -205,9 +205,7 @@ pub async fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
                         },
                     );
                 } else {
-                    let merged_tree = sub_result
-                        .output
-                        .resolve_with_strategy(resolution);
+                    let merged_tree = sub_result.output.resolve_with_strategy(resolution);
                     let merged_tree_id = object_store.put_tree(&TreeEntries(merged_tree)).await?;
                     entries.insert(
                         path.clone(),

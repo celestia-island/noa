@@ -198,8 +198,7 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
                     worklist.push(children.clone());
                 }
 
-                let mut entries: Vec<TreeEntry> =
-                    leaf.into_iter().map(|(_, e)| e).collect();
+                let mut entries: Vec<TreeEntry> = leaf.into_iter().map(|(_, e)| e).collect();
                 for (deep_path, _) in &deep {
                     if let Some((immediate, _)) = deep_path.split_once('/') {
                         if !entries.iter().any(|e| e.name == immediate) {
@@ -313,6 +312,12 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
                 }
                 OpType::Rename => {
                     if let (Some(from), Some(to)) = (&entry.from_path, &entry.path) {
+                        if !Self::is_path_within_root(PathBuf::from(from).as_path())
+                            || !Self::is_path_within_root(PathBuf::from(to).as_path())
+                        {
+                            tracing::warn!("skipping path traversal in rename: {} -> {}", from, to);
+                            continue;
+                        }
                         if let Some(ref matcher) = self.ignore_matcher {
                             if matcher.should_skip(to, false) {
                                 tree_map.remove(from);
@@ -334,6 +339,10 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
                 OpType::Snapshot | OpType::Merge => {}
                 OpType::Resolve => {
                     if let (Some(path), Some(blob_id)) = (&entry.path, &entry.blob_id) {
+                        if !Self::is_path_within_root(PathBuf::from(path).as_path()) {
+                            tracing::warn!("skipping path traversal in resolve: {}", path);
+                            continue;
+                        }
                         tree_map.insert(
                             path.clone(),
                             TreeEntry {

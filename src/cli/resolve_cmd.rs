@@ -127,11 +127,11 @@ pub async fn run_resolve(
     let ours_id = latest_merge
         .resolved_conflict_ours_id
         .as_deref()
-        .unwrap_or("?");
+        .unwrap_or("none");
     let theirs_id = latest_merge
         .resolved_conflict_theirs_id
         .as_deref()
-        .unwrap_or("?");
+        .unwrap_or("none");
 
     let now = crate::now_micros();
     let resolved_path = path_filter

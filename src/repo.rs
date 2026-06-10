@@ -159,7 +159,7 @@ impl Repository {
         write_txn.open_table::<&str, &[u8]>(redb::TableDefinition::new("workspaces"))?;
         write_txn.open_table::<&str, &[u8]>(redb::TableDefinition::new("refs"))?;
 
-        write_txn.commit().map_err(|e| anyhow::anyhow!("{}", e))?;
+        write_txn.commit()?;
         Ok(())
     }
 
@@ -180,7 +180,7 @@ impl Repository {
                 txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("workspaces"))?;
             table.insert("default", data.as_slice())?;
         }
-        txn.commit().map_err(|e| anyhow::anyhow!("{}", e))?;
+        txn.commit()?;
         Ok(())
     }
 

@@ -371,7 +371,14 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init_git_repo(tmp.path());
         let current = get_current_git_branch(tmp.path()).unwrap();
-        let resp = handle_auth_request(tmp.path(), "test-ws", &BranchSelection::Current, "", "entelecheia/agent-").unwrap();
+        let resp = handle_auth_request(
+            tmp.path(),
+            "test-ws",
+            &BranchSelection::Current,
+            "",
+            "entelecheia/agent-",
+        )
+        .unwrap();
         assert_eq!(resp.selected_branch, current);
     }
 

@@ -19,5 +19,5 @@ pub mod workspace;
 /// This is the standard timestamp unit used across the entire Noa project.
 #[must_use]
 pub fn now_micros() -> u64 {
-    chrono::Utc::now().timestamp_micros().max(0).unsigned_abs()
+    chrono::Utc::now().timestamp_micros().max(0) as u64
 }

@@ -99,11 +99,7 @@ fn validate_hash_id(id: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
             }),
         ));
     }
-    if !id
-        .chars()
-        .skip(4)
-        .all(|c| c.is_ascii_hexdigit() || c == '_')
-    {
+    if !id.chars().skip(4).all(|c| c.is_ascii_hexdigit()) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError {

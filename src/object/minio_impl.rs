@@ -180,9 +180,7 @@ impl ObjectStore for MinioObjectStore {
         match result {
             Ok(_) => Ok(true),
             Err(e) => {
-                let is_not_found = e
-                    .as_service_error()
-                    .is_some_and(|se| se.is_not_found());
+                let is_not_found = e.as_service_error().is_some_and(|se| se.is_not_found());
                 if is_not_found {
                     Ok(false)
                 } else {
@@ -232,9 +230,7 @@ impl ObjectStore for MinioObjectStore {
         match result {
             Ok(_) => Ok(true),
             Err(e) => {
-                let is_not_found = e
-                    .as_service_error()
-                    .is_some_and(|se| se.is_not_found());
+                let is_not_found = e.as_service_error().is_some_and(|se| se.is_not_found());
                 if is_not_found {
                     Ok(false)
                 } else {
