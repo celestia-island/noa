@@ -228,12 +228,13 @@ pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
     super::import::import_git_to_noa(target, Arc::clone(&db)).await?;
 
     let ref_store = crate::refs::RedbRefStore::new(Arc::clone(&db))?;
-    let head_ref = ref_store.get("HEAD").await.ok().flatten();
+    let head_ref = ref_store.get("HEAD").await?;
     let head_snap_id = head_ref.unwrap_or_else(crate::snapshot::empty_snapshot_id);
 
     let ws_mgr = crate::workspace::WorkspaceManager::new(Arc::clone(&db))?;
     let now = crate::now_micros();
-    ws_mgr
+    // Idempotent: workspace may already exist from init_with_remotes
+    if let Err(e) = ws_mgr
         .create(&crate::workspace::Workspace {
             name: "default".to_string(),
             head: head_snap_id.clone(),
@@ -244,7 +245,11 @@ pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
             updated_at: now,
         })
         .await
-        .ok();
+    {
+        if !matches!(e, NoaError::WorkspaceAlreadyExists(_)) {
+            return Err(e);
+        }
+    }
 
     if detect_lfs_available(target) {
         lfs_install(target);

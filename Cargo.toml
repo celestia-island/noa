@@ -47,7 +47,6 @@ gix = "^0.84"
 ignore = "^0.4"
 
 axum = "^0.8"
-tower = "^0.5"
 
 aws-sdk-s3 = "^1"
 aws-config = "^1"
@@ -64,3 +63,4 @@ unicode-width = "^0.2"
 
 [dev-dependencies]
 tempfile = "^3"
+tower = "^0.5"

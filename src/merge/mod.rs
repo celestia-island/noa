@@ -26,6 +26,26 @@ impl MergeResult {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Change {
+    Unchanged,
+    Modified(TreeEntry),
+    Deleted,
+}
+
+fn compute_change(
+    base_entry: Option<&TreeEntry>,
+    side_entry: Option<&TreeEntry>,
+) -> Change {
+    match (base_entry, side_entry) {
+        (None, None) => Change::Unchanged,
+        (None, Some(o)) => Change::Modified((*o).clone()),
+        (Some(b), Some(o)) if b.id != o.id => Change::Modified((*o).clone()),
+        (Some(_), Some(_)) => Change::Unchanged,
+        (Some(_), None) => Change::Deleted,
+    }
+}
+
 pub fn three_way_merge(
     base: &TreeEntries,
     ours: &TreeEntries,
@@ -49,44 +69,25 @@ pub fn three_way_merge(
         .copied()
         .collect();
 
-    enum Change<'a> {
-        Unchanged,
-        Modified(&'a TreeEntry),
-        Deleted,
-    }
-
     for path in all_paths {
         let base_entry = base_map.get(path);
         let ours_entry = ours_map.get(path);
         let theirs_entry = theirs_map.get(path);
 
-        let ours_change = match (base_entry, ours_entry) {
-            (None, None) => Change::Unchanged,
-            (None, Some(o)) => Change::Modified(o),
-            (Some(_), Some(o)) if base_entry.unwrap().id != o.id => Change::Modified(o),
-            (Some(_), Some(_)) => Change::Unchanged,
-            (Some(_), None) => Change::Deleted,
-        };
-
-        let theirs_change = match (base_entry, theirs_entry) {
-            (None, None) => Change::Unchanged,
-            (None, Some(t)) => Change::Modified(t),
-            (Some(_), Some(t)) if base_entry.unwrap().id != t.id => Change::Modified(t),
-            (Some(_), Some(_)) => Change::Unchanged,
-            (Some(_), None) => Change::Deleted,
-        };
+        let ours_change = compute_change(base_entry.copied(), ours_entry.copied());
+        let theirs_change = compute_change(base_entry.copied(), theirs_entry.copied());
 
         let merged = match (ours_change, theirs_change) {
             (Change::Unchanged, Change::Unchanged) => {
                 base_entry.map(|entry| MergedEntry::Clean((*entry).clone()))
             }
-            (Change::Modified(o), Change::Unchanged) => Some(MergedEntry::Clean((*o).clone())),
-            (Change::Unchanged, Change::Modified(t)) => Some(MergedEntry::Clean((*t).clone())),
+            (Change::Modified(o), Change::Unchanged) => Some(MergedEntry::Clean(o)),
+            (Change::Unchanged, Change::Modified(t)) => Some(MergedEntry::Clean(t)),
             (Change::Deleted, Change::Unchanged) | (Change::Unchanged, Change::Deleted) => None,
             (Change::Modified(o), Change::Deleted) => {
                 has_conflicts = true;
                 Some(MergedEntry::Conflict {
-                    ours: Some((*o).clone()),
+                    ours: Some(o),
                     theirs: None,
                     base: base_entry.map(|b| (*b).clone()),
                 })
@@ -95,18 +96,18 @@ pub fn three_way_merge(
                 has_conflicts = true;
                 Some(MergedEntry::Conflict {
                     ours: None,
-                    theirs: Some((*t).clone()),
+                    theirs: Some(t),
                     base: base_entry.map(|b| (*b).clone()),
                 })
             }
             (Change::Modified(o), Change::Modified(t)) => {
                 if o.id == t.id {
-                    Some(MergedEntry::Clean((*o).clone()))
+                    Some(MergedEntry::Clean(o))
                 } else {
                     has_conflicts = true;
                     Some(MergedEntry::Conflict {
-                        ours: Some((*o).clone()),
-                        theirs: Some((*t).clone()),
+                        ours: Some(o),
+                        theirs: Some(t),
                         base: base_entry.map(|b| (*b).clone()),
                     })
                 }
@@ -221,25 +222,6 @@ pub async fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
                     );
                 }
                 continue;
-            }
-        }
-
-        enum Change {
-            Unchanged,
-            Modified(TreeEntry),
-            Deleted,
-        }
-
-        fn compute_change<'a>(
-            base_entry: Option<&'a TreeEntry>,
-            ours_entry: Option<&'a TreeEntry>,
-        ) -> Change {
-            match (base_entry, ours_entry) {
-                (None, None) => Change::Unchanged,
-                (None, Some(o)) => Change::Modified((*o).clone()),
-                (Some(b), Some(o)) if b.id != o.id => Change::Modified((*o).clone()),
-                (Some(_), Some(_)) => Change::Unchanged,
-                (Some(_), None) => Change::Deleted,
             }
         }
 

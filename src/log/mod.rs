@@ -19,6 +19,19 @@ pub enum OpType {
     Resolve,
 }
 
+impl OpType {
+    pub fn as_op_str(&self) -> &'static str {
+        match self {
+            OpType::Write => "write",
+            OpType::Delete => "delete",
+            OpType::Rename => "rename",
+            OpType::Snapshot => "snapshot",
+            OpType::Merge => "merge",
+            OpType::Resolve => "resolve",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogEntry {
     pub seq: u64,

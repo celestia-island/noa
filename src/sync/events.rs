@@ -49,7 +49,7 @@ impl From<LogEntry> for SyncEvent {
     fn from(entry: LogEntry) -> Self {
         SyncEvent {
             seq: entry.seq,
-            op: format!("{:?}", entry.op).to_lowercase(),
+            op: entry.op.as_op_str().to_string(),
             path: entry.path,
             blob_id: entry.blob_id,
             from_path: entry.from_path,
@@ -63,7 +63,7 @@ impl From<&LogEntry> for SyncEvent {
     fn from(entry: &LogEntry) -> Self {
         SyncEvent {
             seq: entry.seq,
-            op: format!("{:?}", entry.op).to_lowercase(),
+            op: entry.op.as_op_str().to_string(),
             path: entry.path.clone(),
             blob_id: entry.blob_id.clone(),
             from_path: entry.from_path.clone(),
@@ -152,16 +152,21 @@ impl EventSyncEngine {
                     }
                 }
 
+                let op = match event.op.as_str() {
+                    "write" => crate::log::OpType::Write,
+                    "delete" => crate::log::OpType::Delete,
+                    "rename" => crate::log::OpType::Rename,
+                    "snapshot" => crate::log::OpType::Snapshot,
+                    "merge" => crate::log::OpType::Merge,
+                    "resolve" => crate::log::OpType::Resolve,
+                    _ => {
+                        tracing::warn!("unknown event op '{}', skipping", event.op);
+                        continue;
+                    }
+                };
                 let log_entry = LogEntry {
                     seq: event.seq,
-                    op: match event.op.as_str() {
-                        "delete" => crate::log::OpType::Delete,
-                        "rename" => crate::log::OpType::Rename,
-                        "snapshot" => crate::log::OpType::Snapshot,
-                        "merge" => crate::log::OpType::Merge,
-                        "resolve" => crate::log::OpType::Resolve,
-                        _ => crate::log::OpType::Write,
-                    },
+                    op,
                     path: event.path.clone(),
                     blob_id: event.blob_id.clone(),
                     from_path: event.from_path.clone(),
@@ -171,13 +176,14 @@ impl EventSyncEngine {
                     ts: event.ts,
                     message: event.message.clone(),
                 };
-                if let Err(e) = log.append(&log_entry).await {
-                    tracing::warn!(
+                log.append(&log_entry).await.map_err(|e| {
+                    tracing::error!(
                         "failed to append event to agent log (seq {}): {}",
                         event.seq,
                         e
                     );
-                }
+                    e
+                })?;
             }
         }
 
