@@ -71,13 +71,7 @@ fn compute_max_seq_from_file(file: &mut File) -> Result<u64> {
         tail = tail[..last_newline].to_vec();
     }
 
-    file.seek(SeekFrom::End(0))?;
-    let end_pos = file.stream_position()?;
-    let tail_start = end_pos - tail.len() as u64;
-
-    file.seek(SeekFrom::Start(tail_start))?;
-    let mut tail_content = String::new();
-    file.read_to_string(&mut tail_content)?;
+    let tail_content = String::from_utf8_lossy(&tail);
 
     if let Some(seq) = try_parse_last_seq(&tail_content) {
         return Ok(seq);

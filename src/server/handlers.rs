@@ -103,7 +103,8 @@ fn not_found_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
     )
 }
 
-fn validate_hash_id(id: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
+#[allow(dead_code)]
+fn validate_snapshot_hash_id(id: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
     if id.is_empty() || id.len() > 128 {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -121,6 +122,26 @@ fn validate_hash_id(id: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
         ));
     }
     if !id.chars().skip(4).all(|c| c.is_ascii_hexdigit()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "invalid hash id format".to_string(),
+            }),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_object_hash_id(id: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
+    if id.is_empty() || id.len() > 128 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "invalid hash id".to_string(),
+            }),
+        ));
+    }
+    if !id.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError {
@@ -272,7 +293,7 @@ pub async fn get_blob(
     State(state): State<AppState>,
     Path(hash): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
-    validate_hash_id(&hash)?;
+    validate_object_hash_id(&hash)?;
     let store = state.object_store().map_err(err_json)?;
     match store.get_blob(&BlobId(hash)).await {
         Ok(data) => {
@@ -321,7 +342,7 @@ pub async fn get_tree(
     State(state): State<AppState>,
     Path(hash): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
-    validate_hash_id(&hash)?;
+    validate_object_hash_id(&hash)?;
     let store = state.object_store().map_err(err_json)?;
     match store.get_tree(&TreeId(hash)).await {
         Ok(entries) => match serde_json::to_value(&entries) {

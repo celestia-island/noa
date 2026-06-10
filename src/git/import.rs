@@ -18,7 +18,13 @@ pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Resul
     let snap_store = RedbSnapshotStore::new(Arc::clone(&db))?;
     let ref_store = RedbRefStore::new(db)?;
 
-    let head_id = repo.head_id()?.detach();
+    let head_id = match repo.head_id() {
+        Ok(id) => id.detach(),
+        Err(_) => {
+            tracing::warn!("git repository has no HEAD (empty repo), skipping import");
+            return Ok(());
+        }
+    };
 
     let head_obj = repo.find_object(head_id)?;
 
