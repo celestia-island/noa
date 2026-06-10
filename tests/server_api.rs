@@ -46,7 +46,36 @@ async fn test_list_refs_empty() {
 #[tokio::test]
 async fn test_push_ref() {
     let (_tmp, app) = make_app().await;
-    let body = r#"{"name": "main", "id": "noa_test123"}"#.to_string();
+    // First create a snapshot to get a valid ID
+    let expected_id = libnoa::snapshot::content_addressed_snapshot_id("tree123", &[], "default", "test", "test snapshot");
+    let snap_body = format!(
+        r#"{{"snapshot": {{"id": "{}", "tree_hash": "tree123", "parents": [], "workspace": "default", "author": "test", "timestamp": 1000, "message": "test snapshot"}}}}"#,
+        expected_id
+    );
+    let snap_req = make_request(Method::POST, "/api/v1/snapshots", Some(snap_body));
+    let snap_resp = app.clone().oneshot(snap_req).await.unwrap();
+    assert_eq!(snap_resp.status(), StatusCode::CREATED);
+
+    let body = format!(r#"{{"name": "main", "id": "{}"}}"#, expected_id);
+    let req = make_request(Method::POST, "/api/v1/refs", Some(body));
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn test_push_ref_valid_slash_name() {
+    let (_tmp, app) = make_app().await;
+    let expected_id =
+        libnoa::snapshot::content_addressed_snapshot_id("tree456", &[], "default", "test", "test");
+    let snap_body = format!(
+        r#"{{"snapshot": {{"id": "{}", "tree_hash": "tree456", "parents": [], "workspace": "default", "author": "test", "timestamp": 1000, "message": "test"}}}}"#,
+        expected_id
+    );
+    let snap_req = make_request(Method::POST, "/api/v1/snapshots", Some(snap_body));
+    let snap_resp = app.clone().oneshot(snap_req).await.unwrap();
+    assert_eq!(snap_resp.status(), StatusCode::CREATED);
+
+    let body = format!(r#"{{"name": "refs/heads/main", "id": "{}"}}"#, expected_id);
     let req = make_request(Method::POST, "/api/v1/refs", Some(body));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
@@ -247,13 +276,4 @@ async fn test_push_ref_name_with_double_dot_rejected() {
     let req = make_request(Method::POST, "/api/v1/refs", Some(body));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-}
-
-#[tokio::test]
-async fn test_push_ref_valid_slash_name() {
-    let (_tmp, app) = make_app().await;
-    let body = r#"{"name": "refs/heads/main", "id": "noa_test123"}"#.to_string();
-    let req = make_request(Method::POST, "/api/v1/refs", Some(body));
-    let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::CREATED);
 }

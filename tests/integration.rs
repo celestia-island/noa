@@ -1620,10 +1620,19 @@ async fn merge_parent_in_children_of() {
         .compute("default", vec![], 0, "a", "base")
         .await
         .unwrap();
+    engine
+        .log
+        .append(&make_log_entry(2, OpType::Write, "b.rs", Some("c"), 200))
+        .await
+        .unwrap();
+    let s2 = engine
+        .compute("default", vec![], 0, "a", "other")
+        .await
+        .unwrap();
     let ms = engine
         .compute(
             "default",
-            vec![s1.id.clone(), SnapshotId("noa_other".into())],
+            vec![s1.id.clone(), s2.id.clone()],
             0,
             "a",
             "merge",
@@ -1631,7 +1640,10 @@ async fn merge_parent_in_children_of() {
         .await
         .unwrap();
     assert_eq!(ms.parents.len(), 2);
-    assert_eq!(ss.children_of(&s1.id).await.unwrap()[0], ms.id);
+    let children = ss.children_of(&s1.id).await.unwrap();
+    assert!(children.contains(&ms.id), "merge snapshot should be child of s1");
+    let children_s2 = ss.children_of(&s2.id).await.unwrap();
+    assert!(children_s2.contains(&ms.id), "merge snapshot should be child of s2");
 }
 
 #[test]
