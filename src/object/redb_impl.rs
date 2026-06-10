@@ -45,8 +45,7 @@ impl ObjectStore for RedbObjectStore {
             txn.commit()?;
             Ok(id)
         })
-        .await
-        ?
+        .await?
     }
 
     async fn get_blob(&self, id: &BlobId) -> Result<Vec<u8>> {
@@ -57,11 +56,10 @@ impl ObjectStore for RedbObjectStore {
             let table = txn.open_table(BLOBS)?;
             match table.get(id.as_bytes())? {
                 Some(guard) => Ok(guard.value().to_vec()),
-                None => anyhow::bail!("object not found: {}", id.to_string()),
+                None => anyhow::bail!("object not found: {id}"),
             }
         })
-        .await
-        ?
+        .await?
     }
 
     async fn has_blob(&self, id: &BlobId) -> Result<bool> {
@@ -72,14 +70,12 @@ impl ObjectStore for RedbObjectStore {
             let table = txn.open_table(BLOBS)?;
             Ok(table.get(id.as_bytes())?.is_some())
         })
-        .await
-        ?
+        .await?
     }
 
     async fn put_tree(&self, entries: &TreeEntries) -> Result<TreeId> {
         let db = self.db.clone();
-        let data =
-            rmp_serde::to_vec(entries)?;
+        let data = rmp_serde::to_vec(entries)?;
         tokio::task::spawn_blocking(move || {
             let hash = sha256_hex(&data);
             let id = TreeId(hash);
@@ -91,8 +87,7 @@ impl ObjectStore for RedbObjectStore {
             txn.commit()?;
             Ok(id)
         })
-        .await
-        ?
+        .await?
     }
 
     async fn get_tree(&self, id: &TreeId) -> Result<TreeEntries> {
@@ -106,7 +101,7 @@ impl ObjectStore for RedbObjectStore {
                 None => anyhow::bail!("object not found: {}", id),
             }
         })
-        .await? 
+        .await?
     }
 
     async fn has_tree(&self, id: &TreeId) -> Result<bool> {
@@ -117,8 +112,7 @@ impl ObjectStore for RedbObjectStore {
             let table = txn.open_table(TREES)?;
             Ok(table.get(id.as_bytes())?.is_some())
         })
-        .await
-        ?
+        .await?
     }
 }
 

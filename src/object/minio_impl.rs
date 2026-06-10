@@ -45,7 +45,7 @@ impl MinioObjectStore {
         ];
         for &b in &blocked {
             if host == b {
-                return anyhow::bail!(format!("blocked SSRF endpoint: {host}"));
+                anyhow::bail!("blocked SSRF endpoint: {host}");
             }
         }
 
@@ -59,9 +59,7 @@ impl MinioObjectStore {
                         || v4.is_broadcast()
                         || v4.is_multicast()
                     {
-                        return anyhow::bail!(format!(
-                            "endpoint resolves to forbidden IP: {ip}"
-                        ));
+                        anyhow::bail!("endpoint resolves to forbidden IP: {ip}");
                     }
                     if !allow_private {
                         let octets = v4.octets();
@@ -69,22 +67,16 @@ impl MinioObjectStore {
                             || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
                             || (octets[0] == 192 && octets[1] == 168)
                         {
-                            return anyhow::bail!(format!(
-                                "endpoint resolves to private IP: {ip}"
-                            ));
+                            anyhow::bail!("endpoint resolves to private IP: {ip}");
                         }
                     }
                 }
                 std::net::IpAddr::V6(v6) => {
                     if v6.is_loopback() || v6.is_multicast() {
-                        return anyhow::bail!(format!(
-                            "endpoint resolves to forbidden IPv6: {ip}"
-                        ));
+                        anyhow::bail!("endpoint resolves to forbidden IPv6: {ip}");
                     }
                     if !allow_private && (v6.octets()[0] == 0xfc || v6.octets()[0] == 0xfd) {
-                        return anyhow::bail!(format!(
-                            "endpoint resolves to forbidden IPv6: {ip}"
-                        ));
+                        anyhow::bail!("endpoint resolves to forbidden IPv6: {ip}");
                     }
                 }
             }
@@ -145,8 +137,7 @@ impl ObjectStore for MinioObjectStore {
             .key(Self::blob_key(&id))
             .body(ByteStream::from(content.to_vec()))
             .send()
-            .await
-            ?;
+            .await?;
 
         Ok(id)
     }
@@ -158,14 +149,9 @@ impl ObjectStore for MinioObjectStore {
             .bucket(&self.bucket)
             .key(Self::blob_key(id))
             .send()
-            .await
-            ?;
+            .await?;
 
-        let bytes = output
-            .body
-            .collect()
-            .await
-            ?;
+        let bytes = output.body.collect().await?;
         Ok(bytes.into_bytes().to_vec())
     }
 
@@ -181,8 +167,7 @@ impl ObjectStore for MinioObjectStore {
     }
 
     async fn put_tree(&self, entries: &TreeEntries) -> Result<TreeId> {
-        let data =
-            rmp_serde::to_vec(entries)?;
+        let data = rmp_serde::to_vec(entries)?;
 
         let id = TreeId(sha256_hex(&data));
 
@@ -192,8 +177,7 @@ impl ObjectStore for MinioObjectStore {
             .key(Self::tree_key(&id))
             .body(ByteStream::from(data))
             .send()
-            .await
-            ?;
+            .await?;
 
         Ok(id)
     }
@@ -205,14 +189,9 @@ impl ObjectStore for MinioObjectStore {
             .bucket(&self.bucket)
             .key(Self::tree_key(id))
             .send()
-            .await
-            ?;
+            .await?;
 
-        let bytes = output
-            .body
-            .collect()
-            .await
-            ?;
+        let bytes = output.body.collect().await?;
         Ok(rmp_serde::from_slice::<TreeEntries>(&bytes.into_bytes())?)
     }
 

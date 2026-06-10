@@ -1,6 +1,6 @@
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use anyhow::Context;
 
 use super::{NoaAck, RequestNoaHandshake};
 use crate::{
@@ -134,7 +134,10 @@ pub fn handle_auth_request(
 
 fn validate_git_ref_component(name: &str) -> Result<()> {
     if name.is_empty() || name.len() > 128 {
-        anyhow::bail!("invalid ref component: length must be 1-128, got {}", name.len());
+        anyhow::bail!(
+            "invalid ref component: length must be 1-128, got {}",
+            name.len()
+        );
     }
     if name.contains('\0') || name.contains('\n') || name.contains('\r') {
         anyhow::bail!("invalid ref component: contains control characters");

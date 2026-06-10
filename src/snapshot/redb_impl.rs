@@ -48,12 +48,11 @@ impl SnapshotStore for RedbSnapshotStore {
                 None => anyhow::bail!("snapshot not found: {}", id),
             }
         })
-        .await? 
+        .await?
     }
 
     async fn store(&self, snapshot: &Snapshot) -> Result<()> {
-        let data =
-            rmp_serde::to_vec(snapshot)?;
+        let data = rmp_serde::to_vec(snapshot)?;
 
         let db = Arc::clone(&self.db);
         let id = snapshot.id.clone();
@@ -73,8 +72,7 @@ impl SnapshotStore for RedbSnapshotStore {
             txn.commit()?;
             Ok(())
         })
-        .await
-        ?
+        .await?
     }
 
     async fn children_of(&self, parent: &SnapshotId) -> Result<Vec<SnapshotId>> {
@@ -96,8 +94,7 @@ impl SnapshotStore for RedbSnapshotStore {
             }
             Ok(children)
         })
-        .await
-        ?
+        .await?
     }
 
     async fn list_all(&self) -> Result<Vec<Snapshot>> {
@@ -114,8 +111,7 @@ impl SnapshotStore for RedbSnapshotStore {
             }
             Ok(result)
         })
-        .await
-        ?
+        .await?
     }
 }
 

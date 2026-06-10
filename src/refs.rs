@@ -3,10 +3,7 @@ use std::sync::Arc;
 
 use redb::ReadableTable;
 
-use crate::{
-    error::Result,
-    snapshot::SnapshotId,
-};
+use crate::{error::Result, snapshot::SnapshotId};
 
 #[async_trait]
 pub trait RefStore: Send + Sync {
@@ -60,8 +57,7 @@ impl RefStore for RedbRefStore {
                 None => Ok(None),
             }
         })
-        .await
-        ?
+        .await?
     }
 
     async fn cas(&self, name: &str, old: Option<&SnapshotId>, new: &SnapshotId) -> Result<bool> {
@@ -95,13 +91,10 @@ impl RefStore for RedbRefStore {
             }
             match txn.commit() {
                 Ok(()) => Ok(true),
-                Err(e) => {
-                    Err(e.into())
-                }
+                Err(e) => Err(e.into()),
             }
         })
-        .await
-        ?;
+        .await?;
         result
     }
 
@@ -113,14 +106,12 @@ impl RefStore for RedbRefStore {
             let mut result = Vec::new();
             for entry in table.iter()? {
                 let (key, value) = entry?;
-                let id_str = String::from_utf8(value.value().to_vec())
-                    ?;
+                let id_str = String::from_utf8(value.value().to_vec())?;
                 result.push((key.value().to_string(), SnapshotId(id_str)));
             }
             Ok(result)
         })
-        .await
-        ?
+        .await?
     }
 
     async fn delete(&self, name: &str) -> Result<bool> {
@@ -136,8 +127,7 @@ impl RefStore for RedbRefStore {
             txn.commit()?;
             Ok(existed)
         })
-        .await
-        ?
+        .await?
     }
 }
 

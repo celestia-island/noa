@@ -1,5 +1,5 @@
-use std::{path::Path, sync::Arc};
 use anyhow::Context;
+use std::{path::Path, sync::Arc};
 
 use crate::{
     error::Result,
@@ -9,29 +9,24 @@ use crate::{
 };
 
 pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Result<()> {
-    let repo = gix::open(git_dir)?;
+    let git_dir = git_dir.to_path_buf();
+    let repo = tokio::task::spawn_blocking(move || gix::open(&git_dir).map_err(Box::new))
+        .await?
+        .map_err(|e| anyhow::anyhow!("failed to open git repo: {e}"))?;
 
     let obj_store = crate::object::RedbObjectStore::new(Arc::clone(&db))?;
     let snap_store = RedbSnapshotStore::new(Arc::clone(&db))?;
     let ref_store = RedbRefStore::new(db)?;
 
-    let head_id = repo
-        .head_id()
-        ?
-        .detach();
+    let head_id = repo.head_id()?.detach();
 
-    let head_obj = repo
-        .find_object(head_id)
-        ?;
+    let head_obj = repo.find_object(head_id)?;
 
     let commit = head_obj
         .try_into_commit()
         .with_context(|| "HEAD is not a commit")?;
 
-    let tree_id = commit
-        .tree_id()
-        ?
-        .detach();
+    let tree_id = commit.tree_id()?.detach();
 
     let entries = import_tree_recursive(&repo, tree_id, &obj_store).await?;
 
@@ -85,12 +80,8 @@ fn walk_tree(
     let mut results = Vec::new();
 
     while let Some((current_id, prefix)) = stack.pop() {
-        let obj = repo
-            .find_object(current_id)
-            ?;
-        let tree = obj
-            .try_into_tree()
-            .with_context(|| "not a tree")?;
+        let obj = repo.find_object(current_id)?;
+        let tree = obj.try_into_tree().with_context(|| "not a tree")?;
 
         for entry_result in tree.iter() {
             let entry = entry_result?;
@@ -106,12 +97,8 @@ fn walk_tree(
             if mode.is_tree() {
                 stack.push((entry_id.to_owned(), full_name));
             } else {
-                let blob_obj = repo
-                    .find_object(entry_id)
-                    ?;
-                let blob = blob_obj
-                    .try_into_blob()
-                    .with_context(|| "not a blob")?;
+                let blob_obj = repo.find_object(entry_id)?;
+                let blob = blob_obj.try_into_blob().with_context(|| "not a blob")?;
                 results.push((full_name, blob.data.clone()));
             }
         }

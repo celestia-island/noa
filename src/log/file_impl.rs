@@ -26,8 +26,7 @@ impl FileAgentLog {
             .append(true)
             .read(true)
             .mode(0o600)
-            .open(path)
-            ?;
+            .open(path)?;
         let max_seq = compute_max_seq_from_file(&mut file)?;
         Ok(FileAgentLog {
             path: path.to_path_buf(),
@@ -41,11 +40,7 @@ impl FileAgentLog {
             anyhow::bail!("log file not found: {}", path.display());
         }
         cleanup_stale_temp(path);
-        let mut file = OpenOptions::new()
-            .append(true)
-            .read(true)
-            .open(path)
-            ?;
+        let mut file = OpenOptions::new().append(true).read(true).open(path)?;
         let max_seq = compute_max_seq_from_file(&mut file)?;
         Ok(FileAgentLog {
             path: path.to_path_buf(),
@@ -125,17 +120,12 @@ impl AgentLog for FileAgentLog {
         let _guard = self.compact_lock.lock().await;
         tokio::task::spawn_blocking(move || {
             use std::io::Write;
-            let mut file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)
-                ?;
+            let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
             file.write_all(&record)?;
             file.sync_data()?;
             Ok(seq)
         })
-        .await
-        ?
+        .await?
     }
 
     async fn read_since(&self, seq: u64) -> Result<Vec<LogEntry>> {
@@ -146,16 +136,12 @@ impl AgentLog for FileAgentLog {
     async fn read_all(&self) -> Result<Vec<LogEntry>> {
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || {
-            let mut file = OpenOptions::new()
-                .read(true)
-                .open(&path)
-                ?;
+            let mut file = OpenOptions::new().read(true).open(&path)?;
             let mut content = String::new();
             file.read_to_string(&mut content)?;
             format::deserialize_entries(&content)
         })
-        .await
-        ?
+        .await?
     }
 
     async fn next_seq(&self) -> Result<u64> {
@@ -167,10 +153,7 @@ impl AgentLog for FileAgentLog {
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || {
             cleanup_stale_temp(&path);
-            let mut file = OpenOptions::new()
-                .read(true)
-                .open(&path)
-                ?;
+            let mut file = OpenOptions::new().read(true).open(&path)?;
             let mut content = String::new();
             file.read_to_string(&mut content)?;
             drop(file);
@@ -185,8 +168,7 @@ impl AgentLog for FileAgentLog {
                     .create(true)
                     .write(true)
                     .truncate(true)
-                    .open(&temp_path)
-                    ?;
+                    .open(&temp_path)?;
 
                 for entry in &remaining {
                     let line = format::serialize_entry(entry)?;
@@ -202,8 +184,7 @@ impl AgentLog for FileAgentLog {
 
             Ok(())
         })
-        .await
-        ?
+        .await?
     }
 }
 

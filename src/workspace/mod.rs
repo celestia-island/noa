@@ -3,10 +3,7 @@ use std::sync::Arc;
 
 use redb::ReadableTable;
 
-use crate::{
-    error::Result,
-    snapshot::SnapshotId,
-};
+use crate::{error::Result, snapshot::SnapshotId};
 
 pub fn validate_workspace_name(name: &str) -> Result<()> {
     if name.is_empty() {
@@ -18,9 +15,9 @@ pub fn validate_workspace_name(name: &str) -> Result<()> {
     for (i, ch) in name.char_indices() {
         match ch {
             '/' | '\\' | '\0' => {
-                return anyhow::bail!("workspace not found: {}", format!(
-                    "workspace name contains invalid character {ch:?} at position {i}"
-                ));
+                anyhow::bail!(
+                    "workspace not found: workspace name contains invalid character {ch:?} at position {i}"
+                );
             }
             _ => {}
         }
@@ -143,8 +140,7 @@ impl WorkspaceManager {
             }
             Ok(result)
         })
-        .await
-        ?
+        .await?
     }
 
     pub async fn update_head(&self, name: &str, new_head: &SnapshotId) -> Result<()> {
@@ -157,7 +153,8 @@ impl WorkspaceManager {
             {
                 let mut table = txn.open_table(WORKSPACES)?;
                 let ws_slice = {
-                    let guard = table.get(name.as_str())?
+                    let guard = table
+                        .get(name.as_str())?
                         .ok_or_else(|| anyhow::anyhow!("workspace not found: {name}"))?;
                     guard.value().to_vec()
                 };
@@ -188,7 +185,8 @@ impl WorkspaceManager {
             {
                 let mut table = txn.open_table(WORKSPACES)?;
                 let ws_slice = {
-                    let guard = table.get(name.as_str())?
+                    let guard = table
+                        .get(name.as_str())?
                         .ok_or_else(|| anyhow::anyhow!("workspace not found: {name}"))?;
                     guard.value().to_vec()
                 };

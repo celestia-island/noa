@@ -85,14 +85,13 @@ impl JsonRpcMessage {
 
     pub fn from_frame(data: &[u8]) -> Result<Self> {
         if data.len() < 4 {
-            return anyhow::bail!("frame too short");
+            anyhow::bail!("frame too short");
         }
         let len = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
         if data.len() < 4 + len {
-            return anyhow::bail!("frame incomplete");
+            anyhow::bail!("frame incomplete");
         }
-        let json = std::str::from_utf8(&data[4..4 + len])
-            ?;
+        let json = std::str::from_utf8(&data[4..4 + len])?;
         Self::from_json(json)
     }
 }

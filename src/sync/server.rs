@@ -1,6 +1,5 @@
 use std::{
     os::unix::fs::PermissionsExt,
-
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -25,7 +24,8 @@ const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
 const MAX_CONNECTIONS: usize = 32;
 
 fn is_eof_error(e: &anyhow::Error) -> bool {
-    e.downcast_ref::<std::io::Error>().map_or(false, |io| io.kind() == std::io::ErrorKind::UnexpectedEof)
+    e.downcast_ref::<std::io::Error>()
+        .is_some_and(|io| io.kind() == std::io::ErrorKind::UnexpectedEof)
         || e.to_string().contains("failed to fill whole buffer")
 }
 
@@ -56,8 +56,8 @@ impl SyncServer {
     pub async fn listen(&self) -> Result<()> {
         let _ = std::fs::remove_file(&self.socket_path);
 
-        let listener = UnixListener::bind(&self.socket_path)
-            .with_context(|| "failed to bind sync socket")?;
+        let listener =
+            UnixListener::bind(&self.socket_path).with_context(|| "failed to bind sync socket")?;
         if let Ok(metadata) = std::fs::metadata(&self.socket_path) {
             let mut perms = metadata.permissions();
             perms.set_mode(0o600);
@@ -171,8 +171,7 @@ impl SyncServer {
             .await
             .with_context(|| "read body")?;
 
-        let json =
-            std::str::from_utf8(&body_buf)?;
+        let json = std::str::from_utf8(&body_buf)?;
         JsonRpcMessage::from_json(json)
     }
 
@@ -188,10 +187,7 @@ impl SyncServer {
             .write_all(&frame)
             .await
             .with_context(|| "write frame")?;
-        writer
-            .flush()
-            .await
-            .with_context(|| "flush")
+        writer.flush().await.with_context(|| "flush")
     }
 
     async fn dispatch(
@@ -210,8 +206,7 @@ impl SyncServer {
 
         match method.as_str() {
             "noa.handshake" => {
-                let req: RequestNoaHandshake = serde_json::from_value(params)
-                    ?;
+                let req: RequestNoaHandshake = serde_json::from_value(params)?;
                 let resp =
                     super::handshake::handle_handshake_request(workspace_root, &req, auth_token)?;
 
@@ -222,8 +217,7 @@ impl SyncServer {
                 Ok(JsonRpcMessage::response(id, serde_json::to_value(resp)?))
             }
             "noa.auth" => {
-                let req: NoaAuthRequest = serde_json::from_value(params)
-                    ?;
+                let req: NoaAuthRequest = serde_json::from_value(params)?;
 
                 {
                     let sessions = authenticated_sessions.lock().await;
@@ -249,8 +243,7 @@ impl SyncServer {
                 Ok(JsonRpcMessage::response(id, serde_json::to_value(resp)?))
             }
             "noa.ready" => {
-                let req: NoaReady = serde_json::from_value(params)
-                    ?;
+                let req: NoaReady = serde_json::from_value(params)?;
                 let ack = super::handshake::handle_ready(
                     &req.workspace_id,
                     &req.branch,
@@ -259,8 +252,7 @@ impl SyncServer {
                 Ok(JsonRpcMessage::response(id, serde_json::to_value(ack)?))
             }
             "noa.event_sync" => {
-                let sync_msg: NoaEventSyncMessage = serde_json::from_value(params)
-                    ?;
+                let sync_msg: NoaEventSyncMessage = serde_json::from_value(params)?;
 
                 {
                     let sessions = authenticated_sessions.lock().await;

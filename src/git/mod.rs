@@ -1,9 +1,9 @@
 pub mod export;
 pub mod import;
 
+use anyhow::Context;
 use async_trait::async_trait;
 use std::process::Command;
-use anyhow::Context;
 
 pub use export::{
     clone_git_to_noa, detect_lfs_available, export_noa_to_git, has_lfs_tracking, lfs_install,
@@ -66,7 +66,7 @@ impl RemoteBackend for GitBackend {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return anyhow::bail!(format!("git fetch failed: {stderr}"));
+            anyhow::bail!("git fetch failed: {stderr}");
         }
 
         self.list_refs(url).await.map(|refs| FetchResult { refs })
@@ -81,7 +81,7 @@ impl RemoteBackend for GitBackend {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return anyhow::bail!(format!("git ls-remote failed: {stderr}"));
+            anyhow::bail!("git ls-remote failed: {stderr}");
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);

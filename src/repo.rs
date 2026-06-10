@@ -7,13 +7,8 @@ use anyhow::Context;
 use redb::Database;
 
 use crate::{
-    config::RepoConfig,
-    error::Result,
-    log::FileAgentLog,
-    object::RedbObjectStore,
-    refs::RedbRefStore,
-    snapshot::RedbSnapshotStore,
-    workspace::WorkspaceManager,
+    config::RepoConfig, error::Result, log::FileAgentLog, object::RedbObjectStore,
+    refs::RedbRefStore, snapshot::RedbSnapshotStore, workspace::WorkspaceManager,
 };
 
 pub const NOA_DIR_NAME: &str = ".noa";
@@ -153,52 +148,37 @@ impl Repository {
 
     fn validate(noa_dir: &Path) -> Result<()> {
         if !noa_dir.join(DB_NAME).exists() {
-            return anyhow::bail!("invalid repository: {}", "missing noa.redb".to_string());
+            anyhow::bail!("invalid repository: missing noa.redb");
         }
         if !noa_dir.join(AGENT_LOGS_DIR).exists() {
             anyhow::bail!("invalid repository: missing agent-logs/ directory");
         }
         if !noa_dir.join("config").exists() {
-            return anyhow::bail!("invalid repository: {}", "missing config file".to_string());
+            anyhow::bail!("invalid repository: missing config file");
         }
         Ok(())
     }
 
     fn open_db(noa_dir: &Path) -> Result<Database> {
         let db_path = noa_dir.join(DB_NAME);
-        let mut db = Database::builder()
-            .create(&db_path)
-            ?;
+        let mut db = Database::builder().create(&db_path)?;
         db.check_integrity()
             .map_err(|e| anyhow::anyhow!(format!("database integrity check failed: {e}")))?;
         Ok(db)
     }
 
     fn init_tables(db: &Database) -> Result<()> {
-        let write_txn = db
-            .begin_write()
-            ?;
+        let write_txn = db.begin_write()?;
 
         // Ensure all required tables exist (redb creates them lazily on open_table)
-        write_txn
-            .open_table::<&[u8], &[u8]>(redb::TableDefinition::new("blobs"))
-            ?;
-        write_txn
-            .open_table::<&[u8], &[u8]>(redb::TableDefinition::new("trees"))
-            ?;
-        write_txn
-            .open_table::<&str, &[u8]>(redb::TableDefinition::new("snapshots"))
-            ?;
-        write_txn
-            .open_table::<&str, &[u8]>(redb::TableDefinition::new("workspaces"))
-            ?;
-        write_txn
-            .open_table::<&str, &[u8]>(redb::TableDefinition::new("refs"))
-            ?;
+        write_txn.open_table::<&[u8], &[u8]>(redb::TableDefinition::new("blobs"))?;
+        write_txn.open_table::<&[u8], &[u8]>(redb::TableDefinition::new("trees"))?;
+        write_txn.open_table::<&str, &[u8]>(redb::TableDefinition::new("snapshots"))?;
+        write_txn.open_table::<&str, &[u8]>(redb::TableDefinition::new("workspaces"))?;
+        write_txn.open_table::<&str, &[u8]>(redb::TableDefinition::new("refs"))?;
 
-        write_txn
-            .commit()
-            .map_err(|e| anyhow::anyhow!("{}", e))?; Ok(())
+        write_txn.commit().map_err(|e| anyhow::anyhow!("{}", e))?;
+        Ok(())
     }
 
     fn create_default_workspace(db: &Arc<Database>) -> Result<()> {
@@ -212,18 +192,14 @@ impl Repository {
             updated_at: 0,
         };
         let data = rmp_serde::to_vec(&ws)?;
-        let txn = db
-            .begin_write()
-            ?;
+        let txn = db.begin_write()?;
         {
-            let mut table = txn
-                .open_table(redb::TableDefinition::<&str, &[u8]>::new("workspaces"))
-                ?;
-            table
-                .insert("default", data.as_slice())
-                ?;
+            let mut table =
+                txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("workspaces"))?;
+            table.insert("default", data.as_slice())?;
         }
-        txn.commit().map_err(|e| anyhow::anyhow!("{}", e))?; Ok(())
+        txn.commit().map_err(|e| anyhow::anyhow!("{}", e))?;
+        Ok(())
     }
 
     pub fn read_head(&self) -> Result<String> {

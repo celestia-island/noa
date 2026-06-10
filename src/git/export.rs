@@ -4,13 +4,13 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::Context;
 use crate::{
     error::Result,
     object::ObjectStore,
     refs::{RedbRefStore, RefStore},
     snapshot::{RedbSnapshotStore, SnapshotStore},
 };
+use anyhow::Context;
 
 fn is_safe_relative_path(path: &str) -> bool {
     let pb = PathBuf::from(path);
@@ -122,8 +122,7 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
     let ws_mgr = crate::workspace::WorkspaceManager::new(Arc::clone(&db))?;
     let obj_store = crate::object::RedbObjectStore::new(db)?;
 
-    let head_ws = std::fs::read_to_string(repo_root.join(".noa").join("HEAD"))
-        ?
+    let head_ws = std::fs::read_to_string(repo_root.join(".noa").join("HEAD"))?
         .trim()
         .to_string();
 

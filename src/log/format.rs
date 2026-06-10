@@ -1,5 +1,5 @@
-use crate::log::LogEntry;
 use crate::error::Result;
+use crate::log::LogEntry;
 
 pub fn serialize_entry(entry: &LogEntry) -> Result<String> {
     Ok(serde_json::to_string(entry)?)
@@ -8,7 +8,7 @@ pub fn serialize_entry(entry: &LogEntry) -> Result<String> {
 pub fn deserialize_entry(line: &str) -> Result<LogEntry> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
-        return anyhow::bail!("empty log line");
+        anyhow::bail!("empty log line");
     }
     Ok(serde_json::from_str::<LogEntry>(trimmed)?)
 }
