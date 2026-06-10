@@ -95,8 +95,11 @@ impl RepoConfig {
 
     pub fn save_to_dir(&self, dir: &Path) -> Result<()> {
         let config_path = dir.join("config");
+        let tmp_path = dir.join("config.tmp");
         let content = self.to_toml()?;
-        Ok(std::fs::write(&config_path, content)?)
+        std::fs::write(&tmp_path, &content)?;
+        std::fs::rename(&tmp_path, &config_path)?;
+        Ok(())
     }
 
     pub fn add_remote(&mut self, remote: RemoteConfig) {

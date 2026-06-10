@@ -340,7 +340,8 @@ pub fn manage_gitignore(root: &Path) -> Result<()> {
         }
     }
 
-    std::fs::write(&gitignore_path, format!("{}\n.noa/\n", content.trim_end()))?;
+    let trimmed = content.trim_end_matches('\n');
+    std::fs::write(&gitignore_path, format!("{trimmed}\n.noa/\n"))?;
 
     Ok(())
 }

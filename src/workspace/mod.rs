@@ -12,11 +12,23 @@ pub fn validate_workspace_name(name: &str) -> Result<()> {
     if name.len() > 255 {
         anyhow::bail!("workspace name must be at most 255 characters");
     }
+    if name.contains("..") {
+        anyhow::bail!("workspace name must not contain '..'");
+    }
+    if name.starts_with('.') {
+        anyhow::bail!("workspace name must not start with '.'");
+    }
     for (i, ch) in name.char_indices() {
         match ch {
             '/' | '\\' | '\0' => {
                 anyhow::bail!(
                     "invalid workspace name: contains invalid character {ch:?} at position {i}"
+                );
+            }
+            _ if ch.is_ascii_control() => {
+                anyhow::bail!(
+                    "invalid workspace name: contains control character U+{:04X} at position {i}",
+                    ch as u32
                 );
             }
             _ => {}
@@ -96,6 +108,7 @@ impl WorkspaceManager {
     }
 
     pub async fn put(&self, workspace: &Workspace) -> Result<()> {
+        validate_workspace_name(&workspace.name)?;
         let db = self.db.clone();
         let name = workspace.name.clone();
         let data = rmp_serde::to_vec(workspace)?;
