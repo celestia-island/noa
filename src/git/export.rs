@@ -4,7 +4,9 @@ use std::{
     sync::Arc,
 };
 
-use crate::{object::ObjectStore,
+use crate::{
+    error::Result,
+    object::ObjectStore,
     refs::{RedbRefStore, RefStore},
     snapshot::{RedbSnapshotStore, SnapshotStore},
 };
@@ -70,7 +72,7 @@ pub fn lfs_install(repo_root: &Path) -> Result<()> {
         .args(["lfs", "install"])
         .current_dir(repo_root)
         .status()
-        .with_context(|| format!("git lfs install failed: {e}"))?;
+        .with_context(|| "git lfs install failed")?;
     Ok(())
 }
 
@@ -79,7 +81,7 @@ pub fn lfs_pull(repo_root: &Path) -> Result<()> {
         .args(["lfs", "pull"])
         .current_dir(repo_root)
         .status()
-        .with_context(|| format!("git lfs pull failed: {e}"))?;
+        .with_context(|| "git lfs pull failed")?;
     if !status.success() {
         anyhow::bail!(format!(
             "git lfs pull exited with non-zero status: {status}"
@@ -93,7 +95,7 @@ pub fn lfs_push_all(repo_root: &Path, remote_url: &str) -> Result<()> {
         .args(["lfs", "push", "--all", remote_url])
         .current_dir(repo_root)
         .status()
-        .with_context(|| format!("git lfs push --all failed: {e}"))?;
+        .with_context(|| "git lfs push --all failed")?;
     if !status.success() {
         anyhow::bail!(format!(
             "git lfs push --all exited with non-zero status: {status}"
@@ -197,7 +199,7 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
         .args(["status", "--porcelain"])
         .current_dir(repo_root)
         .output()
-        .with_context(|| format!("git status failed: {e}"))?;
+        .with_context(|| "git status failed")?;
 
     let has_changes = !status_output.stdout.is_empty();
     if has_changes {
@@ -205,7 +207,7 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
             .args(["add", "-A"])
             .current_dir(repo_root)
             .status()
-            .with_context(|| format!("git add failed: {e}"))?;
+            .with_context(|| "git add failed")?;
 
         let msg = format!(
             "[noa export] snapshot {} from workspace {}",
@@ -219,7 +221,7 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
             .env("GIT_COMMITTER_NAME", &snapshot.author)
             .env("GIT_COMMITTER_EMAIL", "noa@noa.local")
             .status()
-            .with_context(|| format!("git commit failed: {e}"))?;
+            .with_context(|| "git commit failed")?;
     }
 
     Ok(())

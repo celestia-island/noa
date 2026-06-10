@@ -3,8 +3,7 @@ use std::sync::Arc;
 use redb::{Database, ReadableTable};
 
 use super::{Snapshot, SnapshotId, SnapshotStore};
-use crate::{,
-};
+use crate::error::Result;
 
 const SNAPSHOTS: redb::TableDefinition<&str, &[u8]> = redb::TableDefinition::new("snapshots");
 const PARENT_INDEX: redb::TableDefinition<&str, &str> =
@@ -23,11 +22,11 @@ impl RedbSnapshotStore {
     }
 
     fn ensure_table(&self) -> Result<()> {
-        let txn =!(self.db.begin_write())?;
-        {
-            let _ =!(txn.open_table(SNAPSHOTS));
-            let _ =!(txn.open_table(PARENT_INDEX));
-        }!(txn.commit())
+        let txn = self.db.begin_write()?;
+        let _ = txn.open_table(SNAPSHOTS);
+        let _ = txn.open_table(PARENT_INDEX);
+        txn.commit()?;
+        Ok(())
     }
 
     fn index_key(parent_id: &str, child_id: &str) -> String {
@@ -41,10 +40,10 @@ impl SnapshotStore for RedbSnapshotStore {
         let db = Arc::clone(&self.db);
         let id = id.clone();
         tokio::task::spawn_blocking(move || {
-            let txn =!(db.begin_read())?;
-            let table =!(txn.open_table(SNAPSHOTS))?;
+            let txn = db.begin_read()?;
+            let table = txn.open_table(SNAPSHOTS)?;
 
-            match!(table.get(id.as_str()))? {
+            match table.get(id.as_str())? {
                 Some(guard) => rmp_serde::from_slice(guard.value())
                     ?,
                 None => anyhow::bail!("snapshot not found: {}", id.to_string()),
@@ -62,15 +61,16 @@ impl SnapshotStore for RedbSnapshotStore {
         let id = snapshot.id.clone();
         let parents = snapshot.parents.clone();
         tokio::task::spawn_blocking(move || {
-            let txn =!(db.begin_write())?;
-            {
-                let mut table =!(txn.open_table(SNAPSHOTS))?;!(table.insert(id.as_str(), data.as_slice()))?;
+            let txn = db.begin_write()?;
+            let mut table = txn.open_table(SNAPSHOTS)?;
+            table.insert(id.as_str(), data.as_slice())?;
 
-                let mut parent_idx =!(txn.open_table(PARENT_INDEX))?;
-                for parent in &parents {
-                    let key = Self::index_key(parent.as_str(), id.as_str());!(parent_idx.insert(key.as_str(), id.as_str()))?;
-                }
-            }!(txn.commit())
+            let mut parent_idx = txn.open_table(PARENT_INDEX)?;
+            for parent in &parents {
+                let key = Self::index_key(parent.as_str(), id.as_str());
+                parent_idx.insert(key.as_str(), id.as_str())?;
+            }
+            txn.commit()
         })
         .await
         ?
@@ -80,12 +80,12 @@ impl SnapshotStore for RedbSnapshotStore {
         let db = Arc::clone(&self.db);
         let parent = parent.clone();
         tokio::task::spawn_blocking(move || {
-            let txn =!(db.begin_read())?;
-            let table =!(txn.open_table(PARENT_INDEX))?;
+            let txn = db.begin_read()?;
+            let table = txn.open_table(PARENT_INDEX)?;
 
             let prefix = format!("{}:", parent.as_str());
             let mut children = Vec::new();
-            for entry in!(table.range(prefix.as_str()..))? {
+            for entry in table.range(prefix.as_str()..)? {
                 let (key, value) = entry?;
                 let key_str = key.value();
                 if !key_str.starts_with(&prefix) {
@@ -102,11 +102,11 @@ impl SnapshotStore for RedbSnapshotStore {
     async fn list_all(&self) -> Result<Vec<Snapshot>> {
         let db = Arc::clone(&self.db);
         tokio::task::spawn_blocking(move || {
-            let txn =!(db.begin_read())?;
-            let table =!(txn.open_table(SNAPSHOTS))?;
+            let txn = db.begin_read()?;
+            let table = txn.open_table(SNAPSHOTS)?;
 
             let mut result = Vec::new();
-            for entry in!(table.iter())? {
+            for entry in table.iter()? {
                 let (_, value) = entry?;
                 let snapshot: Snapshot = rmp_serde::from_slice(value.value())
                     ?;

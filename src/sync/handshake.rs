@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 use super::{NoaAck, RequestNoaHandshake};
-use crate::{repo::{get_current_git_branch, manage_gitignore, Repository},
+use crate::{
+    error::Result,
+    repo::{get_current_git_branch, manage_gitignore, Repository},
     server::constant_time_eq,
 };
 
@@ -200,7 +202,7 @@ fn create_git_branch(workspace_root: &Path, name: &str, base: &str) -> Result<()
         .args(["checkout", "-b", name, base])
         .current_dir(workspace_root)
         .output()
-        .with_context(|| format!("git checkout -b failed: {e}"))?;
+        .with_context(|| "git checkout -b failed")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -215,7 +217,7 @@ fn checkout_git_branch(workspace_root: &Path, name: &str) -> Result<()> {
         .args(["checkout", name])
         .current_dir(workspace_root)
         .output()
-        .with_context(|| format!("git checkout failed: {e}"))?;
+        .with_context(|| "git checkout failed")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

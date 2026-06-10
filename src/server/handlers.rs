@@ -9,6 +9,7 @@ use axum::{
 };
 
 use crate::{
+    error::{is_object_not_found, is_workspace_already_exists},
     object::{BlobId, ObjectStore, RedbObjectStore, TreeEntries, TreeId},
     refs::{RedbRefStore, RefStore},
     snapshot::{
@@ -261,7 +262,7 @@ pub async fn get_blob(
             let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
             Ok(Json(serde_json::json!({ "content": encoded })))
         }
-        Err(e) if crate::error::is_object_not_found(&e) => Err(not_found_json("blob not found")),
+        Err(e) if is_object_not_found(&e) => Err(not_found_json("blob not found")),
         Err(e) => Err(err_json(e)),
     }
 }
@@ -310,7 +311,7 @@ pub async fn get_tree(
             Ok(v) => Ok(Json(v)),
             Err(e) => Err(err_json(format!("TreeEntries serialization failed: {e}"))),
         },
-        Err(e) if crate::error::is_object_not_found(&e) => Err(not_found_json("tree not found")),
+        Err(e) if is_object_not_found(&e) => Err(not_found_json("tree not found")),
         Err(e) => Err(err_json(e)),
     }
 }
@@ -373,10 +374,10 @@ pub async fn create_workspace(
     let mgr = state.workspace_manager().map_err(err_json)?;
     match mgr.create(&body.workspace).await {
         Ok(()) => Ok(StatusCode::CREATED),
-        Err(e) if crate::error::is_workspace_already_exists(&e) => Err((
+        Err(e) if is_workspace_already_exists(&e) => Err((
             StatusCode::CONFLICT,
             Json(ApiError {
-                error: format!("workspace already exists: {name}"),
+                error: "workspace already exists".to_string(),
             }),
         )),
         Err(e) => Err(err_json(e)),

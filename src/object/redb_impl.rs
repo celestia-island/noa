@@ -3,8 +3,7 @@ use std::sync::Arc;
 use redb::Database;
 
 use super::{sha256_hex, BlobId, ObjectStore, TreeEntries, TreeId};
-use crate::{,
-};
+use crate::error::Result;
 
 const BLOBS: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new("blobs");
 const TREES: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new("trees");
@@ -22,11 +21,11 @@ impl RedbObjectStore {
     }
 
     fn ensure_tables(&self) -> Result<()> {
-        let txn =!(self.db.begin_write())?;
-        {
-            let _ =!(txn.open_table(BLOBS));
-            let _ =!(txn.open_table(TREES));
-        }!(txn.commit())
+        let txn = self.db.begin_write()?;
+        let _ = txn.open_table(BLOBS);
+        let _ = txn.open_table(TREES);
+        txn.commit()?;
+        Ok(())
     }
 }
 
@@ -38,10 +37,10 @@ impl ObjectStore for RedbObjectStore {
         tokio::task::spawn_blocking(move || {
             let hash = sha256_hex(&content);
             let id = BlobId(hash);
-            let txn =!(db.begin_write())?;
-            {
-                let mut table =!(txn.open_table(BLOBS))?;!(table.insert(id.as_bytes(), content.as_slice()))?;
-            }!(txn.commit())?;
+            let txn = db.begin_write()?;
+            let mut table = txn.open_table(BLOBS)?;
+            table.insert(id.as_bytes(), content.as_slice())?;
+            txn.commit()?;
             Ok(id)
         })
         .await
@@ -52,9 +51,9 @@ impl ObjectStore for RedbObjectStore {
         let db = self.db.clone();
         let id = id.clone();
         tokio::task::spawn_blocking(move || {
-            let txn =!(db.begin_read())?;
-            let table =!(txn.open_table(BLOBS))?;
-            match!(table.get(id.as_bytes()))? {
+            let txn = db.begin_read()?;
+            let table = txn.open_table(BLOBS)?;
+            match table.get(id.as_bytes())? {
                 Some(guard) => Ok(guard.value().to_vec()),
                 None => anyhow::bail!("object not found: {}", id.to_string()),
             }
@@ -67,9 +66,9 @@ impl ObjectStore for RedbObjectStore {
         let db = self.db.clone();
         let id = id.clone();
         tokio::task::spawn_blocking(move || {
-            let txn =!(db.begin_read())?;
-            let table =!(txn.open_table(BLOBS))?;
-            Ok(!(table.get(id.as_bytes()))?.is_some())
+            let txn = db.begin_read()?;
+            let table = txn.open_table(BLOBS)?;
+            Ok(table.get(id.as_bytes())?.is_some())
         })
         .await
         ?
@@ -82,10 +81,10 @@ impl ObjectStore for RedbObjectStore {
         tokio::task::spawn_blocking(move || {
             let hash = sha256_hex(&data);
             let id = TreeId(hash);
-            let txn =!(db.begin_write())?;
-            {
-                let mut table =!(txn.open_table(TREES))?;!(table.insert(id.as_bytes(), data.as_slice()))?;
-            }!(txn.commit())?;
+            let txn = db.begin_write()?;
+            let mut table = txn.open_table(TREES)?;
+            table.insert(id.as_bytes(), data.as_slice())?;
+            txn.commit()?;
             Ok(id)
         })
         .await
@@ -96,9 +95,9 @@ impl ObjectStore for RedbObjectStore {
         let db = self.db.clone();
         let id = id.clone();
         tokio::task::spawn_blocking(move || {
-            let txn =!(db.begin_read())?;
-            let table =!(txn.open_table(TREES))?;
-            match!(table.get(id.as_bytes()))? {
+            let txn = db.begin_read()?;
+            let table = txn.open_table(TREES)?;
+            match table.get(id.as_bytes())? {
                 Some(guard) => rmp_serde::from_slice(guard.value())
                     ?,
                 None => anyhow::bail!("object not found: {}", id.to_string()),
@@ -112,9 +111,9 @@ impl ObjectStore for RedbObjectStore {
         let db = self.db.clone();
         let id = id.clone();
         tokio::task::spawn_blocking(move || {
-            let txn =!(db.begin_read())?;
-            let table =!(txn.open_table(TREES))?;
-            Ok(!(table.get(id.as_bytes()))?.is_some())
+            let txn = db.begin_read()?;
+            let table = txn.open_table(TREES)?;
+            Ok(table.get(id.as_bytes())?.is_some())
         })
         .await
         ?

@@ -3,7 +3,9 @@ use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 use aws_sdk_s3::{primitives::ByteStream, Client};
 
-use crate::{object::{sha256_hex, BlobId, ObjectStore, TreeEntries, TreeId},
+use crate::{
+    error::Result,
+    object::{sha256_hex, BlobId, ObjectStore, TreeEntries, TreeId},
 };
 
 pub struct MinioObjectStore {

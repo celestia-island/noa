@@ -1,6 +1,8 @@
 use std::{path::Path, sync::Arc};
 
-use crate::{object::{EntryKind, ObjectStore, TreeEntries, TreeEntry},
+use crate::{
+    error::Result,
+    object::{EntryKind, ObjectStore, TreeEntries, TreeEntry},
     refs::{RedbRefStore, RefStore},
     snapshot::{RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore},
 };
@@ -23,7 +25,7 @@ pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Resul
 
     let commit = head_obj
         .try_into_commit()
-        .with_context(|| format!("HEAD is not a commit: {e}"))?;
+        .with_context(|| "HEAD is not a commit")?;
 
     let tree_id = commit
         .tree_id()
@@ -87,7 +89,7 @@ fn walk_tree(
             ?;
         let tree = obj
             .try_into_tree()
-            .with_context(|| format!("not a tree: {e}"))?;
+            .with_context(|| "not a tree")?;
 
         for entry_result in tree.iter() {
             let entry = entry_result?;
@@ -108,7 +110,7 @@ fn walk_tree(
                     ?;
                 let blob = blob_obj
                     .try_into_blob()
-                    .with_context(|| format!("not a blob: {e}"))?;
+                    .with_context(|| "not a blob")?;
                 results.push((full_name, blob.data.clone()));
             }
         }

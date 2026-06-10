@@ -26,7 +26,7 @@ pub async fn ensure_exists(
 ) -> Result<()> {
     mgr.get(name)
         .await?
-        .ok_or_else(|| crate::error::NoaError::WorkspaceNotFound(name.to_string()))?;
+        .ok_or_else(|| anyhow::anyhow!("workspace not found: {name}"))?;
     Ok(())
 }
 

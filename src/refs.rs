@@ -3,7 +3,10 @@ use std::sync::Arc;
 
 use redb::ReadableTable;
 
-;
+use crate::{
+    error::Result,
+    snapshot::SnapshotId,
+};
 
 #[async_trait]
 pub trait RefStore: Send + Sync {
@@ -27,10 +30,10 @@ impl RedbRefStore {
     }
 
     fn ensure_table(&self) -> Result<()> {
-        let txn =!(self.db.begin_write())?;
-        {
-            let _ =!(txn.open_table(REFS));
-        }!(txn.commit())
+        let txn = self.db.begin_write()?;
+        let _ = txn.open_table(REFS);
+        txn.commit()?;
+        Ok(())
     }
 
     #[cfg(test)]
@@ -47,9 +50,9 @@ impl RefStore for RedbRefStore {
         let db = self.db.clone();
         let name = name.to_string();
         tokio::task::spawn_blocking(move || {
-            let txn =!(db.begin_read())?;
-            let table =!(txn.open_table(REFS))?;
-            match!(table.get(name.as_str()))? {
+            let txn = db.begin_read()?;
+            let table = txn.open_table(REFS)?;
+            match table.get(name.as_str())? {
                 Some(guard) => {
                     let id_str = String::from_utf8(guard.value().to_vec())
                         ?;
@@ -68,35 +71,32 @@ impl RefStore for RedbRefStore {
         let old = old.cloned();
         let new = new.clone();
         let result = tokio::task::spawn_blocking(move || {
-            let txn =!(db.begin_write())?;
-            {
-                let mut table =!(txn.open_table(REFS))?;
+            let txn = db.begin_write()?;
+            let mut table = txn.open_table(REFS)?;
 
-                let current: Option<SnapshotId> = match!(table.get(&*name))? {
-                    Some(guard) => {
-                        let s = String::from_utf8(guard.value().to_vec())
-                            ?;
-                        Some(SnapshotId(s))
-                    }
-                    None => None,
-                };
+            let current: Option<SnapshotId> = match table.get(&*name)? {
+                Some(guard) => {
+                    let s = String::from_utf8(guard.value().to_vec())
+                        ?;
+                    Some(SnapshotId(s))
+                }
+                None => None,
+            };
 
-                let matches = match (&old, &current) {
-                    (None, None) => true,
-                    (Some(expected), Some(cur)) => expected == cur,
-                    _ => false,
-                };
+            let matches = match (&old, &current) {
+                (None, None) => true,
+                (Some(expected), Some(cur)) => expected == cur,
+                _ => false,
+            };
 
-                if !matches {
-                    return Ok(false);
-                }!(table.insert(&*name, new.0.as_bytes()))?;
+            if !matches {
+                return Ok(false);
             }
+            table.insert(&*name, new.0.as_bytes())?;
             match txn.commit() {
                 Ok(()) => Ok(true),
                 Err(e) => {
-                    // redb 2.x serializes write transactions, so commit errors here
-                    // are genuine I/O or corruption issues, not concurrent conflicts.
-                    Err(anyhow::anyhow!("{}", e))
+                    Err(e.into())
                 }
             }
         })
@@ -108,10 +108,10 @@ impl RefStore for RedbRefStore {
     async fn list(&self) -> Result<Vec<(String, SnapshotId)>> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let txn =!(db.begin_read())?;
-            let table =!(txn.open_table(REFS))?;
+            let txn = db.begin_read()?;
+            let table = txn.open_table(REFS)?;
             let mut result = Vec::new();
-            for entry in!(table.iter())? {
+            for entry in table.iter()? {
                 let (key, value) = entry?;
                 let id_str = String::from_utf8(value.value().to_vec())
                     ?;
@@ -127,12 +127,13 @@ impl RefStore for RedbRefStore {
         let db = self.db.clone();
         let name = name.to_string();
         tokio::task::spawn_blocking(move || {
-            let txn =!(db.begin_write())?;
+            let txn = db.begin_write()?;
             let existed = {
-                let mut table =!(txn.open_table(REFS))?;
-                let removed =!(table.remove(name.as_str()))?;
+                let mut table = txn.open_table(REFS)?;
+                let removed = table.remove(name.as_str())?;
                 removed.is_some()
-            };!(txn.commit())?;
+            };
+            txn.commit()?;
             Ok(existed)
         })
         .await

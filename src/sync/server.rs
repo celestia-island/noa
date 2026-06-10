@@ -55,7 +55,7 @@ impl SyncServer {
         let _ = std::fs::remove_file(&self.socket_path);
 
         let listener = UnixListener::bind(&self.socket_path)
-            .with_context(|| format!("failed to bind sync socket: {e}"))?;
+            .with_context(|| "failed to bind sync socket")?;
         if let Ok(metadata) = std::fs::metadata(&self.socket_path) {
             let mut perms = metadata.permissions();
             perms.set_mode(0o600);
@@ -157,7 +157,7 @@ impl SyncServer {
         reader
             .read_exact(&mut len_buf)
             .await
-            .with_context(|| format!("read length: {e}"))?;
+            .with_context(|| "read length")?;
 
         let len = u32::from_be_bytes(len_buf) as usize;
         if len > MAX_MESSAGE_SIZE {
@@ -169,7 +169,7 @@ impl SyncServer {
         reader
             .read_exact(&mut body_buf)
             .await
-            .with_context(|| format!("read body: {e}"))?;
+            .with_context(|| "read body")?;
 
         let json =
             std::str::from_utf8(&body_buf)?;
@@ -187,11 +187,11 @@ impl SyncServer {
         writer
             .write_all(&frame)
             .await
-            .with_context(|| format!("write frame: {e}"))?;
+            .with_context(|| "write frame")?;
         writer
             .flush()
             .await
-            .with_context(|| format!("flush: {e}"))
+            .with_context(|| "flush")
     }
 
     async fn dispatch(

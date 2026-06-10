@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
-use crate::{log::{AgentLog, LogEntry},
+use crate::{
+    error::{is_object_not_found, Result},
+    log::{AgentLog, LogEntry},
     object::ObjectStore,
     repo::Repository,
 };
@@ -121,7 +123,7 @@ impl EventSyncEngine {
                                     std::fs::write(&file_path, &data)?;
                                     applied += 1;
                                 }
-                                anyhow::bail!("object not found: {}", _) => {
+                                Err(e) if is_object_not_found(&e) => {
                                     tracing::warn!("blob {} not found, skipping write", blob_id.0);
                                 }
                                 Err(e) => return Err(e),

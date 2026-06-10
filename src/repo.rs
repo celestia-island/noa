@@ -7,6 +7,7 @@ use redb::Database;
 
 use crate::{
     config::RepoConfig,
+    error::Result,
     log::FileAgentLog,
     object::RedbObjectStore,
     refs::RedbRefStore,
@@ -355,7 +356,7 @@ pub fn get_current_git_branch(workspace_root: &Path) -> Result<String> {
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(workspace_root)
         .output()
-        .with_context(|| format!("git rev-parse failed: {e}"))?;
+        .with_context(|| "git rev-parse failed")?;
 
     if !output.status.success() {
         return Err(NoaError::Sync(

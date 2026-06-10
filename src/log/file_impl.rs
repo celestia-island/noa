@@ -38,10 +38,7 @@ impl FileAgentLog {
 
     pub fn open(path: &Path) -> Result<Self> {
         if !path.exists() {
-            return Err(NoaError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("log file not found: {}", path.display()),
-            )));
+            anyhow::bail!("log file not found: {}", path.display());
         }
         cleanup_stale_temp(path);
         let mut file = OpenOptions::new()

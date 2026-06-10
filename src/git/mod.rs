@@ -10,7 +10,9 @@ pub use export::{
 };
 pub use import::{import_git_to_noa, is_lfs_pointer};
 
-use crate::{remote::{FetchResult, FetchSpec, PushResult, PushSpec, RemoteBackend, RemoteRef},
+use crate::{
+    error::Result,
+    remote::{FetchResult, FetchSpec, PushResult, PushSpec, RemoteBackend, RemoteRef},
 };
 
 pub struct GitBackend;
@@ -39,7 +41,7 @@ impl RemoteBackend for GitBackend {
         let output = Command::new("git")
             .args(["push", url])
             .output()
-            .with_context(|| format!("git push failed: {e}"))?;
+            .with_context(|| "git push failed")?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -59,7 +61,7 @@ impl RemoteBackend for GitBackend {
         let output = Command::new("git")
             .args(["fetch", url])
             .output()
-            .with_context(|| format!("git fetch failed: {e}"))?;
+            .with_context(|| "git fetch failed")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -74,7 +76,7 @@ impl RemoteBackend for GitBackend {
         let output = Command::new("git")
             .args(["ls-remote", "--refs", url])
             .output()
-            .with_context(|| format!("git ls-remote failed: {e}"))?;
+            .with_context(|| "git ls-remote failed")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
