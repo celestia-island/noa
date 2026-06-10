@@ -1,7 +1,7 @@
 mod handlers;
 
 use axum::{
-    extract::Request,
+    extract::{ConnectInfo, Request},
     http::StatusCode,
     middleware::Next,
     response::Response,
@@ -10,8 +10,9 @@ use axum::{
 };
 pub use handlers::AppState;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 #[derive(Clone)]
@@ -20,7 +21,7 @@ struct RateLimitEntry {
     window_start: Instant,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct RateLimiter {
     entries: Arc<Mutex<HashMap<String, RateLimitEntry>>>,
     max_requests: u32,
@@ -39,7 +40,11 @@ impl RateLimiter {
     pub async fn check(&self, key: &str) -> bool {
         let mut entries = self.entries.lock().await;
         let now = Instant::now();
-        let window = std::time::Duration::from_secs(self.window_secs);
+        let window = Duration::from_secs(self.window_secs);
+
+        if entries.len() > 10000 {
+            cleanup_rate_limiter(&mut entries, window);
+        }
 
         let entry = entries.entry(key.to_string()).or_insert(RateLimitEntry {
             count: 0,
@@ -56,6 +61,11 @@ impl RateLimiter {
     }
 }
 
+fn cleanup_rate_limiter(entries: &mut HashMap<String, RateLimitEntry>, window: Duration) {
+    let now = Instant::now();
+    entries.retain(|_, entry| now.duration_since(entry.window_start) <= window * 2);
+}
+
 async fn auth_middleware(
     axum::extract::State(state): axum::extract::State<AppState>,
     req: Request,
@@ -67,9 +77,15 @@ async fn auth_middleware(
             .get("x-forwarded-for")
             .or_else(|| req.headers().get("x-real-ip"))
             .and_then(|v| v.to_str().ok())
-            .unwrap_or("default");
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                req.extensions()
+                    .get::<ConnectInfo<SocketAddr>>()
+                    .map(|c| c.0.ip().to_string())
+                    .unwrap_or_else(|| "default".to_string())
+            });
 
-        if !state.rate_limiter.check(key).await {
+        if !state.rate_limiter.check(&key).await {
             return Err(StatusCode::TOO_MANY_REQUESTS);
         }
     }
@@ -98,14 +114,16 @@ async fn auth_middleware(
 }
 
 pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    let max_len = a.len().max(b.len());
     let mut result: u8 = 0;
-    for i in 0..a.len().max(b.len()) {
+    for i in 0..max_len {
         let x = a.get(i).copied().unwrap_or(0);
         let y = b.get(i).copied().unwrap_or(0);
         result |= x ^ y;
     }
-    std::hint::black_box(result);
-    result == 0
+    let ok = (result ^ 0).wrapping_sub(1) >> 7;
+    std::hint::black_box(ok);
+    ok == 1
 }
 
 pub fn router(state: AppState) -> Router {

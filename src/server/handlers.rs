@@ -105,11 +105,11 @@ fn not_found_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
 
 
 fn validate_object_hash_id(id: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
-    if id.is_empty() || id.len() > 128 {
+    if id.len() != 64 {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError {
-                error: "invalid hash id".to_string(),
+                error: "invalid hash id: must be exactly 64 hex characters".to_string(),
             }),
         ));
     }
@@ -118,6 +118,14 @@ fn validate_object_hash_id(id: &str) -> Result<(), (StatusCode, Json<ApiError>)>
             StatusCode::BAD_REQUEST,
             Json(ApiError {
                 error: "invalid hash id format".to_string(),
+            }),
+        ));
+    }
+    if id != id.to_ascii_lowercase() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "invalid hash id: must be lowercase".to_string(),
             }),
         ));
     }
@@ -205,6 +213,12 @@ pub async fn push_refs(
     validate_ref_name(&body.name)?;
     let ref_store = state.ref_store().map_err(err_json)?;
     let id = SnapshotId(body.id);
+    if !id.is_empty() {
+        let snap_store = state.snapshot_store().map_err(err_json)?;
+        if snap_store.get(&id).await.is_err() {
+            return Err(not_found_json("snapshot not found"));
+        }
+    }
     let old = body.expected_id.as_ref().map(|s| SnapshotId(s.clone()));
     let ok = ref_store
         .cas(&body.name, old.as_ref(), &id)
@@ -376,6 +390,11 @@ pub async fn create_snapshot(
         ));
     }
     let store = state.snapshot_store().map_err(err_json)?;
+    for parent in &body.snapshot.parents {
+        if store.get(parent).await.is_err() {
+            return Err(not_found_json(format!("parent snapshot not found: {parent}")));
+        }
+    }
     store.store(&body.snapshot).await.map_err(err_json)?;
     Ok(StatusCode::CREATED)
 }

@@ -202,16 +202,10 @@ impl AgentLog for FileAgentLog {
 }
 
 fn compact_temp_path(original: &Path) -> PathBuf {
-    use std::time::{SystemTime, UNIX_EPOCH};
     let file_name = original
         .file_name()
         .map_or_else(|| "log".to_string(), |n| n.to_string_lossy().into_owned());
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let pid = std::process::id();
-    original.with_file_name(format!(".{file_name}.{pid}.{ts}.compact.tmp"))
+    original.with_file_name(format!("noa-compact-{file_name}.tmp"))
 }
 
 fn cleanup_stale_temp(path: &Path) {
