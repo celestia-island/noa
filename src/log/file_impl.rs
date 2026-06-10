@@ -61,7 +61,7 @@ fn compute_max_seq_from_file(file: &mut File) -> Result<u64> {
         return max_seq_from_lines(content.lines());
     }
 
-    let read_size = 8192u64.min(file_len);
+    let read_size = 65536u64.min(file_len);
     file.seek(SeekFrom::End(-(read_size as i64)))?;
     let mut tail = vec![0u8; read_size as usize];
     file.read_exact(&mut tail)?;
@@ -80,7 +80,10 @@ fn compute_max_seq_from_file(file: &mut File) -> Result<u64> {
     file.seek(SeekFrom::Start(0))?;
     let mut content = String::new();
     file.read_to_string(&mut content)?;
-    max_seq_from_lines(content.lines())
+    max_seq_from_lines(content.lines()).map_err(|e| {
+        tracing::error!("failed to parse full log file content: {e}");
+        e
+    })
 }
 
 fn try_parse_last_seq(content: &str) -> Option<u64> {
@@ -114,7 +117,7 @@ impl AgentLog for FileAgentLog {
         let _guard = self.compact_lock.lock().await;
         let seq = self
             .next_seq
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut assigned_entry = entry.clone();
         assigned_entry.seq = seq;
         let line = format::serialize_entry(&assigned_entry)?;
@@ -125,6 +128,7 @@ impl AgentLog for FileAgentLog {
             use std::io::Write;
             let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
             file.write_all(&record)?;
+            file.sync_all()?;
             Ok(seq)
         })
         .await?
@@ -138,6 +142,9 @@ impl AgentLog for FileAgentLog {
     async fn read_all(&self) -> Result<Vec<LogEntry>> {
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || {
+            if !path.exists() {
+                return Ok(Vec::new());
+            }
             let mut file = OpenOptions::new().read(true).open(&path)?;
             let mut content = String::new();
             file.read_to_string(&mut content)?;
@@ -147,7 +154,7 @@ impl AgentLog for FileAgentLog {
     }
 
     async fn next_seq(&self) -> Result<u64> {
-        Ok(self.next_seq.load(std::sync::atomic::Ordering::Relaxed))
+        Ok(self.next_seq.load(std::sync::atomic::Ordering::Acquire))
     }
 
     async fn compact_to(&self, up_to_seq: u64) -> Result<()> {
@@ -155,7 +162,11 @@ impl AgentLog for FileAgentLog {
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || {
             cleanup_stale_temp(&path);
-            let mut file = OpenOptions::new().read(true).open(&path)?;
+            if !path.exists() {
+                return Ok(());
+            }
+            let mut file = OpenOptions::new().read(true).open(&path)
+                .map_err(|e| anyhow::anyhow!("failed to open log for compaction ({}): {e}", path.display()))?;
             let mut content = String::new();
             file.read_to_string(&mut content)?;
             drop(file);
@@ -191,10 +202,16 @@ impl AgentLog for FileAgentLog {
 }
 
 fn compact_temp_path(original: &Path) -> PathBuf {
+    use std::time::{SystemTime, UNIX_EPOCH};
     let file_name = original
         .file_name()
         .map_or_else(|| "log".to_string(), |n| n.to_string_lossy().into_owned());
-    original.with_file_name(format!(".{file_name}.compact.tmp"))
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let pid = std::process::id();
+    original.with_file_name(format!(".{file_name}.{pid}.{ts}.compact.tmp"))
 }
 
 fn cleanup_stale_temp(path: &Path) {
