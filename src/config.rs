@@ -80,11 +80,11 @@ impl Default for RepoConfig {
 
 impl RepoConfig {
     pub fn to_toml(&self) -> Result<String> {
-        toml::to_string_pretty(self)?
+        Ok(toml::to_string_pretty(self)?)
     }
 
     pub fn from_toml(s: &str) -> Result<Self> {
-        toml::from_str(s)?
+        Ok(toml::from_str::<RepoConfig>(s)?)
     }
 
     pub fn load_from_dir(dir: &Path) -> Result<Self> {
@@ -96,7 +96,7 @@ impl RepoConfig {
     pub fn save_to_dir(&self, dir: &Path) -> Result<()> {
         let config_path = dir.join("config");
         let content = self.to_toml()?;
-        std::fs::write(&config_path, content)?
+        Ok(std::fs::write(&config_path, content)?)
     }
 
     pub fn add_remote(&mut self, remote: RemoteConfig) {

@@ -1,5 +1,6 @@
 use std::{
     os::unix::fs::PermissionsExt,
+
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -10,6 +11,7 @@ use super::{
     NoaEventSyncMessage, NoaReady, RequestNoaHandshake,
 };
 use crate::error::Result;
+use anyhow::Context;
 
 pub struct SyncServer {
     socket_path: PathBuf,
@@ -161,9 +163,7 @@ impl SyncServer {
 
         let len = u32::from_be_bytes(len_buf) as usize;
         if len > MAX_MESSAGE_SIZE {
-            return Err(NoaError::Sync(format!(
-                "message too large: {len} bytes (max {MAX_MESSAGE_SIZE})"
-            )));
+            anyhow::bail!("message too large: {len} bytes (max {MAX_MESSAGE_SIZE})");
         }
         let mut body_buf = vec![0u8; len];
         reader

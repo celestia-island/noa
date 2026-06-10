@@ -44,13 +44,11 @@ impl SnapshotStore for RedbSnapshotStore {
             let table = txn.open_table(SNAPSHOTS)?;
 
             match table.get(id.as_str())? {
-                Some(guard) => rmp_serde::from_slice(guard.value())
-                    ?,
-                None => anyhow::bail!("snapshot not found: {}", id.to_string()),
+                Some(guard) => Ok(rmp_serde::from_slice::<Snapshot>(guard.value())?),
+                None => anyhow::bail!("snapshot not found: {}", id),
             }
         })
-        .await
-        ?
+        .await? 
     }
 
     async fn store(&self, snapshot: &Snapshot) -> Result<()> {
@@ -62,15 +60,18 @@ impl SnapshotStore for RedbSnapshotStore {
         let parents = snapshot.parents.clone();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_write()?;
-            let mut table = txn.open_table(SNAPSHOTS)?;
-            table.insert(id.as_str(), data.as_slice())?;
+            {
+                let mut table = txn.open_table(SNAPSHOTS)?;
+                table.insert(id.as_str(), data.as_slice())?;
 
-            let mut parent_idx = txn.open_table(PARENT_INDEX)?;
-            for parent in &parents {
-                let key = Self::index_key(parent.as_str(), id.as_str());
-                parent_idx.insert(key.as_str(), id.as_str())?;
+                let mut parent_idx = txn.open_table(PARENT_INDEX)?;
+                for parent in &parents {
+                    let key = Self::index_key(parent.as_str(), id.as_str());
+                    parent_idx.insert(key.as_str(), id.as_str())?;
+                }
             }
-            txn.commit()
+            txn.commit()?;
+            Ok(())
         })
         .await
         ?
@@ -108,8 +109,7 @@ impl SnapshotStore for RedbSnapshotStore {
             let mut result = Vec::new();
             for entry in table.iter()? {
                 let (_, value) = entry?;
-                let snapshot: Snapshot = rmp_serde::from_slice(value.value())
-                    ?;
+                let snapshot: Snapshot = rmp_serde::from_slice(value.value())?;
                 result.push(snapshot);
             }
             Ok(result)

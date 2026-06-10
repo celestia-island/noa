@@ -39,19 +39,19 @@ impl AppState {
         self
     }
 
-    pub fn object_store(&self) -> crate::error::Result<_> {
+    pub fn object_store(&self) -> anyhow::Result<RedbObjectStore> {
         RedbObjectStore::new(Arc::clone(&self.db))
     }
 
-    pub fn snapshot_store(&self) -> crate::error::Result<_> {
+    pub fn snapshot_store(&self) -> anyhow::Result<RedbSnapshotStore> {
         RedbSnapshotStore::new(Arc::clone(&self.db))
     }
 
-    pub fn ref_store(&self) -> crate::error::Result<_> {
+    pub fn ref_store(&self) -> anyhow::Result<RedbRefStore> {
         RedbRefStore::new(Arc::clone(&self.db))
     }
 
-    pub fn workspace_manager(&self) -> crate::error::Result<_> {
+    pub fn workspace_manager(&self) -> anyhow::Result<WorkspaceManager> {
         WorkspaceManager::new(Arc::clone(&self.db))
     }
 }

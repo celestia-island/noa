@@ -213,8 +213,7 @@ impl ObjectStore for MinioObjectStore {
             .collect()
             .await
             ?;
-        rmp_serde::from_slice(&bytes.into_bytes())
-            ?
+        Ok(rmp_serde::from_slice::<TreeEntries>(&bytes.into_bytes())?)
     }
 
     async fn has_tree(&self, id: &TreeId) -> Result<bool> {

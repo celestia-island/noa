@@ -3,6 +3,7 @@ pub mod import;
 
 use async_trait::async_trait;
 use std::process::Command;
+use anyhow::Context;
 
 pub use export::{
     clone_git_to_noa, detect_lfs_available, export_noa_to_git, has_lfs_tracking, lfs_install,

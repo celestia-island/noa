@@ -2,7 +2,7 @@ use crate::log::LogEntry;
 use crate::error::Result;
 
 pub fn serialize_entry(entry: &LogEntry) -> Result<String> {
-    serde_json::to_string(entry)?
+    Ok(serde_json::to_string(entry)?)
 }
 
 pub fn deserialize_entry(line: &str) -> Result<LogEntry> {
@@ -10,7 +10,7 @@ pub fn deserialize_entry(line: &str) -> Result<LogEntry> {
     if trimmed.is_empty() {
         return anyhow::bail!("empty log line");
     }
-    serde_json::from_str(trimmed)?
+    Ok(serde_json::from_str::<LogEntry>(trimmed)?)
 }
 
 pub fn deserialize_entries(content: &str) -> Result<Vec<LogEntry>> {

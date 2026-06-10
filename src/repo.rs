@@ -3,6 +3,7 @@ use std::{
     sync::Arc,
 };
 
+use anyhow::Context;
 use redb::Database;
 
 use crate::{
@@ -38,7 +39,7 @@ impl Repository {
         let noa_dir = path.join(NOA_DIR_NAME);
 
         if noa_dir.exists() {
-            return Err(NoaError::RepoAlreadyExists(noa_dir.display().to_string()));
+            anyhow::bail!("repository already exists at {}", noa_dir.display());
         }
 
         std::fs::create_dir_all(&noa_dir)?;
@@ -79,7 +80,7 @@ impl Repository {
         let noa_dir = path.join(NOA_DIR_NAME);
 
         if noa_dir.exists() {
-            return Err(NoaError::RepoAlreadyExists(noa_dir.display().to_string()));
+            anyhow::bail!("repository already exists at {}", noa_dir.display());
         }
 
         std::fs::create_dir_all(&noa_dir)?;
@@ -115,7 +116,7 @@ impl Repository {
         let noa_dir = path.join(NOA_DIR_NAME);
 
         if !noa_dir.exists() {
-            return Err(NoaError::RepoNotFound(noa_dir.display().to_string()));
+            anyhow::bail!("repository not found at {}", noa_dir.display());
         }
 
         Self::validate(&noa_dir)?;
@@ -140,11 +141,7 @@ impl Repository {
             }
             match current.parent() {
                 Some(parent) => current = parent.to_path_buf(),
-                None => {
-                    return Err(NoaError::RepoNotFound(
-                        "reached filesystem root".to_string(),
-                    ))
-                }
+                None => anyhow::bail!("repository not found: reached filesystem root"),
             }
         }
     }
@@ -159,9 +156,7 @@ impl Repository {
             return anyhow::bail!("invalid repository: {}", "missing noa.redb".to_string());
         }
         if !noa_dir.join(AGENT_LOGS_DIR).exists() {
-            return Err(NoaError::InvalidRepo(
-                "missing agent-logs/ directory".to_string(),
-            ));
+            anyhow::bail!("invalid repository: missing agent-logs/ directory");
         }
         if !noa_dir.join("config").exists() {
             return anyhow::bail!("invalid repository: {}", "missing config file".to_string());
@@ -359,9 +354,7 @@ pub fn get_current_git_branch(workspace_root: &Path) -> Result<String> {
         .with_context(|| "git rev-parse failed")?;
 
     if !output.status.success() {
-        return Err(NoaError::Sync(
-            "failed to determine current git branch".to_string(),
-        ));
+        anyhow::bail!("failed to determine current git branch");
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())

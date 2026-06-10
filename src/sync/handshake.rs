@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use anyhow::Context;
 
 use super::{NoaAck, RequestNoaHandshake};
 use crate::{
@@ -40,17 +41,13 @@ pub fn handle_handshake_request(
     expected_token: &str,
 ) -> Result<NoaHandshakeResponse> {
     if !workspace_root.join(".git").exists() {
-        return Err(NoaError::Sync(
-            "workspace has no git repository, noa requires git".to_string(),
-        ));
+        anyhow::bail!("workspace has no git repository, noa requires git");
     }
 
     match &req.token {
         Some(token) if constant_time_eq(token.as_bytes(), expected_token.as_bytes()) => {}
         _ => {
-            return Err(NoaError::Sync(
-                "authentication failed: invalid or missing token".to_string(),
-            ));
+            anyhow::bail!("authentication failed: invalid or missing token");
         }
     }
 
@@ -137,32 +134,21 @@ pub fn handle_auth_request(
 
 fn validate_git_ref_component(name: &str) -> Result<()> {
     if name.is_empty() || name.len() > 128 {
-        return Err(NoaError::Sync(format!(
-            "invalid ref component: length must be 1-128, got {}",
-            name.len()
-        )));
+        anyhow::bail!("invalid ref component: length must be 1-128, got {}", name.len());
     }
     if name.contains('\0') || name.contains('\n') || name.contains('\r') {
-        return Err(NoaError::Sync(
-            "invalid ref component: contains control characters".to_string(),
-        ));
+        anyhow::bail!("invalid ref component: contains control characters");
     }
     if name.contains("..") || name.contains('~') || name.contains('^') || name.contains(':') {
-        return Err(NoaError::Sync(
-            "invalid ref component: contains forbidden characters".to_string(),
-        ));
+        anyhow::bail!("invalid ref component: contains forbidden characters");
     }
     if name.starts_with('.') || name.starts_with('-') || name.ends_with('.') {
-        return Err(NoaError::Sync(
-            "invalid ref component: invalid start/end character".to_string(),
-        ));
+        anyhow::bail!("invalid ref component: invalid start/end character");
     }
     if name
         .contains(|c: char| c.is_ascii_control() || c == ' ' || c == '\\' || c == '[' || c == '?')
     {
-        return Err(NoaError::Sync(
-            "invalid ref component: contains forbidden characters".to_string(),
-        ));
+        anyhow::bail!("invalid ref component: contains forbidden characters");
     }
     Ok(())
 }

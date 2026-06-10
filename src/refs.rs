@@ -54,8 +54,7 @@ impl RefStore for RedbRefStore {
             let table = txn.open_table(REFS)?;
             match table.get(name.as_str())? {
                 Some(guard) => {
-                    let id_str = String::from_utf8(guard.value().to_vec())
-                        ?;
+                    let id_str = String::from_utf8(guard.value().to_vec())?;
                     Ok(Some(SnapshotId(id_str)))
                 }
                 None => Ok(None),
@@ -72,27 +71,28 @@ impl RefStore for RedbRefStore {
         let new = new.clone();
         let result = tokio::task::spawn_blocking(move || {
             let txn = db.begin_write()?;
-            let mut table = txn.open_table(REFS)?;
+            {
+                let mut table = txn.open_table(REFS)?;
 
-            let current: Option<SnapshotId> = match table.get(&*name)? {
-                Some(guard) => {
-                    let s = String::from_utf8(guard.value().to_vec())
-                        ?;
-                    Some(SnapshotId(s))
+                let current: Option<SnapshotId> = match table.get(&*name)? {
+                    Some(guard) => {
+                        let s = String::from_utf8(guard.value().to_vec())?;
+                        Some(SnapshotId(s))
+                    }
+                    None => None,
+                };
+
+                let matches = match (&old, &current) {
+                    (None, None) => true,
+                    (Some(expected), Some(cur)) => expected == cur,
+                    _ => false,
+                };
+
+                if !matches {
+                    return Ok(false);
                 }
-                None => None,
-            };
-
-            let matches = match (&old, &current) {
-                (None, None) => true,
-                (Some(expected), Some(cur)) => expected == cur,
-                _ => false,
-            };
-
-            if !matches {
-                return Ok(false);
+                table.insert(&*name, new.0.as_bytes())?;
             }
-            table.insert(&*name, new.0.as_bytes())?;
             match txn.commit() {
                 Ok(()) => Ok(true),
                 Err(e) => {

@@ -38,8 +38,10 @@ impl ObjectStore for RedbObjectStore {
             let hash = sha256_hex(&content);
             let id = BlobId(hash);
             let txn = db.begin_write()?;
-            let mut table = txn.open_table(BLOBS)?;
-            table.insert(id.as_bytes(), content.as_slice())?;
+            {
+                let mut table = txn.open_table(BLOBS)?;
+                table.insert(id.as_bytes(), content.as_slice())?;
+            }
             txn.commit()?;
             Ok(id)
         })
@@ -82,8 +84,10 @@ impl ObjectStore for RedbObjectStore {
             let hash = sha256_hex(&data);
             let id = TreeId(hash);
             let txn = db.begin_write()?;
-            let mut table = txn.open_table(TREES)?;
-            table.insert(id.as_bytes(), data.as_slice())?;
+            {
+                let mut table = txn.open_table(TREES)?;
+                table.insert(id.as_bytes(), data.as_slice())?;
+            }
             txn.commit()?;
             Ok(id)
         })
@@ -98,13 +102,11 @@ impl ObjectStore for RedbObjectStore {
             let txn = db.begin_read()?;
             let table = txn.open_table(TREES)?;
             match table.get(id.as_bytes())? {
-                Some(guard) => rmp_serde::from_slice(guard.value())
-                    ?,
-                None => anyhow::bail!("object not found: {}", id.to_string()),
+                Some(guard) => Ok(rmp_serde::from_slice::<TreeEntries>(guard.value())?),
+                None => anyhow::bail!("object not found: {}", id),
             }
         })
-        .await
-        ?
+        .await? 
     }
 
     async fn has_tree(&self, id: &TreeId) -> Result<bool> {

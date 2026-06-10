@@ -67,11 +67,11 @@ impl JsonRpcMessage {
     }
 
     pub fn to_json(&self) -> Result<String> {
-        serde_json::to_string(self)?
+        Ok(serde_json::to_string(self)?)
     }
 
     pub fn from_json(s: &str) -> Result<Self> {
-        serde_json::from_str(s)?
+        Ok(serde_json::from_str::<JsonRpcMessage>(s)?)
     }
 
     pub fn to_frame(&self) -> Result<Vec<u8>> {

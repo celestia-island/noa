@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
 };
 
+use anyhow::Context;
 use crate::{
     error::Result,
     object::ObjectStore,
@@ -30,14 +31,10 @@ pub fn validate_git_url(url: &str) -> Result<()> {
         anyhow::bail!("URL must not start with '-'");
     }
     if url.contains('\0') || url.contains('\n') || url.contains('\r') {
-        return Err(NoaError::Remote(
-            "URL contains control characters".to_string(),
-        ));
+        anyhow::bail!("URL contains control characters");
     }
     if url.starts_with("ext::") {
-        return Err(NoaError::Remote(
-            "ext:: transport is not allowed for security reasons".to_string(),
-        ));
+        anyhow::bail!("ext:: transport is not allowed for security reasons");
     }
     let looks_valid = url.starts_with("https://")
         || url.starts_with("http://")
@@ -230,19 +227,13 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
 pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
     validate_git_url(url)?;
 
-    Command::new("git")
+    let status = Command::new("git")
         .args(["clone", url, &target.to_string_lossy()])
         .status()
-        .map_err(|e| NoaError::Remote(format!("git clone failed: {e}")))
-        .and_then(|s| {
-            if s.success() {
-                Ok(())
-            } else {
-                Err(NoaError::Remote(
-                    "git clone exited with non-zero status".to_string(),
-                ))
-            }
-        })?;
+        .with_context(|| "git clone failed")?;
+    if !status.success() {
+        anyhow::bail!("git clone exited with non-zero status");
+    }
 
     let config = crate::config::RemoteConfig {
         name: "origin".to_string(),

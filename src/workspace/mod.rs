@@ -65,19 +65,20 @@ impl WorkspaceManager {
         let db = self.db.clone();
         let ws = workspace.clone();
         tokio::task::spawn_blocking(move || {
-            let data =
-                rmp_serde::to_vec(&ws)?;
+            let data = rmp_serde::to_vec(&ws)?;
             let txn = db.begin_write()?;
-            let mut table = txn.open_table(WORKSPACES)?;
-            let exists = table.get(ws.name.as_str())?.is_some();
-            if exists {
-                return anyhow::bail!("workspace already exists: {}", ws.name.clone());
+            {
+                let mut table = txn.open_table(WORKSPACES)?;
+                let exists = table.get(ws.name.as_str())?.is_some();
+                if exists {
+                    anyhow::bail!("workspace already exists: {}", ws.name);
+                }
+                table.insert(ws.name.as_str(), data.as_slice())?;
             }
-            table.insert(ws.name.as_str(), data.as_slice())?;
-            txn.commit()
+            txn.commit()?;
+            Ok(())
         })
-        .await
-        ?
+        .await?
     }
 
     pub async fn get(&self, name: &str) -> Result<Option<Workspace>> {
@@ -88,30 +89,29 @@ impl WorkspaceManager {
             let table = txn.open_table(WORKSPACES)?;
             match table.get(name.as_str())? {
                 Some(guard) => {
-                    let ws: Workspace = rmp_serde::from_slice(guard.value())
-                        ?;
+                    let ws: Workspace = rmp_serde::from_slice(guard.value())?;
                     Ok(Some(ws))
                 }
                 None => Ok(None),
             }
         })
-        .await
-        ?
+        .await?
     }
 
     pub async fn put(&self, workspace: &Workspace) -> Result<()> {
         let db = self.db.clone();
-        let data =
-            rmp_serde::to_vec(workspace)?;
         let name = workspace.name.clone();
+        let data = rmp_serde::to_vec(workspace)?;
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_write()?;
-            let mut table = txn.open_table(WORKSPACES)?;
-            table.insert(name.as_str(), data.as_slice())?;
-            txn.commit()
+            {
+                let mut table = txn.open_table(WORKSPACES)?;
+                table.insert(name.as_str(), data.as_slice())?;
+            }
+            txn.commit()?;
+            Ok(())
         })
-        .await
-        ?
+        .await?
     }
 
     pub async fn delete(&self, name: &str) -> Result<bool> {
@@ -127,8 +127,7 @@ impl WorkspaceManager {
             txn.commit()?;
             Ok(existed)
         })
-        .await
-        ?
+        .await?
     }
 
     pub async fn list(&self) -> Result<Vec<Workspace>> {
@@ -139,8 +138,7 @@ impl WorkspaceManager {
             let mut result = Vec::new();
             for entry in table.iter()? {
                 let (_, value) = entry?;
-                let ws: Workspace = rmp_serde::from_slice(value.value())
-                    ?;
+                let ws: Workspace = rmp_serde::from_slice(value.value())?;
                 result.push(ws);
             }
             Ok(result)
@@ -156,25 +154,23 @@ impl WorkspaceManager {
         let now = crate::now_micros();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_write()?;
-            let mut table = txn.open_table(WORKSPACES)?;
-            let ws_slice = {
-                let guard = table.get(name.as_str())?;
-                guard
-                    .ok_or_else(|| anyhow::anyhow!("workspace not found: {}", name.clone()))?
-                    .value()
-                    .to_vec()
-            };
-            let mut ws: Workspace = rmp_serde::from_slice(&ws_slice)
-                ?;
-            ws.head = new_head;
-            ws.updated_at = now;
-            let data =
-                rmp_serde::to_vec(&ws)?;
-            table.insert(name.as_str(), data.as_slice())?;
-            txn.commit()
+            {
+                let mut table = txn.open_table(WORKSPACES)?;
+                let ws_slice = {
+                    let guard = table.get(name.as_str())?
+                        .ok_or_else(|| anyhow::anyhow!("workspace not found: {name}"))?;
+                    guard.value().to_vec()
+                };
+                let mut ws: Workspace = rmp_serde::from_slice(&ws_slice)?;
+                ws.head = new_head;
+                ws.updated_at = now;
+                let data = rmp_serde::to_vec(&ws)?;
+                table.insert(name.as_str(), data.as_slice())?;
+            }
+            txn.commit()?;
+            Ok(())
         })
-        .await
-        ?
+        .await?
     }
 
     pub async fn update_head_and_seq(
@@ -189,26 +185,24 @@ impl WorkspaceManager {
         let now = crate::now_micros();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_write()?;
-            let mut table = txn.open_table(WORKSPACES)?;
-            let ws_slice = {
-                let guard = table.get(name.as_str())?;
-                guard
-                    .ok_or_else(|| anyhow::anyhow!("workspace not found: {}", name.clone()))?
-                    .value()
-                    .to_vec()
-            };
-            let mut ws: Workspace = rmp_serde::from_slice(&ws_slice)
-                ?;
-            ws.head = new_head;
-            ws.last_seq = last_seq;
-            ws.updated_at = now;
-            let data =
-                rmp_serde::to_vec(&ws)?;
-            table.insert(name.as_str(), data.as_slice())?;
-            txn.commit()
+            {
+                let mut table = txn.open_table(WORKSPACES)?;
+                let ws_slice = {
+                    let guard = table.get(name.as_str())?
+                        .ok_or_else(|| anyhow::anyhow!("workspace not found: {name}"))?;
+                    guard.value().to_vec()
+                };
+                let mut ws: Workspace = rmp_serde::from_slice(&ws_slice)?;
+                ws.head = new_head;
+                ws.last_seq = last_seq;
+                ws.updated_at = now;
+                let data = rmp_serde::to_vec(&ws)?;
+                table.insert(name.as_str(), data.as_slice())?;
+            }
+            txn.commit()?;
+            Ok(())
         })
-        .await
-        ?
+        .await?
     }
 }
 
