@@ -144,6 +144,7 @@ enum RemoteSub {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let _ = tracing_subscriber::fmt().try_init();
     let app = App::parse();
 
     match app.command {
@@ -285,7 +286,6 @@ async fn main() -> anyhow::Result<()> {
             let ws_root = libnoa::repo::Repository::find(&root)?;
             let server =
                 libnoa::sync::SyncServer::new(std::path::Path::new(&socket), &ws_root, "default")?;
-            let _ = tracing_subscriber::fmt().try_init();
             server.listen().await?;
         }
     }

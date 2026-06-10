@@ -9,7 +9,7 @@ use crate::{
     log::{AgentLog, LogEntry, OpType},
     merge::{self, ConflictResolution},
     object::{EntryKind, ObjectStore, TreeEntries, TreeEntry, TreeId},
-    snapshot::{content_addressed_snapshot_id, Snapshot, SnapshotId, SnapshotStore},
+    snapshot::{content_addressed_snapshot_id_with_ts, Snapshot, SnapshotId, SnapshotStore},
 };
 
 pub struct SnapshotEngine<L: AgentLog, S: SnapshotStore, O: ObjectStore> {
@@ -118,7 +118,7 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
 
         let timestamp = crate::now_micros();
 
-        let id = content_addressed_snapshot_id(&tree_id.0, &parent_ids, workspace, author, message);
+        let id = content_addressed_snapshot_id_with_ts(&tree_id.0, &parent_ids, workspace, author, message, timestamp);
 
         let snapshot = Snapshot {
             id,

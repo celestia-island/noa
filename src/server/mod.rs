@@ -72,6 +72,28 @@ async fn auth_middleware(
     req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    if state.api_token.is_empty() {
+        tracing::warn!("NOA_API_TOKEN not set — rejecting all API requests");
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let auth_header = req
+        .headers()
+        .get("Authorization")
+        .and_then(|v| v.to_str().ok());
+
+    let authenticated = match auth_header {
+        Some(val) if val.starts_with("Bearer ") => {
+            let token = &val[7..];
+            constant_time_eq(token.as_bytes(), state.api_token.as_bytes())
+        }
+        _ => false,
+    };
+
+    if !authenticated {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
     {
         let key = req
             .headers()
@@ -91,27 +113,7 @@ async fn auth_middleware(
         }
     }
 
-    if state.api_token.is_empty() {
-        tracing::warn!("NOA_API_TOKEN not set — rejecting all API requests");
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-
-    let auth_header = req
-        .headers()
-        .get("Authorization")
-        .and_then(|v| v.to_str().ok());
-
-    match auth_header {
-        Some(val) if val.starts_with("Bearer ") => {
-            let token = &val[7..];
-            if constant_time_eq(token.as_bytes(), state.api_token.as_bytes()) {
-                Ok(next.run(req).await)
-            } else {
-                Err(StatusCode::UNAUTHORIZED)
-            }
-        }
-        _ => Err(StatusCode::UNAUTHORIZED),
-    }
+    Ok(next.run(req).await)
 }
 
 pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {

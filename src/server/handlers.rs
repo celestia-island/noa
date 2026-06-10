@@ -14,7 +14,7 @@ use crate::{
     refs::{RedbRefStore, RefStore},
     server::RateLimiter,
     snapshot::{
-        content_addressed_snapshot_id, RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore,
+        content_addressed_snapshot_id_with_ts, RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore,
     },
     workspace::{Workspace, WorkspaceManager},
 };
@@ -371,12 +371,13 @@ pub async fn create_snapshot(
     State(state): State<AppState>,
     Json(body): Json<CreateSnapshotRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
-    let expected_id = content_addressed_snapshot_id(
+    let expected_id = content_addressed_snapshot_id_with_ts(
         &body.snapshot.tree_hash,
         &body.snapshot.parents,
         &body.snapshot.workspace,
         &body.snapshot.author,
         &body.snapshot.message,
+        body.snapshot.timestamp,
     );
     if body.snapshot.id != expected_id {
         return Err((

@@ -5,7 +5,7 @@ use crate::{
     error::Result,
     object::{EntryKind, ObjectStore, TreeEntries, TreeEntry},
     refs::{RedbRefStore, RefStore},
-    snapshot::{content_addressed_snapshot_id, RedbSnapshotStore, Snapshot, SnapshotStore},
+    snapshot::{content_addressed_snapshot_id_with_ts, RedbSnapshotStore, Snapshot, SnapshotStore},
 };
 
 pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Result<()> {
@@ -16,7 +16,8 @@ pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Resul
 
     let obj_store = crate::object::RedbObjectStore::new(Arc::clone(&db))?;
     let snap_store = RedbSnapshotStore::new(Arc::clone(&db))?;
-    let ref_store = RedbRefStore::new(db)?;
+    let ref_store = RedbRefStore::new(Arc::clone(&db))?;
+    let ws_mgr = crate::workspace::WorkspaceManager::new(Arc::clone(&db))?;
 
     let head_id = match repo.head_id() {
         Ok(id) => id.detach(),
@@ -51,18 +52,38 @@ pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Resul
         .unwrap_or_default();
 
     let time = commit.time()?;
+    let timestamp = (time.seconds as u64) * 1_000_000;
 
     let snapshot = Snapshot {
-        id: content_addressed_snapshot_id(&noa_tree_id.0, &[], "default", &author, &message),
+        id: content_addressed_snapshot_id_with_ts(&noa_tree_id.0, &[], "default", &author, &message, timestamp),
         tree_hash: noa_tree_id.0,
         parents: vec![],
         workspace: "default".to_string(),
         author,
-        timestamp: (time.seconds as u64) * 1_000_000,
+        timestamp,
         message,
     };
     snap_store.store(&snapshot).await?;
     ref_store.cas("HEAD", None, &snapshot.id).await?;
+
+    let now = crate::now_micros();
+    let ws = crate::workspace::Workspace {
+        name: "default".to_string(),
+        head: snapshot.id.clone(),
+        base: crate::snapshot::empty_snapshot_id(),
+        agent_id: None,
+        last_seq: 0,
+        created_at: now,
+        updated_at: now,
+    };
+    if let Err(e) = ws_mgr.create(&ws).await {
+        // Workspace may already exist from init_with_remotes; update in place
+        if crate::error::is_workspace_already_exists(&e) {
+            ws_mgr.update_head("default", &snapshot.id).await?;
+        } else {
+            return Err(e);
+        }
+    }
 
     Ok(())
 }

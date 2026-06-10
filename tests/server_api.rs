@@ -47,7 +47,7 @@ async fn test_list_refs_empty() {
 async fn test_push_ref() {
     let (_tmp, app) = make_app().await;
     // First create a snapshot to get a valid ID
-    let expected_id = libnoa::snapshot::content_addressed_snapshot_id("tree123", &[], "default", "test", "test snapshot");
+    let expected_id = libnoa::snapshot::content_addressed_snapshot_id_with_ts("tree123", &[], "default", "test", "test snapshot", 1000);
     let snap_body = format!(
         r#"{{"snapshot": {{"id": "{}", "tree_hash": "tree123", "parents": [], "workspace": "default", "author": "test", "timestamp": 1000, "message": "test snapshot"}}}}"#,
         expected_id
@@ -66,7 +66,7 @@ async fn test_push_ref() {
 async fn test_push_ref_valid_slash_name() {
     let (_tmp, app) = make_app().await;
     let expected_id =
-        libnoa::snapshot::content_addressed_snapshot_id("tree456", &[], "default", "test", "test");
+        libnoa::snapshot::content_addressed_snapshot_id_with_ts("tree456", &[], "default", "test", "test", 1000);
     let snap_body = format!(
         r#"{{"snapshot": {{"id": "{}", "tree_hash": "tree456", "parents": [], "workspace": "default", "author": "test", "timestamp": 1000, "message": "test"}}}}"#,
         expected_id
@@ -156,7 +156,7 @@ async fn test_upload_trees() {
 async fn test_create_snapshot() {
     let (_tmp, app) = make_app().await;
     // Compute the expected content-addressed snapshot ID
-    let expected_id = libnoa::snapshot::content_addressed_snapshot_id("tree123", &[], "default", "test", "test snapshot");
+    let expected_id = libnoa::snapshot::content_addressed_snapshot_id_with_ts("tree123", &[], "default", "test", "test snapshot", 1000);
     let body = format!(
         r#"{{"snapshot": {{"id": "{}", "tree_hash": "tree123", "parents": [], "workspace": "default", "author": "test", "timestamp": 1000, "message": "test snapshot"}}}}"#,
         expected_id

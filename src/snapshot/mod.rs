@@ -61,6 +61,33 @@ pub fn content_addressed_snapshot_id(
     SnapshotId(format!("noa_{hex_str}"))
 }
 
+/// Version with timestamp: includes the timestamp in the hash input so that
+/// two snapshots created at different times produce different IDs even when
+/// all other inputs are identical.
+#[must_use]
+pub fn content_addressed_snapshot_id_with_ts(
+    tree_hash: &str,
+    parent_ids: &[SnapshotId],
+    workspace: &str,
+    author: &str,
+    message: &str,
+    timestamp: u64,
+) -> SnapshotId {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(tree_hash.as_bytes());
+    for p in parent_ids {
+        hasher.update(p.0.as_bytes());
+    }
+    hasher.update(workspace.as_bytes());
+    hasher.update(author.as_bytes());
+    hasher.update(message.as_bytes());
+    hasher.update(timestamp.to_le_bytes());
+    let hash = hasher.finalize();
+    let hex_str = hex::encode(hash);
+    SnapshotId(format!("noa_{hex_str}"))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub id: SnapshotId,

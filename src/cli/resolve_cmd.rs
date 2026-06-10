@@ -5,7 +5,7 @@ use crate::{
     merge::{extract_conflicts, ConflictResolution},
     object::{EntryKind, ObjectStore, TreeEntries, TreeId, TreeEntry},
     repo::Repository,
-    snapshot::{content_addressed_snapshot_id, SnapshotStore},
+    snapshot::{content_addressed_snapshot_id_with_ts, SnapshotStore},
 };
 
 /// Recursively walk the tree hierarchy to resolve a nested path.
@@ -242,12 +242,13 @@ pub async fn run_resolve(
 
     let author = "noa-resolve".to_string();
     let message = format!("resolve conflicts with strategy '{strategy}'");
-    let new_snap_id = content_addressed_snapshot_id(
+    let new_snap_id = content_addressed_snapshot_id_with_ts(
         &new_tree_id.0,
         std::slice::from_ref(&merge_snap.id),
         &current,
         &author,
         &message,
+        now,
     );
 
     let resolved_snapshot = crate::snapshot::Snapshot {
