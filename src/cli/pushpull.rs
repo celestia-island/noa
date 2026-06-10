@@ -177,21 +177,35 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
 
     let export_output = std::process::Command::new("svn")
         .args(["export", "--force", &svn_url, &target.to_string_lossy()])
-        .output()?;
+        .output()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                anyhow::anyhow!("'svn' command not found — please install Subversion")
+            } else {
+                anyhow::anyhow!("svn export failed: {e}")
+            }
+        })?;
 
     if !export_output.status.success() {
-        anyhow::bail!("svn export failed");
+        let stderr = String::from_utf8_lossy(&export_output.stderr);
+        anyhow::bail!("svn export failed: {}", stderr.trim());
     }
 
-    std::process::Command::new("git")
+    let git_init = std::process::Command::new("git")
         .args(["init"])
         .current_dir(&target)
         .status()?;
+    if !git_init.success() {
+        anyhow::bail!("git init failed");
+    }
 
-    std::process::Command::new("git")
+    let git_add = std::process::Command::new("git")
         .args(["add", "-A"])
         .current_dir(&target)
         .status()?;
+    if !git_add.success() {
+        anyhow::bail!("git add -A failed");
+    }
 
     let svn_rev_output = std::process::Command::new("svn")
         .args(["info", "--show-item", "revision", &svn_url])
@@ -204,7 +218,7 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
 
     let commit_msg = format!("imported from SVN {svn_url}@r{rev_info}");
 
-    std::process::Command::new("git")
+    let git_commit = std::process::Command::new("git")
         .args(["commit", "-m", &commit_msg])
         .current_dir(&target)
         .env("GIT_AUTHOR_NAME", "noa-svn-bridge")
@@ -212,6 +226,9 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
         .env("GIT_COMMITTER_NAME", "noa-svn-bridge")
         .env("GIT_COMMITTER_EMAIL", "noa@noa.local")
         .status()?;
+    if !git_commit.success() {
+        anyhow::bail!("git commit failed");
+    }
 
     let remote_config = crate::config::RemoteConfig {
         name: "svn-origin".to_string(),

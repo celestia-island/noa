@@ -3,11 +3,7 @@ use std::sync::Arc;
 
 use redb::ReadableTable;
 
-use crate::{
-    error::{NoaError, Result},
-    redb_err,
-    snapshot::SnapshotId,
-};
+;
 
 #[async_trait]
 pub trait RefStore: Send + Sync {
@@ -31,11 +27,10 @@ impl RedbRefStore {
     }
 
     fn ensure_table(&self) -> Result<()> {
-        let txn = redb_err!(self.db.begin_write())?;
+        let txn =!(self.db.begin_write())?;
         {
-            let _ = redb_err!(txn.open_table(REFS));
-        }
-        redb_err!(txn.commit())
+            let _ =!(txn.open_table(REFS));
+        }!(txn.commit())
     }
 
     #[cfg(test)]
@@ -52,19 +47,19 @@ impl RefStore for RedbRefStore {
         let db = self.db.clone();
         let name = name.to_string();
         tokio::task::spawn_blocking(move || {
-            let txn = redb_err!(db.begin_read())?;
-            let table = redb_err!(txn.open_table(REFS))?;
-            match redb_err!(table.get(name.as_str()))? {
+            let txn =!(db.begin_read())?;
+            let table =!(txn.open_table(REFS))?;
+            match!(table.get(name.as_str()))? {
                 Some(guard) => {
                     let id_str = String::from_utf8(guard.value().to_vec())
-                        .map_err(|e| NoaError::Serialization(e.to_string()))?;
+                        ?;
                     Ok(Some(SnapshotId(id_str)))
                 }
                 None => Ok(None),
             }
         })
         .await
-        .map_err(|e| NoaError::Internal(e.to_string()))?
+        ?
     }
 
     async fn cas(&self, name: &str, old: Option<&SnapshotId>, new: &SnapshotId) -> Result<bool> {
@@ -73,14 +68,14 @@ impl RefStore for RedbRefStore {
         let old = old.cloned();
         let new = new.clone();
         let result = tokio::task::spawn_blocking(move || {
-            let txn = redb_err!(db.begin_write())?;
+            let txn =!(db.begin_write())?;
             {
-                let mut table = redb_err!(txn.open_table(REFS))?;
+                let mut table =!(txn.open_table(REFS))?;
 
-                let current: Option<SnapshotId> = match redb_err!(table.get(&*name))? {
+                let current: Option<SnapshotId> = match!(table.get(&*name))? {
                     Some(guard) => {
                         let s = String::from_utf8(guard.value().to_vec())
-                            .map_err(|e| NoaError::Serialization(e.to_string()))?;
+                            ?;
                         Some(SnapshotId(s))
                     }
                     None => None,
@@ -94,57 +89,54 @@ impl RefStore for RedbRefStore {
 
                 if !matches {
                     return Ok(false);
-                }
-
-                redb_err!(table.insert(&*name, new.0.as_bytes()))?;
+                }!(table.insert(&*name, new.0.as_bytes()))?;
             }
             match txn.commit() {
                 Ok(()) => Ok(true),
                 Err(e) => {
                     // redb 2.x serializes write transactions, so commit errors here
                     // are genuine I/O or corruption issues, not concurrent conflicts.
-                    Err(NoaError::Redb(e.to_string()))
+                    Err(anyhow::anyhow!("{}", e))
                 }
             }
         })
         .await
-        .map_err(|e| NoaError::Internal(e.to_string()))?;
+        ?;
         result
     }
 
     async fn list(&self) -> Result<Vec<(String, SnapshotId)>> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let txn = redb_err!(db.begin_read())?;
-            let table = redb_err!(txn.open_table(REFS))?;
+            let txn =!(db.begin_read())?;
+            let table =!(txn.open_table(REFS))?;
             let mut result = Vec::new();
-            for entry in redb_err!(table.iter())? {
-                let (key, value) = redb_err!(entry)?;
+            for entry in!(table.iter())? {
+                let (key, value) = entry?;
                 let id_str = String::from_utf8(value.value().to_vec())
-                    .map_err(|e| NoaError::Serialization(e.to_string()))?;
+                    ?;
                 result.push((key.value().to_string(), SnapshotId(id_str)));
             }
             Ok(result)
         })
         .await
-        .map_err(|e| NoaError::Internal(e.to_string()))?
+        ?
     }
 
     async fn delete(&self, name: &str) -> Result<bool> {
         let db = self.db.clone();
         let name = name.to_string();
         tokio::task::spawn_blocking(move || {
-            let txn = redb_err!(db.begin_write())?;
+            let txn =!(db.begin_write())?;
             let existed = {
-                let mut table = redb_err!(txn.open_table(REFS))?;
-                let removed = redb_err!(table.remove(name.as_str()))?;
+                let mut table =!(txn.open_table(REFS))?;
+                let removed =!(table.remove(name.as_str()))?;
                 removed.is_some()
-            };
-            redb_err!(txn.commit())?;
+            };!(txn.commit())?;
             Ok(existed)
         })
         .await
-        .map_err(|e| NoaError::Internal(e.to_string()))?
+        ?
     }
 }
 

@@ -7,7 +7,6 @@ use redb::Database;
 
 use crate::{
     config::RepoConfig,
-    error::{NoaError, Result},
     log::FileAgentLog,
     object::RedbObjectStore,
     refs::RedbRefStore,
@@ -156,7 +155,7 @@ impl Repository {
 
     fn validate(noa_dir: &Path) -> Result<()> {
         if !noa_dir.join(DB_NAME).exists() {
-            return Err(NoaError::InvalidRepo("missing noa.redb".to_string()));
+            return anyhow::bail!("invalid repository: {}", "missing noa.redb".to_string());
         }
         if !noa_dir.join(AGENT_LOGS_DIR).exists() {
             return Err(NoaError::InvalidRepo(
@@ -164,7 +163,7 @@ impl Repository {
             ));
         }
         if !noa_dir.join("config").exists() {
-            return Err(NoaError::InvalidRepo("missing config file".to_string()));
+            return anyhow::bail!("invalid repository: {}", "missing config file".to_string());
         }
         Ok(())
     }
@@ -173,37 +172,37 @@ impl Repository {
         let db_path = noa_dir.join(DB_NAME);
         let mut db = Database::builder()
             .create(&db_path)
-            .map_err(|e| NoaError::Redb(e.to_string()))?;
+            ?;
         db.check_integrity()
-            .map_err(|e| NoaError::Redb(format!("database integrity check failed: {e}")))?;
+            .map_err(|e| anyhow::anyhow!(format!("database integrity check failed: {e}")))?;
         Ok(db)
     }
 
     fn init_tables(db: &Database) -> Result<()> {
         let write_txn = db
             .begin_write()
-            .map_err(|e| NoaError::Redb(e.to_string()))?;
+            ?;
 
         // Ensure all required tables exist (redb creates them lazily on open_table)
         write_txn
             .open_table::<&[u8], &[u8]>(redb::TableDefinition::new("blobs"))
-            .map_err(|e| NoaError::Redb(e.to_string()))?;
+            ?;
         write_txn
             .open_table::<&[u8], &[u8]>(redb::TableDefinition::new("trees"))
-            .map_err(|e| NoaError::Redb(e.to_string()))?;
+            ?;
         write_txn
             .open_table::<&str, &[u8]>(redb::TableDefinition::new("snapshots"))
-            .map_err(|e| NoaError::Redb(e.to_string()))?;
+            ?;
         write_txn
             .open_table::<&str, &[u8]>(redb::TableDefinition::new("workspaces"))
-            .map_err(|e| NoaError::Redb(e.to_string()))?;
+            ?;
         write_txn
             .open_table::<&str, &[u8]>(redb::TableDefinition::new("refs"))
-            .map_err(|e| NoaError::Redb(e.to_string()))?;
+            ?;
 
         write_txn
             .commit()
-            .map_err(|e| NoaError::Redb(e.to_string()))
+            .map_err(|e| anyhow::anyhow!("{}", e))?; Ok(())
     }
 
     fn create_default_workspace(db: &Arc<Database>) -> Result<()> {
@@ -216,19 +215,19 @@ impl Repository {
             created_at: 0,
             updated_at: 0,
         };
-        let data = rmp_serde::to_vec(&ws).map_err(|e| NoaError::Serialization(e.to_string()))?;
+        let data = rmp_serde::to_vec(&ws)?;
         let txn = db
             .begin_write()
-            .map_err(|e| NoaError::Redb(e.to_string()))?;
+            ?;
         {
             let mut table = txn
                 .open_table(redb::TableDefinition::<&str, &[u8]>::new("workspaces"))
-                .map_err(|e| NoaError::Redb(e.to_string()))?;
+                ?;
             table
                 .insert("default", data.as_slice())
-                .map_err(|e| NoaError::Redb(e.to_string()))?;
+                ?;
         }
-        txn.commit().map_err(|e| NoaError::Redb(e.to_string()))
+        txn.commit().map_err(|e| anyhow::anyhow!("{}", e))?; Ok(())
     }
 
     pub fn read_head(&self) -> Result<String> {
@@ -356,7 +355,7 @@ pub fn get_current_git_branch(workspace_root: &Path) -> Result<String> {
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(workspace_root)
         .output()
-        .map_err(|e| NoaError::Sync(format!("git rev-parse failed: {e}")))?;
+        .with_context(|| format!("git rev-parse failed: {e}"))?;
 
     if !output.status.success() {
         return Err(NoaError::Sync(

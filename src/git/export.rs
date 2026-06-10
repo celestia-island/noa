@@ -4,9 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{
-    error::{NoaError, Result},
-    object::ObjectStore,
+use crate::{object::ObjectStore,
     refs::{RedbRefStore, RefStore},
     snapshot::{RedbSnapshotStore, SnapshotStore},
 };
@@ -24,10 +22,10 @@ fn is_safe_relative_path(path: &str) -> bool {
 
 pub fn validate_git_url(url: &str) -> Result<()> {
     if url.is_empty() {
-        return Err(NoaError::Remote("empty URL".to_string()));
+        anyhow::bail!("empty URL");
     }
     if url.starts_with('-') {
-        return Err(NoaError::Remote("URL must not start with '-'".to_string()));
+        anyhow::bail!("URL must not start with '-'");
     }
     if url.contains('\0') || url.contains('\n') || url.contains('\r') {
         return Err(NoaError::Remote(
@@ -52,7 +50,7 @@ pub fn validate_git_url(url: &str) -> Result<()> {
                 !before.is_empty() && !before.contains('/') && !before.starts_with('-')
             });
         if !has_scp_syntax {
-            return Err(NoaError::Remote(format!("invalid git URL format: {url}")));
+            anyhow::bail!(format!("invalid git URL format: {url}"));
         }
     }
     Ok(())
@@ -72,7 +70,7 @@ pub fn lfs_install(repo_root: &Path) -> Result<()> {
         .args(["lfs", "install"])
         .current_dir(repo_root)
         .status()
-        .map_err(|e| NoaError::Remote(format!("git lfs install failed: {e}")))?;
+        .with_context(|| format!("git lfs install failed: {e}"))?;
     Ok(())
 }
 
@@ -81,11 +79,11 @@ pub fn lfs_pull(repo_root: &Path) -> Result<()> {
         .args(["lfs", "pull"])
         .current_dir(repo_root)
         .status()
-        .map_err(|e| NoaError::Remote(format!("git lfs pull failed: {e}")))?;
+        .with_context(|| format!("git lfs pull failed: {e}"))?;
     if !status.success() {
-        return Err(NoaError::Remote(format!(
+        anyhow::bail!(format!(
             "git lfs pull exited with non-zero status: {status}"
-        )));
+        ));
     }
     Ok(())
 }
@@ -95,11 +93,11 @@ pub fn lfs_push_all(repo_root: &Path, remote_url: &str) -> Result<()> {
         .args(["lfs", "push", "--all", remote_url])
         .current_dir(repo_root)
         .status()
-        .map_err(|e| NoaError::Remote(format!("git lfs push --all failed: {e}")))?;
+        .with_context(|| format!("git lfs push --all failed: {e}"))?;
     if !status.success() {
-        return Err(NoaError::Remote(format!(
+        anyhow::bail!(format!(
             "git lfs push --all exited with non-zero status: {status}"
-        )));
+        ));
     }
     Ok(())
 }
@@ -117,7 +115,7 @@ pub fn has_lfs_tracking(repo_root: &Path) -> bool {
 pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Result<()> {
     let git_dir = repo_root.join(".git");
     if !git_dir.exists() {
-        return Err(NoaError::Remote(".git directory not found".to_string()));
+        anyhow::bail!(".git directory not found");
     }
 
     let snap_store = RedbSnapshotStore::new(Arc::clone(&db))?;
@@ -126,7 +124,7 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
     let obj_store = crate::object::RedbObjectStore::new(db)?;
 
     let head_ws = std::fs::read_to_string(repo_root.join(".noa").join("HEAD"))
-        .map_err(NoaError::Io)?
+        ?
         .trim()
         .to_string();
 
@@ -137,7 +135,7 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
         let head_ref = ref_store.get("HEAD").await?;
         match head_ref {
             Some(id) => id,
-            None => return Err(NoaError::Remote("no HEAD snapshot found".to_string())),
+            None => anyhow::bail!("no HEAD snapshot found"),
         }
     };
     let snapshot = snap_store.get(&snap_id).await?;
@@ -167,9 +165,14 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
                     continue;
                 }
             } else if parent.exists() {
-                // parent exists but canonicalize failed — treat as unsafe
                 tracing::warn!(
                     "skipping export entry with unresolvable parent: {}",
+                    entry.name
+                );
+                continue;
+            } else if entry.name.contains("..") {
+                tracing::warn!(
+                    "skipping export entry with suspicious relative path: {}",
                     entry.name
                 );
                 continue;
@@ -194,7 +197,7 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
         .args(["status", "--porcelain"])
         .current_dir(repo_root)
         .output()
-        .map_err(|e| NoaError::Remote(format!("git status failed: {e}")))?;
+        .with_context(|| format!("git status failed: {e}"))?;
 
     let has_changes = !status_output.stdout.is_empty();
     if has_changes {
@@ -202,7 +205,7 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
             .args(["add", "-A"])
             .current_dir(repo_root)
             .status()
-            .map_err(|e| NoaError::Remote(format!("git add failed: {e}")))?;
+            .with_context(|| format!("git add failed: {e}"))?;
 
         let msg = format!(
             "[noa export] snapshot {} from workspace {}",
@@ -216,7 +219,7 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
             .env("GIT_COMMITTER_NAME", &snapshot.author)
             .env("GIT_COMMITTER_EMAIL", "noa@noa.local")
             .status()
-            .map_err(|e| NoaError::Remote(format!("git commit failed: {e}")))?;
+            .with_context(|| format!("git commit failed: {e}"))?;
     }
 
     Ok(())
@@ -268,7 +271,7 @@ pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
         })
         .await
     {
-        if !matches!(e, NoaError::WorkspaceAlreadyExists(_)) {
+        if !crate::error::is_workspace_already_exists(&e) {
             return Err(e);
         }
     }

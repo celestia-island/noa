@@ -3,9 +3,7 @@ use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 use aws_sdk_s3::{primitives::ByteStream, Client};
 
-use crate::{
-    error::{NoaError, Result},
-    object::{sha256_hex, BlobId, ObjectStore, TreeEntries, TreeId},
+use crate::{object::{sha256_hex, BlobId, ObjectStore, TreeEntries, TreeId},
 };
 
 pub struct MinioObjectStore {
@@ -20,12 +18,6 @@ impl MinioObjectStore {
     }
 
     fn validate_endpoint(endpoint: &str) -> Result<()> {
-        if std::env::var("NOA_MINIO_ALLOW_PRIVATE").is_ok() {
-            tracing::warn!(
-                "NOA_MINIO_ALLOW_PRIVATE is set: private endpoint SSRF protection disabled"
-            );
-            return Ok(());
-        }
         let without_scheme = endpoint
             .strip_prefix("http://")
             .or_else(|| endpoint.strip_prefix("https://"))
@@ -51,9 +43,11 @@ impl MinioObjectStore {
         ];
         for &b in &blocked {
             if host == b {
-                return Err(NoaError::Config(format!("blocked SSRF endpoint: {host}")));
+                return anyhow::bail!(format!("blocked SSRF endpoint: {host}"));
             }
         }
+
+        let allow_private = std::env::var("NOA_MINIO_ALLOW_PRIVATE").is_ok();
 
         if let Ok(ip) = host.parse::<std::net::IpAddr>() {
             match ip {
@@ -63,29 +57,32 @@ impl MinioObjectStore {
                         || v4.is_broadcast()
                         || v4.is_multicast()
                     {
-                        return Err(NoaError::Config(format!(
+                        return anyhow::bail!(format!(
                             "endpoint resolves to forbidden IP: {ip}"
-                        )));
+                        ));
                     }
-                    let octets = v4.octets();
-                    if octets[0] == 10
-                        || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
-                        || (octets[0] == 192 && octets[1] == 168)
-                    {
-                        return Err(NoaError::Config(format!(
-                            "endpoint resolves to private IP: {ip}"
-                        )));
+                    if !allow_private {
+                        let octets = v4.octets();
+                        if octets[0] == 10
+                            || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
+                            || (octets[0] == 192 && octets[1] == 168)
+                        {
+                            return anyhow::bail!(format!(
+                                "endpoint resolves to private IP: {ip}"
+                            ));
+                        }
                     }
                 }
                 std::net::IpAddr::V6(v6) => {
-                    if v6.is_loopback()
-                        || v6.is_multicast()
-                        || v6.octets()[0] == 0xfc
-                        || v6.octets()[0] == 0xfd
-                    {
-                        return Err(NoaError::Config(format!(
+                    if v6.is_loopback() || v6.is_multicast() {
+                        return anyhow::bail!(format!(
                             "endpoint resolves to forbidden IPv6: {ip}"
-                        )));
+                        ));
+                    }
+                    if !allow_private && (v6.octets()[0] == 0xfc || v6.octets()[0] == 0xfd) {
+                        return anyhow::bail!(format!(
+                            "endpoint resolves to forbidden IPv6: {ip}"
+                        ));
                     }
                 }
             }
@@ -147,7 +144,7 @@ impl ObjectStore for MinioObjectStore {
             .body(ByteStream::from(content.to_vec()))
             .send()
             .await
-            .map_err(|e| NoaError::Remote(e.to_string()))?;
+            ?;
 
         Ok(id)
     }
@@ -160,13 +157,13 @@ impl ObjectStore for MinioObjectStore {
             .key(Self::blob_key(id))
             .send()
             .await
-            .map_err(|e| NoaError::ObjectNotFound(e.to_string()))?;
+            ?;
 
         let bytes = output
             .body
             .collect()
             .await
-            .map_err(|e| NoaError::Remote(e.to_string()))?;
+            ?;
         Ok(bytes.into_bytes().to_vec())
     }
 
@@ -183,7 +180,7 @@ impl ObjectStore for MinioObjectStore {
 
     async fn put_tree(&self, entries: &TreeEntries) -> Result<TreeId> {
         let data =
-            rmp_serde::to_vec(entries).map_err(|e| NoaError::Serialization(e.to_string()))?;
+            rmp_serde::to_vec(entries)?;
 
         let id = TreeId(sha256_hex(&data));
 
@@ -194,7 +191,7 @@ impl ObjectStore for MinioObjectStore {
             .body(ByteStream::from(data))
             .send()
             .await
-            .map_err(|e| NoaError::Remote(e.to_string()))?;
+            ?;
 
         Ok(id)
     }
@@ -207,15 +204,15 @@ impl ObjectStore for MinioObjectStore {
             .key(Self::tree_key(id))
             .send()
             .await
-            .map_err(|e| NoaError::ObjectNotFound(e.to_string()))?;
+            ?;
 
         let bytes = output
             .body
             .collect()
             .await
-            .map_err(|e| NoaError::Remote(e.to_string()))?;
+            ?;
         rmp_serde::from_slice(&bytes.into_bytes())
-            .map_err(|e| NoaError::Serialization(e.to_string()))
+            ?
     }
 
     async fn has_tree(&self, id: &TreeId) -> Result<bool> {

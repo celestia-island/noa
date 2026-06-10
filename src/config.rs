@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use crate::error::{NoaError, Result};
+use crate::error::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoConfig {
@@ -80,23 +80,23 @@ impl Default for RepoConfig {
 
 impl RepoConfig {
     pub fn to_toml(&self) -> Result<String> {
-        toml::to_string_pretty(self).map_err(NoaError::from)
+        toml::to_string_pretty(self)?
     }
 
     pub fn from_toml(s: &str) -> Result<Self> {
-        toml::from_str(s).map_err(NoaError::from)
+        toml::from_str(s)?
     }
 
     pub fn load_from_dir(dir: &Path) -> Result<Self> {
         let config_path = dir.join("config");
-        let content = std::fs::read_to_string(&config_path).map_err(NoaError::Io)?;
+        let content = std::fs::read_to_string(&config_path)?;
         Self::from_toml(&content)
     }
 
     pub fn save_to_dir(&self, dir: &Path) -> Result<()> {
         let config_path = dir.join("config");
         let content = self.to_toml()?;
-        std::fs::write(&config_path, content).map_err(NoaError::Io)
+        std::fs::write(&config_path, content)?
     }
 
     pub fn add_remote(&mut self, remote: RemoteConfig) {

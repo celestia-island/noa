@@ -10,9 +10,7 @@ pub use export::{
 };
 pub use import::{import_git_to_noa, is_lfs_pointer};
 
-use crate::{
-    error::{NoaError, Result},
-    remote::{FetchResult, FetchSpec, PushResult, PushSpec, RemoteBackend, RemoteRef},
+use crate::{remote::{FetchResult, FetchSpec, PushResult, PushSpec, RemoteBackend, RemoteRef},
 };
 
 pub struct GitBackend;
@@ -41,7 +39,7 @@ impl RemoteBackend for GitBackend {
         let output = Command::new("git")
             .args(["push", url])
             .output()
-            .map_err(|e| NoaError::Remote(format!("git push failed: {e}")))?;
+            .with_context(|| format!("git push failed: {e}"))?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -52,7 +50,7 @@ impl RemoteBackend for GitBackend {
                 message: format!("{stdout}\n{stderr}").trim().to_string(),
             })
         } else {
-            Err(NoaError::Remote(format!("git push failed: {stderr}")))
+            anyhow::bail!(format!("git push failed: {stderr}"))
         }
     }
 
@@ -61,11 +59,11 @@ impl RemoteBackend for GitBackend {
         let output = Command::new("git")
             .args(["fetch", url])
             .output()
-            .map_err(|e| NoaError::Remote(format!("git fetch failed: {e}")))?;
+            .with_context(|| format!("git fetch failed: {e}"))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(NoaError::Remote(format!("git fetch failed: {stderr}")));
+            return anyhow::bail!(format!("git fetch failed: {stderr}"));
         }
 
         self.list_refs(url).await.map(|refs| FetchResult { refs })
@@ -76,11 +74,11 @@ impl RemoteBackend for GitBackend {
         let output = Command::new("git")
             .args(["ls-remote", "--refs", url])
             .output()
-            .map_err(|e| NoaError::Remote(format!("git ls-remote failed: {e}")))?;
+            .with_context(|| format!("git ls-remote failed: {e}"))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(NoaError::Remote(format!("git ls-remote failed: {stderr}")));
+            return anyhow::bail!(format!("git ls-remote failed: {stderr}"));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);

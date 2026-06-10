@@ -2,9 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 use super::{NoaAck, RequestNoaHandshake};
-use crate::{
-    error::{NoaError, Result},
-    repo::{get_current_git_branch, manage_gitignore, Repository},
+use crate::{repo::{get_current_git_branch, manage_gitignore, Repository},
     server::constant_time_eq,
 };
 
@@ -169,7 +167,7 @@ fn validate_git_ref_component(name: &str) -> Result<()> {
 
 fn validate_git_ref_name(name: &str) -> Result<()> {
     if name.is_empty() {
-        return Err(NoaError::Sync("empty ref name".to_string()));
+        anyhow::bail!("empty ref name");
     }
     for component in name.split('/') {
         validate_git_ref_component(component)?;
@@ -202,11 +200,11 @@ fn create_git_branch(workspace_root: &Path, name: &str, base: &str) -> Result<()
         .args(["checkout", "-b", name, base])
         .current_dir(workspace_root)
         .output()
-        .map_err(|e| NoaError::Sync(format!("git checkout -b failed: {e}")))?;
+        .with_context(|| format!("git checkout -b failed: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(NoaError::Sync(format!("git checkout -b failed: {stderr}")));
+        anyhow::bail!(format!("git checkout -b failed: {stderr}"));
     }
 
     Ok(())
@@ -217,11 +215,11 @@ fn checkout_git_branch(workspace_root: &Path, name: &str) -> Result<()> {
         .args(["checkout", name])
         .current_dir(workspace_root)
         .output()
-        .map_err(|e| NoaError::Sync(format!("git checkout failed: {e}")))?;
+        .with_context(|| format!("git checkout failed: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(NoaError::Sync(format!("git checkout failed: {stderr}")));
+        anyhow::bail!(format!("git checkout failed: {stderr}"));
     }
 
     Ok(())

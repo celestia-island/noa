@@ -38,19 +38,19 @@ impl AppState {
         self
     }
 
-    pub fn object_store(&self) -> Result<RedbObjectStore, crate::error::NoaError> {
+    pub fn object_store(&self) -> crate::error::Result<_> {
         RedbObjectStore::new(Arc::clone(&self.db))
     }
 
-    pub fn snapshot_store(&self) -> Result<RedbSnapshotStore, crate::error::NoaError> {
+    pub fn snapshot_store(&self) -> crate::error::Result<_> {
         RedbSnapshotStore::new(Arc::clone(&self.db))
     }
 
-    pub fn ref_store(&self) -> Result<RedbRefStore, crate::error::NoaError> {
+    pub fn ref_store(&self) -> crate::error::Result<_> {
         RedbRefStore::new(Arc::clone(&self.db))
     }
 
-    pub fn workspace_manager(&self) -> Result<WorkspaceManager, crate::error::NoaError> {
+    pub fn workspace_manager(&self) -> crate::error::Result<_> {
         WorkspaceManager::new(Arc::clone(&self.db))
     }
 }
@@ -261,7 +261,7 @@ pub async fn get_blob(
             let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
             Ok(Json(serde_json::json!({ "content": encoded })))
         }
-        Err(crate::error::NoaError::ObjectNotFound(_)) => Err(not_found_json("blob not found")),
+        Err(e) if crate::error::is_object_not_found(&e) => Err(not_found_json("blob not found")),
         Err(e) => Err(err_json(e)),
     }
 }
@@ -310,7 +310,7 @@ pub async fn get_tree(
             Ok(v) => Ok(Json(v)),
             Err(e) => Err(err_json(format!("TreeEntries serialization failed: {e}"))),
         },
-        Err(crate::error::NoaError::ObjectNotFound(_)) => Err(not_found_json("tree not found")),
+        Err(e) if crate::error::is_object_not_found(&e) => Err(not_found_json("tree not found")),
         Err(e) => Err(err_json(e)),
     }
 }
@@ -373,7 +373,7 @@ pub async fn create_workspace(
     let mgr = state.workspace_manager().map_err(err_json)?;
     match mgr.create(&body.workspace).await {
         Ok(()) => Ok(StatusCode::CREATED),
-        Err(crate::error::NoaError::WorkspaceAlreadyExists(name)) => Err((
+        Err(e) if crate::error::is_workspace_already_exists(&e) => Err((
             StatusCode::CONFLICT,
             Json(ApiError {
                 error: format!("workspace already exists: {name}"),

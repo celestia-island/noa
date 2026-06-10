@@ -1,18 +1,16 @@
-use crate::{
-    error::{NoaError, Result},
-    log::LogEntry,
+use crate::{log::LogEntry,
 };
 
 pub fn serialize_entry(entry: &LogEntry) -> Result<String> {
-    serde_json::to_string(entry).map_err(|e| NoaError::Serialization(e.to_string()))
+    serde_json::to_string(entry)?
 }
 
 pub fn deserialize_entry(line: &str) -> Result<LogEntry> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
-        return Err(NoaError::Serialization("empty log line".to_string()));
+        return anyhow::bail!("empty log line");
     }
-    serde_json::from_str(trimmed).map_err(|e| NoaError::Serialization(e.to_string()))
+    serde_json::from_str(trimmed)?
 }
 
 pub fn deserialize_entries(content: &str) -> Result<Vec<LogEntry>> {

@@ -9,7 +9,7 @@ use super::{
     events::EventSyncEngine, transport::JsonRpcMessage, NoaAuthRequest, NoaEventSyncAck,
     NoaEventSyncMessage, NoaReady, RequestNoaHandshake,
 };
-use crate::error::{NoaError, Result};
+use crate::error::Result;
 
 pub struct SyncServer {
     socket_path: PathBuf,
@@ -22,8 +22,8 @@ pub struct SyncServer {
 const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
 const MAX_CONNECTIONS: usize = 32;
 
-fn is_eof_error(e: &NoaError) -> bool {
-    matches!(e, NoaError::Io(e) if e.kind() == std::io::ErrorKind::UnexpectedEof)
+fn is_eof_error(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<std::io::Error>().map_or(false, |io| io.kind() == std::io::ErrorKind::UnexpectedEof)
         || e.to_string().contains("failed to fill whole buffer")
 }
 
@@ -31,7 +31,7 @@ fn generate_sync_token() -> Result<String> {
     use sha2::{Digest, Sha256};
     let mut buf = [0u8; 32];
     getrandom::getrandom(&mut buf)
-        .map_err(|e| NoaError::Internal(format!("failed to generate random sync token: {e}")))?;
+        .map_err(|e| anyhow::anyhow!("failed to generate random sync token: {e}"))?;
     let hash = Sha256::digest(buf);
     Ok(hex::encode(hash))
 }
@@ -55,7 +55,7 @@ impl SyncServer {
         let _ = std::fs::remove_file(&self.socket_path);
 
         let listener = UnixListener::bind(&self.socket_path)
-            .map_err(|e| NoaError::Sync(format!("failed to bind sync socket: {e}")))?;
+            .with_context(|| format!("failed to bind sync socket: {e}"))?;
         if let Ok(metadata) = std::fs::metadata(&self.socket_path) {
             let mut perms = metadata.permissions();
             perms.set_mode(0o600);
@@ -157,7 +157,7 @@ impl SyncServer {
         reader
             .read_exact(&mut len_buf)
             .await
-            .map_err(|e| NoaError::Sync(format!("read length: {e}")))?;
+            .with_context(|| format!("read length: {e}"))?;
 
         let len = u32::from_be_bytes(len_buf) as usize;
         if len > MAX_MESSAGE_SIZE {
@@ -169,10 +169,10 @@ impl SyncServer {
         reader
             .read_exact(&mut body_buf)
             .await
-            .map_err(|e| NoaError::Sync(format!("read body: {e}")))?;
+            .with_context(|| format!("read body: {e}"))?;
 
         let json =
-            std::str::from_utf8(&body_buf).map_err(|e| NoaError::Serialization(e.to_string()))?;
+            std::str::from_utf8(&body_buf)?;
         JsonRpcMessage::from_json(json)
     }
 
@@ -187,11 +187,11 @@ impl SyncServer {
         writer
             .write_all(&frame)
             .await
-            .map_err(|e| NoaError::Sync(format!("write frame: {e}")))?;
+            .with_context(|| format!("write frame: {e}"))?;
         writer
             .flush()
             .await
-            .map_err(|e| NoaError::Sync(format!("flush: {e}")))
+            .with_context(|| format!("flush: {e}"))
     }
 
     async fn dispatch(
@@ -211,7 +211,7 @@ impl SyncServer {
         match method.as_str() {
             "noa.handshake" => {
                 let req: RequestNoaHandshake = serde_json::from_value(params)
-                    .map_err(|e| NoaError::Serialization(e.to_string()))?;
+                    ?;
                 let resp =
                     super::handshake::handle_handshake_request(workspace_root, &req, auth_token)?;
 
@@ -223,7 +223,7 @@ impl SyncServer {
             }
             "noa.auth" => {
                 let req: NoaAuthRequest = serde_json::from_value(params)
-                    .map_err(|e| NoaError::Serialization(e.to_string()))?;
+                    ?;
 
                 {
                     let sessions = authenticated_sessions.lock().await;
@@ -250,7 +250,7 @@ impl SyncServer {
             }
             "noa.ready" => {
                 let req: NoaReady = serde_json::from_value(params)
-                    .map_err(|e| NoaError::Serialization(e.to_string()))?;
+                    ?;
                 let ack = super::handshake::handle_ready(
                     &req.workspace_id,
                     &req.branch,
@@ -260,7 +260,7 @@ impl SyncServer {
             }
             "noa.event_sync" => {
                 let sync_msg: NoaEventSyncMessage = serde_json::from_value(params)
-                    .map_err(|e| NoaError::Serialization(e.to_string()))?;
+                    ?;
 
                 {
                     let sessions = authenticated_sessions.lock().await;

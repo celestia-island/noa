@@ -1,14 +1,12 @@
 use std::{path::Path, sync::Arc};
 
-use crate::{
-    error::{NoaError, Result},
-    object::{EntryKind, ObjectStore, TreeEntries, TreeEntry},
+use crate::{object::{EntryKind, ObjectStore, TreeEntries, TreeEntry},
     refs::{RedbRefStore, RefStore},
     snapshot::{RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore},
 };
 
 pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Result<()> {
-    let repo = gix::open(git_dir).map_err(|e| NoaError::Remote(e.to_string()))?;
+    let repo = gix::open(git_dir)?;
 
     let obj_store = crate::object::RedbObjectStore::new(Arc::clone(&db))?;
     let snap_store = RedbSnapshotStore::new(Arc::clone(&db))?;
@@ -16,20 +14,20 @@ pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Resul
 
     let head_id = repo
         .head_id()
-        .map_err(|e| NoaError::Remote(e.to_string()))?
+        ?
         .detach();
 
     let head_obj = repo
         .find_object(head_id)
-        .map_err(|e| NoaError::Remote(e.to_string()))?;
+        ?;
 
     let commit = head_obj
         .try_into_commit()
-        .map_err(|e| NoaError::Remote(format!("HEAD is not a commit: {e}")))?;
+        .with_context(|| format!("HEAD is not a commit: {e}"))?;
 
     let tree_id = commit
         .tree_id()
-        .map_err(|e| NoaError::Remote(e.to_string()))?
+        ?
         .detach();
 
     let entries = import_tree_recursive(&repo, tree_id, &obj_store).await?;
@@ -48,7 +46,7 @@ pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Resul
         .map(std::string::ToString::to_string)
         .unwrap_or_default();
 
-    let time = commit.time().map_err(|e| NoaError::Remote(e.to_string()))?;
+    let time = commit.time()?;
 
     let snapshot = Snapshot {
         id: SnapshotId(format!("noa_{}", &head_id.to_hex().to_string()[..12])),
@@ -86,13 +84,13 @@ fn walk_tree(
     while let Some((current_id, prefix)) = stack.pop() {
         let obj = repo
             .find_object(current_id)
-            .map_err(|e| NoaError::Remote(e.to_string()))?;
+            ?;
         let tree = obj
             .try_into_tree()
-            .map_err(|e| NoaError::Remote(format!("not a tree: {e}")))?;
+            .with_context(|| format!("not a tree: {e}"))?;
 
         for entry_result in tree.iter() {
-            let entry = entry_result.map_err(|e| NoaError::Remote(e.to_string()))?;
+            let entry = entry_result?;
             let mode = entry.mode();
             let entry_id = entry.oid();
             let name = entry.filename().to_string();
@@ -107,10 +105,10 @@ fn walk_tree(
             } else {
                 let blob_obj = repo
                     .find_object(entry_id)
-                    .map_err(|e| NoaError::Remote(e.to_string()))?;
+                    ?;
                 let blob = blob_obj
                     .try_into_blob()
-                    .map_err(|e| NoaError::Remote(format!("not a blob: {e}")))?;
+                    .with_context(|| format!("not a blob: {e}"))?;
                 results.push((full_name, blob.data.clone()));
             }
         }

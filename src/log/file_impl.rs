@@ -7,11 +7,12 @@ use std::{
 };
 
 use super::{format, AgentLog, LogEntry};
-use crate::error::{NoaError, Result};
+use crate::error::Result;
 
 pub struct FileAgentLog {
     path: PathBuf,
     next_seq: std::sync::atomic::AtomicU64,
+    compact_lock: tokio::sync::Mutex<()>,
 }
 
 impl FileAgentLog {
@@ -26,11 +27,12 @@ impl FileAgentLog {
             .read(true)
             .mode(0o600)
             .open(path)
-            .map_err(NoaError::Io)?;
+            ?;
         let max_seq = compute_max_seq_from_file(&mut file)?;
         Ok(FileAgentLog {
             path: path.to_path_buf(),
             next_seq: std::sync::atomic::AtomicU64::new(max_seq + 1),
+            compact_lock: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -46,11 +48,12 @@ impl FileAgentLog {
             .append(true)
             .read(true)
             .open(path)
-            .map_err(NoaError::Io)?;
+            ?;
         let max_seq = compute_max_seq_from_file(&mut file)?;
         Ok(FileAgentLog {
             path: path.to_path_buf(),
             next_seq: std::sync::atomic::AtomicU64::new(max_seq + 1),
+            compact_lock: tokio::sync::Mutex::new(()),
         })
     }
 }
@@ -122,19 +125,20 @@ impl AgentLog for FileAgentLog {
         let mut record = line.into_bytes();
         record.push(b'\n');
         let path = self.path.clone();
+        let _guard = self.compact_lock.lock().await;
         tokio::task::spawn_blocking(move || {
             use std::io::Write;
             let mut file = OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&path)
-                .map_err(NoaError::Io)?;
-            file.write_all(&record).map_err(NoaError::Io)?;
-            file.sync_data().map_err(NoaError::Io)?;
-            Ok::<_, NoaError>(seq)
+                ?;
+            file.write_all(&record)?;
+            file.sync_data()?;
+            Ok(seq)
         })
         .await
-        .map_err(|e| NoaError::Internal(e.to_string()))?
+        ?
     }
 
     async fn read_since(&self, seq: u64) -> Result<Vec<LogEntry>> {
@@ -148,13 +152,13 @@ impl AgentLog for FileAgentLog {
             let mut file = OpenOptions::new()
                 .read(true)
                 .open(&path)
-                .map_err(NoaError::Io)?;
+                ?;
             let mut content = String::new();
-            file.read_to_string(&mut content).map_err(NoaError::Io)?;
+            file.read_to_string(&mut content)?;
             format::deserialize_entries(&content)
         })
         .await
-        .map_err(|e| NoaError::Internal(e.to_string()))?
+        ?
     }
 
     async fn next_seq(&self) -> Result<u64> {
@@ -162,15 +166,16 @@ impl AgentLog for FileAgentLog {
     }
 
     async fn compact_to(&self, up_to_seq: u64) -> Result<()> {
+        let _guard = self.compact_lock.lock().await;
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || {
             cleanup_stale_temp(&path);
             let mut file = OpenOptions::new()
                 .read(true)
                 .open(&path)
-                .map_err(NoaError::Io)?;
+                ?;
             let mut content = String::new();
-            file.read_to_string(&mut content).map_err(NoaError::Io)?;
+            file.read_to_string(&mut content)?;
             drop(file);
             let entries = format::deserialize_entries(&content)?;
             let remaining: Vec<LogEntry> =
@@ -184,24 +189,24 @@ impl AgentLog for FileAgentLog {
                     .write(true)
                     .truncate(true)
                     .open(&temp_path)
-                    .map_err(NoaError::Io)?;
+                    ?;
 
                 for entry in &remaining {
                     let line = format::serialize_entry(entry)?;
-                    writeln!(tmp_file, "{line}").map_err(NoaError::Io)?;
+                    writeln!(tmp_file, "{line}")?;
                 }
-                tmp_file.sync_all().map_err(NoaError::Io)?;
+                tmp_file.sync_all()?;
             }
 
             if let Err(e) = std::fs::rename(&temp_path, &path) {
                 let _ = std::fs::remove_file(&temp_path);
-                return Err(NoaError::Io(e));
+                return Err(e.into());
             }
 
             Ok(())
         })
         .await
-        .map_err(|e| NoaError::Internal(e.to_string()))?
+        ?
     }
 }
 

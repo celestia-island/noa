@@ -1,9 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
-use crate::{
-    error::{NoaError, Result},
-    log::{AgentLog, LogEntry},
+use crate::{log::{AgentLog, LogEntry},
     object::ObjectStore,
     repo::Repository,
 };
@@ -123,7 +121,7 @@ impl EventSyncEngine {
                                     std::fs::write(&file_path, &data)?;
                                     applied += 1;
                                 }
-                                Err(NoaError::ObjectNotFound(_)) => {
+                                anyhow::bail!("object not found: {}", _) => {
                                     tracing::warn!("blob {} not found, skipping write", blob_id.0);
                                 }
                                 Err(e) => return Err(e),
@@ -146,7 +144,14 @@ impl EventSyncEngine {
                                 continue;
                             };
                             if from_path.exists() {
-                                std::fs::rename(&from_path, &file_path)?;
+                                if let Err(e) = std::fs::rename(&from_path, &file_path) {
+                                    if e.raw_os_error() == Some(18) {
+                                        std::fs::copy(&from_path, &file_path)?;
+                                        std::fs::remove_file(&from_path)?;
+                                    } else {
+                                        anyhow::bail!(e);
+                                    }
+                                }
                                 applied += 1;
                             }
                         }
