@@ -68,24 +68,45 @@ pub fn detect_lfs_available(repo_root: &Path) -> bool {
 }
 
 pub fn lfs_install(repo_root: &Path) {
-    let _ = Command::new("git")
+    if let Err(e) = Command::new("git")
         .args(["lfs", "install"])
         .current_dir(repo_root)
-        .status();
+        .status()
+    {
+        tracing::warn!("git lfs install failed: {e}");
+    }
 }
 
 pub fn lfs_pull(repo_root: &Path) {
-    let _ = Command::new("git")
+    match Command::new("git")
         .args(["lfs", "pull"])
         .current_dir(repo_root)
-        .status();
+        .status()
+    {
+        Ok(status) if !status.success() => {
+            tracing::warn!("git lfs pull exited with non-zero status: {status}");
+        }
+        Err(e) => {
+            tracing::warn!("git lfs pull failed: {e}");
+        }
+        _ => {}
+    }
 }
 
 pub fn lfs_push_all(repo_root: &Path, remote_url: &str) {
-    let _ = Command::new("git")
+    match Command::new("git")
         .args(["lfs", "push", "--all", remote_url])
         .current_dir(repo_root)
-        .status();
+        .status()
+    {
+        Ok(status) if !status.success() => {
+            tracing::warn!("git lfs push --all exited with non-zero status: {status}");
+        }
+        Err(e) => {
+            tracing::warn!("git lfs push --all failed: {e}");
+        }
+        _ => {}
+    }
 }
 
 #[must_use]
@@ -130,26 +151,33 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
         .get_tree(&crate::object::TreeId(snapshot.tree_hash.clone()))
         .await?;
 
+    let canonical_root = repo_root
+        .canonicalize()
+        .unwrap_or_else(|_| repo_root.to_path_buf());
+
     for entry in &tree.0 {
         if !is_safe_relative_path(&entry.name) {
             tracing::warn!("skipping unsafe path in export tree entry: {}", entry.name);
             continue;
         }
         let file_path = repo_root.join(&entry.name);
+
         if let Some(parent) = file_path.parent() {
-            if parent.exists() {
-                if let Ok(canonical_parent) = parent.canonicalize() {
-                    let canonical_root = repo_root
-                        .canonicalize()
-                        .unwrap_or_else(|_| repo_root.to_path_buf());
-                    if !canonical_parent.starts_with(&canonical_root) {
-                        tracing::warn!(
-                            "skipping path traversal in export tree entry: {}",
-                            entry.name
-                        );
-                        continue;
-                    }
+            if let Ok(canonical_parent) = parent.canonicalize() {
+                if !canonical_parent.starts_with(&canonical_root) {
+                    tracing::warn!(
+                        "skipping path traversal in export tree entry: {}",
+                        entry.name
+                    );
+                    continue;
                 }
+            } else if parent.exists() {
+                // parent exists but canonicalize failed — treat as unsafe
+                tracing::warn!(
+                    "skipping export entry with unresolvable parent: {}",
+                    entry.name
+                );
+                continue;
             }
         }
         if let Some(parent) = file_path.parent() {

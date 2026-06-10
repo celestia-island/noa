@@ -126,7 +126,16 @@ async fn test_upload_trees() {
 #[tokio::test]
 async fn test_create_snapshot() {
     let (_tmp, app) = make_app().await;
-    let body = r#"{"snapshot": {"id": "noa_snap001", "tree_hash": "tree123", "parents": [], "workspace": "default", "author": "test", "timestamp": 1000, "message": "test snapshot"}}"#.to_string();
+    // Compute the expected content-addressed snapshot ID
+    let expected_id = libnoa::snapshot::content_addressed_snapshot_id(
+        "tree123",
+        &[],
+        "default",
+    );
+    let body = format!(
+        r#"{{"snapshot": {{"id": "{}", "tree_hash": "tree123", "parents": [], "workspace": "default", "author": "test", "timestamp": 1000, "message": "test snapshot"}}}}"#,
+        expected_id
+    );
     let req = make_request(Method::POST, "/api/v1/snapshots", Some(body));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);

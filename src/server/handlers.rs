@@ -11,7 +11,7 @@ use axum::{
 use crate::{
     object::{BlobId, ObjectStore, RedbObjectStore, TreeEntries, TreeId},
     refs::{RedbRefStore, RefStore},
-    snapshot::{RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore},
+    snapshot::{content_addressed_snapshot_id, RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore},
     workspace::{Workspace, WorkspaceManager},
 };
 
@@ -330,6 +330,22 @@ pub async fn create_snapshot(
     State(state): State<AppState>,
     Json(body): Json<CreateSnapshotRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+    let expected_id = content_addressed_snapshot_id(
+        &body.snapshot.tree_hash,
+        &body.snapshot.parents,
+        &body.snapshot.workspace,
+    );
+    if body.snapshot.id != expected_id {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: format!(
+                    "snapshot id mismatch: expected {expected_id}, got {}",
+                    body.snapshot.id
+                ),
+            }),
+        ));
+    }
     let store = state.snapshot_store().map_err(err_json)?;
     store.store(&body.snapshot).await.map_err(err_json)?;
     Ok(StatusCode::CREATED)
@@ -353,6 +369,14 @@ pub async fn create_workspace(
     Json(body): Json<CreateWorkspaceRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     let mgr = state.workspace_manager().map_err(err_json)?;
-    mgr.create(&body.workspace).await.map_err(err_json)?;
-    Ok(StatusCode::CREATED)
+    match mgr.create(&body.workspace).await {
+        Ok(()) => Ok(StatusCode::CREATED),
+        Err(crate::error::NoaError::WorkspaceAlreadyExists(name)) => Err((
+            StatusCode::CONFLICT,
+            Json(ApiError {
+                error: format!("workspace already exists: {name}"),
+            }),
+        )),
+        Err(e) => Err(err_json(e)),
+    }
 }

@@ -19,6 +19,7 @@ impl FileAgentLog {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        cleanup_stale_temp(path);
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -43,6 +44,7 @@ impl FileAgentLog {
                 format!("log file not found: {}", path.display()),
             )));
         }
+        cleanup_stale_temp(path);
         let mut file = OpenOptions::new()
             .append(true)
             .read(true)
@@ -156,6 +158,7 @@ impl AgentLog for FileAgentLog {
     async fn compact_to(&self, up_to_seq: u64) -> Result<()> {
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || {
+            cleanup_stale_temp(&path);
             let mut file = OpenOptions::new()
                 .read(true)
                 .open(&path)
@@ -201,6 +204,17 @@ fn compact_temp_path(original: &Path) -> PathBuf {
         .file_name()
         .map_or_else(|| "log".to_string(), |n| n.to_string_lossy().into_owned());
     original.with_file_name(format!(".{file_name}.compact.tmp"))
+}
+
+fn cleanup_stale_temp(path: &Path) {
+    let temp_path = compact_temp_path(path);
+    if temp_path.exists() {
+        if let Err(e) = std::fs::remove_file(&temp_path) {
+            tracing::warn!("failed to remove stale compact temp file {}: {e}", temp_path.display());
+        } else {
+            tracing::debug!("cleaned up stale compact temp file {}", temp_path.display());
+        }
+    }
 }
 
 #[cfg(test)]

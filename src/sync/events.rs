@@ -30,7 +30,11 @@ fn sanitize_path(base: &Path, user_path: &str) -> Option<PathBuf> {
                 Component::CurDir => {}
             }
         }
-        Some(safe)
+        if safe.starts_with(base) {
+            Some(safe)
+        } else {
+            None
+        }
     }
 }
 
@@ -165,7 +169,7 @@ impl EventSyncEngine {
                     }
                 };
                 let log_entry = LogEntry {
-                    seq: event.seq,
+                    seq: 0,
                     op,
                     path: event.path.clone(),
                     blob_id: event.blob_id.clone(),

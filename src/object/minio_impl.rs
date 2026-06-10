@@ -20,6 +20,10 @@ impl MinioObjectStore {
     }
 
     fn validate_endpoint(endpoint: &str) -> Result<()> {
+        if std::env::var("NOA_MINIO_ALLOW_PRIVATE").is_ok() {
+            tracing::warn!("NOA_MINIO_ALLOW_PRIVATE is set: private endpoint SSRF protection disabled");
+            return Ok(());
+        }
         let without_scheme = endpoint
             .strip_prefix("http://")
             .or_else(|| endpoint.strip_prefix("https://"))

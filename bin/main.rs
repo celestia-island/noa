@@ -283,7 +283,7 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or_else(|_| std::path::PathBuf::from(&workspace));
             let ws_root = libnoa::repo::Repository::find(&root)?;
             let server =
-                libnoa::sync::SyncServer::new(std::path::Path::new(&socket), &ws_root, "default");
+                libnoa::sync::SyncServer::new(std::path::Path::new(&socket), &ws_root, "default")?;
             let _ = tracing_subscriber::fmt().try_init();
             server.listen().await?;
         }

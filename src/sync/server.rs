@@ -27,44 +27,29 @@ fn is_eof_error(e: &NoaError) -> bool {
         || e.to_string().contains("failed to fill whole buffer")
 }
 
-fn generate_sync_token() -> String {
+fn generate_sync_token() -> Result<String> {
     use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
     let mut buf = [0u8; 32];
-    if getrandom::getrandom(&mut buf).is_err() {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-            .to_be_bytes();
-        let pid = std::process::id().to_be_bytes();
-        let tid = format!("{:?}", std::thread::current().id());
-        for (i, chunk) in buf.chunks_mut(8).enumerate() {
-            let src = match i {
-                0 => &now[..],
-                1 => &pid[..],
-                2 => tid.as_bytes(),
-                _ => &now[..],
-            };
-            let len = chunk.len().min(src.len());
-            chunk[..len].copy_from_slice(&src[..len]);
-        }
-    }
-    hasher.update(&buf);
-    hex::encode(hasher.finalize())
+    getrandom::getrandom(&mut buf).map_err(|e| {
+        NoaError::Internal(format!("failed to generate random sync token: {e}"))
+    })?;
+    let hash = Sha256::digest(&buf);
+    Ok(hex::encode(hash))
 }
 
 impl SyncServer {
-    #[must_use]
-    pub fn new(socket_path: &Path, workspace_root: &Path, workspace_name: &str) -> Self {
-        let auth_token = std::env::var("NOA_SYNC_TOKEN").unwrap_or_else(|_| generate_sync_token());
-        SyncServer {
+    pub fn new(socket_path: &Path, workspace_root: &Path, workspace_name: &str) -> Result<Self> {
+        let auth_token = match std::env::var("NOA_SYNC_TOKEN") {
+            Ok(token) => token,
+            Err(_) => generate_sync_token()?,
+        };
+        Ok(SyncServer {
             socket_path: socket_path.to_path_buf(),
             workspace_root: workspace_root.to_path_buf(),
             workspace_name: workspace_name.to_string(),
             auth_token,
             authenticated_sessions: Arc::new(Mutex::new(std::collections::HashSet::new())),
-        }
+        })
     }
 
     pub async fn listen(&self) -> Result<()> {

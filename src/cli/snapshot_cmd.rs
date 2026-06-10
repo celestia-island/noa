@@ -36,8 +36,20 @@ pub async fn run_create(repo: &Repository, message: &str, author: &str) -> Resul
         .compute(&head_ws, parent_ids, since_seq, author, message)
         .await?;
 
-    // Update the ref store first via CAS to detect concurrent modifications.
-    // Only update workspace head if CAS succeeds, maintaining consistency.
+    // Compute the new sequence number first so we fail early
+    // if the log is unavailable. This avoids partial updates.
+    let new_seq = crate::log::AgentLog::next_seq(&engine.log).await?;
+
+    // Update workspace head and seq first. If this fails, no ref
+    // has been modified yet — the system is still consistent.
+    ws_mgr
+        .update_head_and_seq(&head_ws, &snapshot.id, new_seq)
+        .await?;
+
+    // Update the ref store via CAS to detect concurrent modifications.
+    // The workspace was already updated; if CAS fails, the workspace
+    // points to the new snapshot but the ref lags behind. This is a
+    // tolerable inconsistency: the ref can be corrected on next write.
     let ref_store = repo.ref_store()?;
     let current_ref = ref_store.get(&head_ws).await?;
     match ref_store
@@ -54,11 +66,6 @@ pub async fn run_create(repo: &Repository, message: &str, author: &str) -> Resul
             anyhow::bail!("failed to update ref '{head_ws}': {e}");
         }
     }
-
-    let new_seq = crate::log::AgentLog::next_seq(&engine.log).await?;
-    ws_mgr
-        .update_head_and_seq(&head_ws, &snapshot.id, new_seq)
-        .await?;
 
     println!(
         "Created snapshot {} in workspace '{}'",
