@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use std::{
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
 
@@ -24,8 +25,11 @@ impl FileAgentLog {
             .read(true)
             .open(path)
             .map_err(NoaError::Io)?;
+        let metadata = file.metadata().map_err(NoaError::Io)?;
+        let mut perms = metadata.permissions();
+        perms.set_mode(0o600);
+        std::fs::set_permissions(path, perms).ok();
         let max_seq = compute_max_seq_from_file(&mut file)?;
-        drop(file);
         Ok(FileAgentLog {
             path: path.to_path_buf(),
             next_seq: std::sync::atomic::AtomicU64::new(max_seq + 1),
@@ -45,7 +49,6 @@ impl FileAgentLog {
             .open(path)
             .map_err(NoaError::Io)?;
         let max_seq = compute_max_seq_from_file(&mut file)?;
-        drop(file);
         Ok(FileAgentLog {
             path: path.to_path_buf(),
             next_seq: std::sync::atomic::AtomicU64::new(max_seq + 1),

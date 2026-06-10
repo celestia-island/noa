@@ -1,4 +1,5 @@
 use std::{
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -21,17 +22,35 @@ pub struct SyncServer {
 const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
 const MAX_CONNECTIONS: usize = 32;
 
+fn is_eof_error(e: &NoaError) -> bool {
+    matches!(e, NoaError::Io(e) if e.kind() == std::io::ErrorKind::UnexpectedEof)
+        || e.to_string().contains("failed to fill whole buffer")
+}
+
 fn generate_sync_token() -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
-    hasher.update(
-        std::time::SystemTime::now()
+    let mut buf = [0u8; 32];
+    if getrandom::getrandom(&mut buf).is_err() {
+        let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos()
-            .to_be_bytes(),
-    );
-    hasher.update(std::process::id().to_be_bytes());
+            .to_be_bytes();
+        let pid = std::process::id().to_be_bytes();
+        let tid = format!("{:?}", std::thread::current().id());
+        for (i, chunk) in buf.chunks_mut(8).enumerate() {
+            let src = match i {
+                0 => &now[..],
+                1 => &pid[..],
+                2 => tid.as_bytes(),
+                _ => &now[..],
+            };
+            let len = chunk.len().min(src.len());
+            chunk[..len].copy_from_slice(&src[..len]);
+        }
+    }
+    hasher.update(&buf);
     hex::encode(hasher.finalize())
 }
 
@@ -55,6 +74,11 @@ impl SyncServer {
 
         let listener = UnixListener::bind(&self.socket_path)
             .map_err(|e| NoaError::Sync(format!("failed to bind sync socket: {e}")))?;
+        if let Ok(metadata) = std::fs::metadata(&self.socket_path) {
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o600);
+            std::fs::set_permissions(&self.socket_path, perms).ok();
+        }
 
         tracing::info!(
             "Noa sync server listening on {}",
@@ -119,7 +143,16 @@ impl SyncServer {
         let writer = Arc::new(Mutex::new(writer));
 
         loop {
-            let msg = Self::read_message(reader.clone()).await?;
+            let msg = match Self::read_message(reader.clone()).await {
+                Ok(msg) => msg,
+                Err(e) => {
+                    if is_eof_error(&e) {
+                        tracing::debug!("client disconnected from sync socket");
+                        return Ok(());
+                    }
+                    return Err(e);
+                }
+            };
             let response = Self::dispatch(
                 msg,
                 workspace_root,

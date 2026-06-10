@@ -58,8 +58,7 @@ pub struct ApiError {
     pub error: String,
 }
 
-fn err_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
-    let msg = msg.to_string();
+fn err_json(msg: impl std::fmt::Display) -> (StatusCode, Json<ApiError>) {
     tracing::error!("internal server error: {}", msg);
     (
         StatusCode::INTERNAL_SERVER_ERROR,
