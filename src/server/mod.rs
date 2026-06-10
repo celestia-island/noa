@@ -98,21 +98,13 @@ async fn auth_middleware(
 }
 
 pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        let len = a.len().max(b.len());
-        let mut dummy: u8 = 0;
-        for i in 0..len {
-            let x = a.get(i).copied().unwrap_or(0);
-            let y = b.get(i).copied().unwrap_or(0);
-            dummy |= x ^ y;
-        }
-        std::hint::black_box(dummy);
-        return false;
-    }
     let mut result: u8 = 0;
-    for (x, y) in a.iter().zip(b.iter()) {
+    for i in 0..a.len().max(b.len()) {
+        let x = a.get(i).copied().unwrap_or(0);
+        let y = b.get(i).copied().unwrap_or(0);
         result |= x ^ y;
     }
+    std::hint::black_box(result);
     result == 0
 }
 

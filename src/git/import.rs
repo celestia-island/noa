@@ -118,7 +118,14 @@ async fn import_tree_recursive(
     tree_id: gix::hash::ObjectId,
     obj_store: &crate::object::RedbObjectStore,
 ) -> Result<Vec<TreeEntry>> {
-    let file_contents = walk_tree(repo, tree_id)?;
+    let git_dir = repo.git_dir().to_path_buf();
+
+    let file_contents = tokio::task::spawn_blocking(move || {
+        let opened = gix::open(&git_dir).map_err(|e| anyhow::anyhow!("failed to open git repo: {e}"))?;
+        walk_tree(&opened, tree_id)
+    })
+    .await??;
+
     let mut entries = Vec::with_capacity(file_contents.len());
     for (name, content) in file_contents {
         let blob_id = obj_store.put_blob(&content).await?;

@@ -129,17 +129,15 @@ pub fn has_lfs_tracking(repo_root: &Path) -> bool {
 }
 
 pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Result<()> {
-    let git_dir = repo_root.join(".git");
-    if !git_dir.exists() {
-        anyhow::bail!(".git directory not found");
-    }
+    let repo_root = repo_root.to_path_buf();
 
     let snap_store = RedbSnapshotStore::new(Arc::clone(&db))?;
     let ref_store = RedbRefStore::new(Arc::clone(&db))?;
     let ws_mgr = crate::workspace::WorkspaceManager::new(Arc::clone(&db))?;
     let obj_store = crate::object::RedbObjectStore::new(db)?;
 
-    let head_ws = std::fs::read_to_string(repo_root.join(".noa").join("HEAD"))?
+    let head_ws = tokio::fs::read_to_string(repo_root.join(".noa").join("HEAD"))
+        .await?
         .trim()
         .to_string();
 
@@ -194,73 +192,88 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
             }
         }
         if let Some(parent) = file_path.parent() {
-            std::fs::create_dir_all(parent)?;
+            tokio::fs::create_dir_all(parent).await?;
         }
         let blob = obj_store
             .get_blob(&crate::object::BlobId(entry.id.clone()))
             .await?;
-        std::fs::write(&file_path, &blob)?;
+        tokio::fs::write(&file_path, &blob).await?;
     }
 
-    if has_lfs_tracking(repo_root) && detect_lfs_available(repo_root) {
-        if let Err(e) = lfs_install(repo_root) {
-            tracing::warn!("git lfs install failed: {e}");
+    let repo_root_clone = repo_root.clone();
+    tokio::task::spawn_blocking(move || {
+        if has_lfs_tracking(&repo_root_clone) && detect_lfs_available(&repo_root_clone) {
+            if let Err(e) = lfs_install(&repo_root_clone) {
+                tracing::warn!("git lfs install failed: {e}");
+            }
         }
-    }
 
-    let status_output = Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(repo_root)
-        .output()
-        .with_context(|| "git status failed")?;
+        let status_output = Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(&repo_root_clone)
+            .output()
+            .with_context(|| "git status failed")?;
 
-    let has_changes = !status_output.stdout.is_empty();
-    if has_changes {
-        Command::new("git")
-            .args(["add", "-A"])
-            .current_dir(repo_root)
-            .status()
-            .with_context(|| "git add failed")?;
+        let has_changes = !status_output.stdout.is_empty();
+        if has_changes {
+            Command::new("git")
+                .args(["add", "-A"])
+                .current_dir(&repo_root_clone)
+                .status()
+                .with_context(|| "git add failed")?;
 
-        let msg = format!(
-            "[noa export] snapshot {} from workspace {}",
-            snapshot.id, snapshot.workspace
-        );
-        let git_email = get_git_email(repo_root);
-        Command::new("git")
-            .args(["commit", "-m", &msg])
-            .current_dir(repo_root)
-            .env("GIT_AUTHOR_NAME", &snapshot.author)
-            .env("GIT_AUTHOR_EMAIL", &git_email)
-            .env("GIT_COMMITTER_NAME", &snapshot.author)
-            .env("GIT_COMMITTER_EMAIL", &git_email)
-            .status()
-            .with_context(|| "git commit failed")?;
-    }
+            let msg = format!(
+                "[noa export] snapshot {} from workspace {}",
+                snapshot.id, snapshot.workspace
+            );
+            let git_email = get_git_email(&repo_root_clone);
+            Command::new("git")
+                .args(["commit", "-m", &msg])
+                .current_dir(&repo_root_clone)
+                .env("GIT_AUTHOR_NAME", &snapshot.author)
+                .env("GIT_AUTHOR_EMAIL", &git_email)
+                .env("GIT_COMMITTER_NAME", &snapshot.author)
+                .env("GIT_COMMITTER_EMAIL", &git_email)
+                .status()
+                .with_context(|| "git commit failed")?;
+        }
 
-    Ok(())
+        Ok(())
+    })
+    .await?
 }
 
 pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
     validate_git_url(url)?;
 
-    let status = Command::new("git")
-        .args(["clone", url, &target.to_string_lossy()])
-        .status()
-        .with_context(|| "git clone failed")?;
+    let url_owned = url.to_string();
+    let target = target.to_path_buf();
+
+    let status = tokio::task::spawn_blocking({
+        let url = url_owned.clone();
+        let target = target.clone();
+        move || {
+            Command::new("git")
+                .args(["clone", &url, &target.to_string_lossy()])
+                .status()
+        }
+    })
+    .await
+    .with_context(|| "git clone failed")?
+    .with_context(|| "git clone failed")?;
     if !status.success() {
         anyhow::bail!("git clone exited with non-zero status");
     }
 
     let config = crate::config::RemoteConfig {
         name: "origin".to_string(),
-        url: url.to_string(),
+        url: url_owned,
         protocol: "git".to_string(),
     };
-    let repo = crate::repo::Repository::init_with_remotes(target, vec![config])?;
+    let repo = crate::repo::Repository::init_with_remotes(&target, vec![config])?;
 
     let db = Arc::clone(&repo.db);
-    super::import::import_git_to_noa(target, Arc::clone(&db)).await?;
+    super::import::import_git_to_noa(&target, Arc::clone(&db)).await?;
 
     let ref_store = crate::refs::RedbRefStore::new(Arc::clone(&db))?;
     let head_ref = ref_store.get("HEAD").await?;
@@ -286,16 +299,21 @@ pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
         }
     }
 
-    if detect_lfs_available(target) {
-        if let Err(e) = lfs_install(target) {
-            tracing::warn!("git lfs install failed: {e}");
-        }
-        if has_lfs_tracking(target) {
-            if let Err(e) = lfs_pull(target) {
-                tracing::warn!("git lfs pull failed: {e}");
+    let target_path = target.clone();
+    tokio::task::spawn_blocking(move || {
+        if detect_lfs_available(&target_path) {
+            if let Err(e) = lfs_install(&target_path) {
+                tracing::warn!("git lfs install failed: {e}");
+            }
+            if has_lfs_tracking(&target_path) {
+                if let Err(e) = lfs_pull(&target_path) {
+                    tracing::warn!("git lfs pull failed: {e}");
+                }
             }
         }
-    }
+        Ok::<(), anyhow::Error>(())
+    })
+    .await??;
 
     Ok(())
 }

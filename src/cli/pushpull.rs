@@ -33,24 +33,37 @@ pub async fn run_push(remote_name: &str) -> Result<()> {
         .get_remote(remote_name)
         .ok_or_else(|| anyhow::anyhow!("remote '{remote_name}' not found"))?
         .clone();
+    let remote_url = remote.url.clone();
+    let remote_name_owned = remote_name.to_string();
 
     let db = Arc::clone(&repo.db);
     drop(repo);
     crate::git::export_noa_to_git(&root, db).await?;
 
-    crate::git::export::validate_git_url(&remote.url)?;
-    let output = std::process::Command::new("git")
-        .args(["push", &remote.url])
-        .current_dir(&root)
-        .output()?;
+    crate::git::export::validate_git_url(&remote_url)?;
+    let root_push = root.clone();
+    let root_lfs = root.clone();
+    let url_for_push = remote_url.clone();
+    let url_for_lfs = remote_url.clone();
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("git")
+            .args(["push", &url_for_push])
+            .current_dir(&root_push)
+            .output()
+    })
+    .await??;
 
     if output.status.success() {
-        if crate::git::export::detect_lfs_available(&root) {
-            if let Err(e) = crate::git::export::lfs_push_all(&root, &remote.url) {
-                eprintln!("warning: git lfs push --all failed: {e}");
+        tokio::task::spawn_blocking(move || {
+            if crate::git::export::detect_lfs_available(&root_lfs) {
+                if let Err(e) = crate::git::export::lfs_push_all(&root_lfs, &url_for_lfs) {
+                    eprintln!("warning: git lfs push --all failed: {e}");
+                }
             }
-        }
-        println!("Pushed to {} ({})", remote_name, remote.url);
+            Ok::<(), anyhow::Error>(())
+        })
+        .await??;
+        println!("Pushed to {} ({})", remote_name_owned, remote_url);
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("git push failed: {}", stderr.trim());
