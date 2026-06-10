@@ -77,7 +77,8 @@ impl MinioObjectStore {
             }
         }
 
-        let allow_private = std::env::var("NOA_MINIO_ALLOW_PRIVATE").is_ok();
+        let allow_private = std::env::var("NOA_MINIO_ALLOW_PRIVATE")
+            .is_ok_and(|v| v == "true" || v == "1" || v == "yes");
 
         if let Ok(ip) = host.parse::<std::net::IpAddr>() {
             validate_ip(&ip, allow_private)?;

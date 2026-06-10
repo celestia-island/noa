@@ -311,7 +311,11 @@ pub fn get_current_git_branch(workspace_root: &Path) -> Result<String> {
         .with_context(|| "git rev-parse failed")?;
 
     if !output.status.success() {
-        anyhow::bail!("failed to determine current git branch");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "failed to determine current git branch: {}",
+            stderr.trim()
+        );
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())

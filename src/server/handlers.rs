@@ -103,34 +103,6 @@ fn not_found_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
     )
 }
 
-#[allow(dead_code)]
-fn validate_snapshot_hash_id(id: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
-    if id.is_empty() || id.len() > 128 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiError {
-                error: "invalid hash id".to_string(),
-            }),
-        ));
-    }
-    if !id.starts_with("noa_") {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiError {
-                error: "hash id must start with 'noa_'".to_string(),
-            }),
-        ));
-    }
-    if !id.chars().skip(4).all(|c| c.is_ascii_hexdigit()) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiError {
-                error: "invalid hash id format".to_string(),
-            }),
-        ));
-    }
-    Ok(())
-}
 
 fn validate_object_hash_id(id: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
     if id.is_empty() || id.len() > 128 {
@@ -368,12 +340,11 @@ pub async fn list_snapshots(
     }
     let store = state.snapshot_store().map_err(err_json)?;
     let mut snapshots = store.list_all().await.map_err(err_json)?;
-    let total = snapshots.len();
     snapshots.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
+    let total = snapshots.len();
     let start = page.offset.min(total);
     let end = (start + page.limit).min(total);
-    snapshots.truncate(end);
-    let page_data: Vec<Snapshot> = snapshots.into_iter().skip(start).collect();
+    let page_data: Vec<Snapshot> = snapshots.into_iter().skip(start).take(end - start).collect();
     Ok(Json(page_data))
 }
 

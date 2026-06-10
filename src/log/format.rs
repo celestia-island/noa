@@ -45,7 +45,7 @@ mod tests {
             resolved_conflict_ours_id: None,
             resolved_conflict_theirs_id: None,
             snapshot_id: None,
-            ts: 1717592400000000,
+            ts: 1_717_592_400_000_000,
             message: None,
         };
         let json = serialize_entry(&entry).unwrap();

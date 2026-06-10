@@ -103,9 +103,7 @@ pub async fn run_resolve(
         return Ok(());
     }
 
-    let latest_merge = merge_entries
-        .last()
-        .ok_or_else(|| anyhow::anyhow!("unexpected: merge_entries was empty after length check"))?;
+    let latest_merge = merge_entries.last().unwrap();
 
     let snap_store = repo.snapshot_store()?;
     let obj_store = repo.object_store()?;

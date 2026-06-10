@@ -450,7 +450,7 @@ mod tests {
                 &format!("noa_s{}", i),
                 "default",
                 &format!("commit {}", i),
-                (1000000000 + i as u64) * 1_000_000,
+                (1_000_000_000 + i as u64) * 1_000_000,
             ));
         }
         app.snapshots = snaps;

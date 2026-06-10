@@ -169,7 +169,7 @@ impl EventSyncEngine {
                                 tokio::task::spawn_blocking(move || {
                                     if from_path.exists() {
                                         if let Err(e) = std::fs::rename(&from_path, &fp) {
-                                            if e.raw_os_error() == Some(18) {
+                                            if e.kind() == std::io::ErrorKind::CrossesDevices {
                                                 std::fs::copy(&from_path, &fp)?;
                                                 std::fs::remove_file(&from_path)?;
                                             } else {
