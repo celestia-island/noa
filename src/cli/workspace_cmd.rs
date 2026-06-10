@@ -89,7 +89,10 @@ pub async fn run_delete(repo: &Repository, name: &str) -> Result<()> {
     }
 
     let ws_mgr = repo.workspace_manager()?;
-    ws_mgr.delete(name).await?;
+    let existed = ws_mgr.delete(name).await?;
+    if !existed {
+        anyhow::bail!("workspace '{name}' not found");
+    }
 
     println!("Deleted workspace '{name}'");
     Ok(())
@@ -221,6 +224,11 @@ pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<
     ws_mgr
         .update_head_and_seq(&current, &merge_snapshot.id, new_seq)
         .await?;
+
+    if let Ok(Some(mut cur_ws_data)) = ws_mgr.get(&current).await {
+        cur_ws_data.base = from_ws.head.clone();
+        ws_mgr.put(&cur_ws_data).await?;
+    }
 
     if conflicts.is_empty() {
         println!("Merged {} into {} -> {}", from, current, merge_snapshot.id);

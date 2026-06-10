@@ -90,6 +90,14 @@ pub async fn run_pull(remote_name: &str) -> Result<()> {
 
     let db = Arc::clone(&repo.db);
     let head_ws = repo.read_head()?;
+
+    let ws_mgr_before = crate::workspace::WorkspaceManager::new(db.clone())?;
+    let before_head = ws_mgr_before
+        .get(&head_ws)
+        .await?
+        .map(|ws| ws.head.clone())
+        .unwrap_or_else(crate::snapshot::empty_snapshot_id);
+
     drop(repo);
     crate::git::import::import_git_to_noa(&root, db.clone()).await?;
 
@@ -99,13 +107,18 @@ pub async fn run_pull(remote_name: &str) -> Result<()> {
         .ok()
         .flatten();
     if let Some(snap_id) = head_ref {
-        let ws_mgr = crate::workspace::WorkspaceManager::new(db)?;
-        if let Err(e) = ws_mgr.update_head(&head_ws, &snap_id).await {
-            eprintln!("warning: failed to update workspace head after pull: {e}");
+        if snap_id != before_head {
+            let ws_mgr = crate::workspace::WorkspaceManager::new(db)?;
+            if let Err(e) = ws_mgr.update_head(&head_ws, &snap_id).await {
+                eprintln!("warning: failed to update workspace head after pull: {e}");
+            }
+            println!("Pulled from {remote_name} and re-imported into noa");
+        } else {
+            println!("Already up to date.");
         }
+    } else {
+        println!("Pulled from {remote_name} (no new changes)");
     }
-
-    println!("Pulled from {remote_name} and re-imported into noa");
 
     Ok(())
 }

@@ -54,7 +54,8 @@ async fn main() -> anyhow::Result<()> {
     }
     let db = Arc::new(redb::Database::builder().create(&app.db_path)?);
 
-    let api_token = std::env::var("NOA_API_TOKEN").unwrap_or_default();
+    let api_token =
+        std::env::var("NOA_API_TOKEN").map_err(|_| anyhow::anyhow!("NOA_API_TOKEN environment variable is required. The server will not start without authentication configured."))?;
 
     let state = AppState::new(db).with_api_token(api_token);
     let router = router(state);
@@ -63,13 +64,7 @@ async fn main() -> anyhow::Result<()> {
         .parse::<std::net::SocketAddr>()
         .map_err(|e| anyhow::anyhow!("invalid address '{}:{}': {}", app.host, app.port, e))?;
 
-    if std::env::var("NOA_API_TOKEN").is_ok() {
-        println!("noa-server listening on {addr} (API token authentication enabled)");
-    } else {
-        println!(
-            "noa-server listening on {addr} (WARNING: no authentication configured, set NOA_API_TOKEN)"
-        );
-    }
+    println!("noa-server listening on {addr} (API token authentication enabled)");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, router).await?;

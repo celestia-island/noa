@@ -104,6 +104,7 @@ pub fn lfs_pull(repo_root: &Path) -> Result<()> {
 }
 
 pub fn lfs_push_all(repo_root: &Path, remote_url: &str) -> Result<()> {
+    validate_git_url(remote_url)?;
     let status = Command::new("git")
         .args(["lfs", "push", "--all", remote_url])
         .current_dir(repo_root)

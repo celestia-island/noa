@@ -8,6 +8,34 @@ use crate::{
     object::{sha256_hex, BlobId, ObjectStore, TreeEntries, TreeId},
 };
 
+fn validate_ip(ip: &std::net::IpAddr, allow_private: bool) -> Result<()> {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            if v4.is_loopback() || v4.is_link_local() || v4.is_broadcast() || v4.is_multicast() {
+                anyhow::bail!("endpoint resolves to forbidden IP: {ip}");
+            }
+            if !allow_private {
+                let octets = v4.octets();
+                if octets[0] == 10
+                    || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
+                    || (octets[0] == 192 && octets[1] == 168)
+                {
+                    anyhow::bail!("endpoint resolves to private IP: {ip}");
+                }
+            }
+        }
+        std::net::IpAddr::V6(v6) => {
+            if v6.is_loopback() || v6.is_multicast() {
+                anyhow::bail!("endpoint resolves to forbidden IPv6: {ip}");
+            }
+            if !allow_private && (v6.octets()[0] == 0xfc || v6.octets()[0] == 0xfd) {
+                anyhow::bail!("endpoint resolves to forbidden IPv6: {ip}");
+            }
+        }
+    }
+    Ok(())
+}
+
 pub struct MinioObjectStore {
     client: Client,
     bucket: String,
@@ -52,83 +80,18 @@ impl MinioObjectStore {
         let allow_private = std::env::var("NOA_MINIO_ALLOW_PRIVATE").is_ok();
 
         if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-            match ip {
-                std::net::IpAddr::V4(v4) => {
-                    if v4.is_loopback()
-                        || v4.is_link_local()
-                        || v4.is_broadcast()
-                        || v4.is_multicast()
-                    {
-                        anyhow::bail!("endpoint resolves to forbidden IP: {ip}");
-                    }
-                    if !allow_private {
-                        let octets = v4.octets();
-                        if octets[0] == 10
-                            || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
-                            || (octets[0] == 192 && octets[1] == 168)
-                        {
-                            anyhow::bail!("endpoint resolves to private IP: {ip}");
-                        }
-                    }
-                }
-                std::net::IpAddr::V6(v6) => {
-                    if v6.is_loopback() || v6.is_multicast() {
-                        anyhow::bail!("endpoint resolves to forbidden IPv6: {ip}");
-                    }
-                    if !allow_private && (v6.octets()[0] == 0xfc || v6.octets()[0] == 0xfd) {
-                        anyhow::bail!("endpoint resolves to forbidden IPv6: {ip}");
-                    }
-                }
-            }
+            validate_ip(&ip, allow_private)?;
         } else {
             use std::net::ToSocketAddrs;
             let resolved = format!("{host}:443").to_socket_addrs();
             match resolved {
                 Ok(addrs) => {
                     for addr in addrs {
-                        let ip = addr.ip();
-                        match ip {
-                            std::net::IpAddr::V4(v4) => {
-                                if v4.is_loopback()
-                                    || v4.is_link_local()
-                                    || v4.is_broadcast()
-                                    || v4.is_multicast()
-                                {
-                                    anyhow::bail!("endpoint resolves to forbidden IP: {ip}");
-                                }
-                                if !allow_private {
-                                    let octets = v4.octets();
-                                    if octets[0] == 10
-                                        || (octets[0] == 172
-                                            && octets[1] >= 16
-                                            && octets[1] <= 31)
-                                        || (octets[0] == 192 && octets[1] == 168)
-                                    {
-                                        anyhow::bail!(
-                                            "endpoint resolves to private IP: {ip}"
-                                        );
-                                    }
-                                }
-                            }
-                            std::net::IpAddr::V6(v6) => {
-                                if v6.is_loopback() || v6.is_multicast() {
-                                    anyhow::bail!(
-                                        "endpoint resolves to forbidden IPv6: {ip}"
-                                    );
-                                }
-                                if !allow_private
-                                    && (v6.octets()[0] == 0xfc || v6.octets()[0] == 0xfd)
-                                {
-                                    anyhow::bail!(
-                                        "endpoint resolves to forbidden IPv6: {ip}"
-                                    );
-                                }
-                            }
-                        }
+                        validate_ip(&addr.ip(), allow_private)?;
                     }
                 }
                 Err(_) => {
-                    tracing::warn!("could not resolve endpoint host for SSRF check: {host}");
+                    anyhow::bail!("could not resolve endpoint host for SSRF check: {host}");
                 }
             }
         }
@@ -301,8 +264,8 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_endpoint_allows_domain() {
-        assert!(MinioObjectStore::validate_endpoint("https://minio.example.com").is_ok());
+    fn test_validate_endpoint_rejects_unresolvable_domain() {
+        assert!(MinioObjectStore::validate_endpoint("https://minio.example.com").is_err());
     }
 
     #[test]

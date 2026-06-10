@@ -16,7 +16,7 @@ pub fn validate_workspace_name(name: &str) -> Result<()> {
         match ch {
             '/' | '\\' | '\0' => {
                 anyhow::bail!(
-                    "workspace not found: workspace name contains invalid character {ch:?} at position {i}"
+                    "invalid workspace name: contains invalid character {ch:?} at position {i}"
                 );
             }
             _ => {}

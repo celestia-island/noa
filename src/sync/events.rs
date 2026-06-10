@@ -104,6 +104,19 @@ impl EventSyncEngine {
         let mut applied: u64 = 0;
 
         for event in events {
+            let op = match event.op.as_str() {
+                "write" => crate::log::OpType::Write,
+                "delete" => crate::log::OpType::Delete,
+                "rename" => crate::log::OpType::Rename,
+                "snapshot" => crate::log::OpType::Snapshot,
+                "merge" => crate::log::OpType::Merge,
+                "resolve" => crate::log::OpType::Resolve,
+                _ => {
+                    tracing::warn!("unknown event op '{}', skipping", event.op);
+                    continue;
+                }
+            };
+
             if let Some(path) = &event.path {
                 let Some(file_path) = sanitize_path(&self.workspace_root, path) else {
                     tracing::warn!("rejecting path traversal attempt: {}", path);
@@ -180,40 +193,30 @@ impl EventSyncEngine {
                         applied += 1;
                     }
                 }
-
-                let op = match event.op.as_str() {
-                    "write" => crate::log::OpType::Write,
-                    "delete" => crate::log::OpType::Delete,
-                    "rename" => crate::log::OpType::Rename,
-                    "snapshot" => crate::log::OpType::Snapshot,
-                    "merge" => crate::log::OpType::Merge,
-                    "resolve" => crate::log::OpType::Resolve,
-                    _ => {
-                        tracing::warn!("unknown event op '{}', skipping", event.op);
-                        continue;
-                    }
-                };
-                let log_entry = LogEntry {
-                    seq: 0,
-                    op,
-                    path: event.path.clone(),
-                    blob_id: event.blob_id.clone(),
-                    from_path: event.from_path.clone(),
-                    resolved_conflict_ours_id: None,
-                    resolved_conflict_theirs_id: None,
-                    snapshot_id: None,
-                    ts: event.ts,
-                    message: event.message.clone(),
-                };
-                log.append(&log_entry).await.map_err(|e| {
-                    tracing::error!(
-                        "failed to append event to agent log (seq {}): {}",
-                        event.seq,
-                        e
-                    );
-                    e
-                })?;
+            } else {
+                applied += 1;
             }
+
+            let log_entry = LogEntry {
+                seq: 0,
+                op,
+                path: event.path.clone(),
+                blob_id: event.blob_id.clone(),
+                from_path: event.from_path.clone(),
+                resolved_conflict_ours_id: None,
+                resolved_conflict_theirs_id: None,
+                snapshot_id: None,
+                ts: event.ts,
+                message: event.message.clone(),
+            };
+            log.append(&log_entry).await.map_err(|e| {
+                tracing::error!(
+                    "failed to append event to agent log (seq {}): {}",
+                    event.seq,
+                    e
+                );
+                e
+            })?;
         }
 
         Ok(applied)

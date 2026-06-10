@@ -10,7 +10,7 @@ use super::{
     events::EventSyncEngine, transport::JsonRpcMessage, NoaAuthRequest, NoaEventSyncAck,
     NoaEventSyncMessage, NoaReady, RequestNoaHandshake,
 };
-use crate::error::Result;
+use crate::error::{is_eof_error, Result};
 use anyhow::Context;
 
 pub struct SyncServer {
@@ -24,12 +24,6 @@ pub struct SyncServer {
 const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
 const MAX_CONNECTIONS: usize = 32;
 const SESSION_TTL: Duration = Duration::from_secs(3600);
-
-fn is_eof_error(e: &anyhow::Error) -> bool {
-    e.downcast_ref::<std::io::Error>()
-        .is_some_and(|io| io.kind() == std::io::ErrorKind::UnexpectedEof)
-        || e.to_string().contains("failed to fill whole buffer")
-}
 
 fn generate_sync_token() -> Result<String> {
     use sha2::{Digest, Sha256};

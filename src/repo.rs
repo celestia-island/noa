@@ -31,40 +31,15 @@ impl Repository {
     }
 
     pub fn init_with_noa_remote(path: &Path, noa_remote: Option<&str>) -> Result<Self> {
-        let noa_dir = path.join(NOA_DIR_NAME);
-
-        if noa_dir.exists() {
-            anyhow::bail!("repository already exists at {}", noa_dir.display());
-        }
-
-        std::fs::create_dir_all(&noa_dir)?;
-        std::fs::create_dir_all(noa_dir.join(AGENT_LOGS_DIR))?;
-
-        let mut config = RepoConfig::default();
-        if let Some(url) = noa_remote {
-            config.noa_remote = Some(url.to_string());
-        }
-        config.save_to_dir(&noa_dir)?;
-
-        std::fs::write(noa_dir.join(HEAD_FILE), "default\n")?;
-
-        let db = Self::open_db(&noa_dir)?;
-        Self::init_tables(&db)?;
-
-        let db = Arc::new(db);
-        Self::create_default_workspace(&db)?;
-
-        manage_gitignore(path)?;
-
-        if let Some(url) = noa_remote {
-            manage_gitattributes(path, url)?;
-        }
-
-        Ok(Repository {
-            root: path.to_path_buf(),
-            noa_dir,
-            db,
-            config,
+        let config = RepoConfig {
+            noa_remote: noa_remote.map(std::string::ToString::to_string),
+            ..RepoConfig::default()
+        };
+        Self::init_inner(path, config, |path, cfg| {
+            if let Some(url) = &cfg.noa_remote {
+                manage_gitattributes(path, url)?;
+            }
+            Ok(())
         })
     }
 
@@ -72,6 +47,19 @@ impl Repository {
         path: &Path,
         remotes: Vec<crate::config::RemoteConfig>,
     ) -> Result<Self> {
+        let config = RepoConfig {
+            name: "default".to_string(),
+            remotes,
+            noa_remote: None,
+            sync: None,
+        };
+        Self::init_inner(path, config, |_path, _cfg| Ok(()))
+    }
+
+    fn init_inner<F>(path: &Path, config: RepoConfig, extra: F) -> Result<Self>
+    where
+        F: FnOnce(&Path, &RepoConfig) -> Result<()>,
+    {
         let noa_dir = path.join(NOA_DIR_NAME);
 
         if noa_dir.exists() {
@@ -81,12 +69,6 @@ impl Repository {
         std::fs::create_dir_all(&noa_dir)?;
         std::fs::create_dir_all(noa_dir.join(AGENT_LOGS_DIR))?;
 
-        let config = RepoConfig {
-            name: "default".to_string(),
-            remotes,
-            noa_remote: None,
-            sync: None,
-        };
         config.save_to_dir(&noa_dir)?;
 
         std::fs::write(noa_dir.join(HEAD_FILE), "default\n")?;
@@ -98,6 +80,8 @@ impl Repository {
         Self::create_default_workspace(&db)?;
 
         manage_gitignore(path)?;
+
+        extra(path, &config)?;
 
         Ok(Repository {
             root: path.to_path_buf(),

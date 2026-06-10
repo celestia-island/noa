@@ -5,7 +5,7 @@ use crate::{
     error::Result,
     object::{EntryKind, ObjectStore, TreeEntries, TreeEntry},
     refs::{RedbRefStore, RefStore},
-    snapshot::{RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore},
+    snapshot::{content_addressed_snapshot_id, RedbSnapshotStore, Snapshot, SnapshotStore},
 };
 
 pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Result<()> {
@@ -47,7 +47,7 @@ pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Resul
     let time = commit.time()?;
 
     let snapshot = Snapshot {
-        id: SnapshotId(format!("noa_{}", &head_id.to_hex().to_string()[..12])),
+        id: content_addressed_snapshot_id(&noa_tree_id.0, &[], "default"),
         tree_hash: noa_tree_id.0,
         parents: vec![],
         workspace: "default".to_string(),

@@ -3,6 +3,7 @@ use anyhow::Result;
 use crate::{config::RemoteConfig, repo::Repository};
 
 pub fn run_add(repo: &mut Repository, name: &str, url: &str) -> Result<()> {
+    crate::git::export::validate_git_url(url)?;
     repo.config.add_remote(RemoteConfig {
         name: name.to_string(),
         url: url.to_string(),
