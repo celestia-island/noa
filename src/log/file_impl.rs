@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::{
     fs::{File, OpenOptions},
-    io::{Read, Seek, SeekFrom, Write},
+    io::{BufRead, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
 
@@ -167,44 +167,54 @@ impl AgentLog for FileAgentLog {
     async fn compact_to(&self, up_to_seq: u64) -> Result<()> {
         let _guard = self.compact_lock.lock().await;
         let path = self.path.clone();
-        let path = self.path.clone();
         let next_seq = std::sync::Arc::clone(&self.next_seq);
         tokio::task::spawn_blocking(move || {
             cleanup_stale_temp(&path);
             if !path.exists() {
                 return Ok(());
             }
-            let mut file = OpenOptions::new().read(true).open(&path)
+            let file = OpenOptions::new().read(true).open(&path)
                 .map_err(|e| anyhow::anyhow!("failed to open log for compaction ({}): {e}", path.display()))?;
-            let mut content = String::new();
-            file.read_to_string(&mut content)?;
-            drop(file);
-            let entries = format::deserialize_entries(&content)?;
-            let remaining: Vec<LogEntry> =
-                entries.into_iter().filter(|e| e.seq > up_to_seq).collect();
+            let reader = std::io::BufReader::new(file);
 
             let temp_path = compact_temp_path(&path);
 
-            {
+            let max_remaining = {
                 let mut tmp_file = OpenOptions::new()
                     .create(true)
                     .write(true)
                     .truncate(true)
                     .open(&temp_path)?;
 
-                for entry in &remaining {
-                    let line = format::serialize_entry(entry)?;
-                    writeln!(tmp_file, "{line}")?;
+                let mut max_remaining = 0u64;
+                let mut line = String::new();
+                let mut reader = reader;
+                while reader.read_line(&mut line)? > 0 {
+                    if line.trim().is_empty() {
+                        line.clear();
+                        continue;
+                    }
+                    match format::deserialize_entry(&line) {
+                        Ok(entry) if entry.seq > up_to_seq => {
+                            max_remaining = max_remaining.max(entry.seq);
+                            writeln!(tmp_file, "{}", line.trim())?;
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            tracing::warn!("skipping corrupted log line during compaction: {e}");
+                        }
+                    }
+                    line.clear();
                 }
                 tmp_file.sync_all()?;
-            }
+                max_remaining
+            };
 
             if let Err(e) = std::fs::rename(&temp_path, &path) {
                 let _ = std::fs::remove_file(&temp_path);
                 return Err(e.into());
             }
 
-            let max_remaining = remaining.iter().map(|e| e.seq).max().unwrap_or(0);
             let current = next_seq.load(std::sync::atomic::Ordering::Acquire);
             let new = current.max(max_remaining + 1);
             next_seq.store(new, std::sync::atomic::Ordering::Release);

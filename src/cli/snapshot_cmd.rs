@@ -40,16 +40,8 @@ pub async fn run_create(repo: &Repository, message: &str, author: &str) -> Resul
     // if the log is unavailable. This avoids partial updates.
     let new_seq = crate::log::AgentLog::next_seq(&engine.log).await?;
 
-    // Update workspace head and seq first. If this fails, no ref
-    // has been modified yet — the system is still consistent.
-    ws_mgr
-        .update_head_and_seq(&head_ws, &snapshot.id, new_seq)
-        .await?;
-
-    // Update the ref store via CAS to detect concurrent modifications.
-    // The workspace was already updated; if CAS fails, the workspace
-    // points to the new snapshot but the ref lags behind. This is a
-    // tolerable inconsistency: the ref can be corrected on next write.
+    // Update the ref store via CAS first. If this fails, nothing
+    // has been modified yet — the system is fully consistent.
     let ref_store = repo.ref_store()?;
     let current_ref = ref_store.get(&head_ws).await?;
     match ref_store
@@ -66,6 +58,13 @@ pub async fn run_create(repo: &Repository, message: &str, author: &str) -> Resul
             anyhow::bail!("failed to update ref '{head_ws}': {e}");
         }
     }
+
+    // Then update workspace head and seq. The ref has already been
+    // updated atomically by CAS; if this step fails the ref still
+    // points to the new snapshot, keeping the system consistent.
+    ws_mgr
+        .update_head_and_seq(&head_ws, &snapshot.id, new_seq)
+        .await?;
 
     println!(
         "Created snapshot {} in workspace '{}'",

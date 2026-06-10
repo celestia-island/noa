@@ -24,6 +24,58 @@ fn validate_svn_url(url: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_svn_url_valid_https() {
+        assert!(validate_svn_url("https://svn.example.com/repo").is_ok());
+    }
+
+    #[test]
+    fn test_validate_svn_url_valid_http() {
+        assert!(validate_svn_url("http://svn.example.com/repo").is_ok());
+    }
+
+    #[test]
+    fn test_validate_svn_url_valid_svn() {
+        assert!(validate_svn_url("svn://example.com/repo").is_ok());
+    }
+
+    #[test]
+    fn test_validate_svn_url_valid_svn_ssh() {
+        assert!(validate_svn_url("svn+ssh://example.com/repo").is_ok());
+    }
+
+    #[test]
+    fn test_validate_svn_url_valid_file() {
+        assert!(validate_svn_url("file:///path/to/repo").is_ok());
+    }
+
+    #[test]
+    fn test_validate_svn_url_empty() {
+        assert!(validate_svn_url("").is_err());
+    }
+
+    #[test]
+    fn test_validate_svn_url_control_chars() {
+        assert!(validate_svn_url("http://example.com/repo\n").is_err());
+        assert!(validate_svn_url("http://example.com/repo\0").is_err());
+    }
+
+    #[test]
+    fn test_validate_svn_url_dash_prefix() {
+        assert!(validate_svn_url("-http://example.com").is_err());
+    }
+
+    #[test]
+    fn test_validate_svn_url_invalid_scheme() {
+        assert!(validate_svn_url("ftp://example.com/repo").is_err());
+        assert!(validate_svn_url("git://example.com/repo").is_err());
+    }
+}
+
 pub async fn run_push(remote_name: &str) -> Result<()> {
     let root = Repository::find(std::path::Path::new("."))?;
     let repo = Repository::open(&root)?;

@@ -19,6 +19,7 @@ pub struct SnapshotEngine<L: AgentLog, S: SnapshotStore, O: ObjectStore> {
     ignore_matcher: Option<IgnoreMatcher>,
     repo_root: Option<PathBuf>,
     compact_on_snapshot: bool,
+    conflict_resolution: ConflictResolution,
 }
 
 impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEngine<L, S, O> {
@@ -30,6 +31,7 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
             ignore_matcher: None,
             repo_root: None,
             compact_on_snapshot: false,
+            conflict_resolution: ConflictResolution::Theirs,
         }
     }
 
@@ -45,6 +47,11 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
 
     pub fn with_compact_on_snapshot(mut self) -> Self {
         self.compact_on_snapshot = true;
+        self
+    }
+
+    pub fn with_conflict_resolution(mut self, resolution: ConflictResolution) -> Self {
+        self.conflict_resolution = resolution;
         self
     }
 
@@ -74,10 +81,10 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                     merged_tree,
                     extra_tree,
                     self.object_store.clone(),
-                    &ConflictResolution::Theirs,
+                    &self.conflict_resolution,
                 )
                 .await?;
-                merged_tree = merge_result.into_tree_entries(&ConflictResolution::Theirs);
+                merged_tree = merge_result.into_tree_entries(&self.conflict_resolution);
             }
             let entries = if since_seq > 0 {
                 self.log.read_since(since_seq).await?
