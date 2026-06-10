@@ -3,10 +3,80 @@ use anyhow::Result;
 use crate::{
     log::AgentLog,
     merge::{extract_conflicts, ConflictResolution},
-    object::ObjectStore,
+    object::{EntryKind, ObjectStore, TreeEntries, TreeId, TreeEntry},
     repo::Repository,
     snapshot::{content_addressed_snapshot_id, SnapshotStore},
 };
+
+/// Recursively walk the tree hierarchy to resolve a nested path.
+fn resolve_nested_entry<'a, O: ObjectStore + 'a>(
+    obj_store: &'a O,
+    entries: &'a mut [TreeEntry],
+    source: &'a TreeEntries,
+    path_parts: &'a [&'a str],
+    filter: &'a str,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool>> + 'a>> {
+    Box::pin(async move {
+        if path_parts.is_empty() {
+            return Ok(false);
+        }
+        let first = path_parts[0];
+        let rest = &path_parts[1..];
+        let is_leaf = rest.is_empty();
+
+        for target_entry in entries.iter_mut() {
+            if target_entry.name != first {
+                continue;
+            }
+            if is_leaf {
+                if target_entry.kind != EntryKind::Blob {
+                    anyhow::bail!("'{}' is not a file", filter);
+                }
+                let source_id = source
+                    .0
+                    .iter()
+                    .find(|e| e.name == first)
+                    .map(|e| e.id.clone())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("path '{}' not found in source tree", filter)
+                    })?;
+                target_entry.id = source_id;
+                return Ok(true);
+            }
+            if target_entry.kind != EntryKind::Tree {
+                anyhow::bail!("'{}' is not a directory", first);
+            }
+            let source_sub = obj_store
+                .get_tree(&TreeId(
+                    source
+                        .0
+                        .iter()
+                        .find(|e| e.name == first)
+                        .map(|e| e.id.clone())
+                        .unwrap_or_default(),
+                ))
+                .await?;
+            let mut target_sub = obj_store
+                .get_tree(&TreeId(target_entry.id.clone()))
+                .await?;
+            let found = resolve_nested_entry(
+                obj_store,
+                &mut target_sub.0,
+                &source_sub,
+                rest,
+                filter,
+            )
+            .await?;
+            if found {
+                let new_sub_id = obj_store.put_tree(&target_sub).await?;
+                target_entry.id = new_sub_id.0;
+                return Ok(true);
+            }
+            return Ok(false);
+        }
+        anyhow::bail!("path component '{}' not found in merge tree", first);
+    })
+}
 
 pub async fn run_resolve(
     repo: &Repository,
@@ -61,43 +131,76 @@ pub async fn run_resolve(
     let mut resolved_entries = merge_tree.0.clone();
 
     if let Some(filter) = path_filter {
-        let parent_snap_id = merge_snap.parents.first();
-        let parent_tree = if let Some(pid) = parent_snap_id {
-            let parent_snap = snap_store.get(pid).await?;
-            obj_store
-                .get_tree(&crate::object::TreeId(parent_snap.tree_hash.clone()))
-                .await?
+        let filter_parts: Vec<&str> = filter.split('/').collect();
+
+        if filter_parts.len() > 1 {
+            // Nested path: walk tree hierarchy to find and resolve the entry
+            let source_tree = if merge_snap.parents.is_empty() {
+                crate::object::TreeEntries(vec![])
+            } else {
+                let pid = match resolution {
+                    ConflictResolution::Ours => merge_snap.parents.first(),
+                    ConflictResolution::Theirs => merge_snap.parents.get(1),
+                };
+                match pid {
+                    Some(pid) => {
+                        let source_snap = snap_store.get(pid).await?;
+                        obj_store
+                            .get_tree(&crate::object::TreeId(source_snap.tree_hash.clone()))
+                            .await?
+                    }
+                    None => crate::object::TreeEntries(vec![]),
+                }
+            };
+
+            resolve_nested_entry(
+                &obj_store,
+                &mut resolved_entries,
+                &source_tree,
+                &filter_parts,
+                filter,
+            )
+            .await?;
         } else {
-            crate::object::TreeEntries(vec![])
-        };
+            // Flat path: use existing three-way merge approach
+            let parent_snap_id = merge_snap.parents.first();
+            let parent_tree = if let Some(pid) = parent_snap_id {
+                let parent_snap = snap_store.get(pid).await?;
+                obj_store
+                    .get_tree(&crate::object::TreeId(parent_snap.tree_hash.clone()))
+                    .await?
+            } else {
+                crate::object::TreeEntries(vec![])
+            };
 
-        let theirs_snap_id = merge_snap.parents.get(1);
-        let theirs_tree = if let Some(tid) = theirs_snap_id {
-            let their_snap = snap_store.get(tid).await?;
-            obj_store
-                .get_tree(&crate::object::TreeId(their_snap.tree_hash.clone()))
-                .await?
-        } else {
-            parent_tree.clone()
-        };
+            let theirs_snap_id = merge_snap.parents.get(1);
+            let theirs_tree = if let Some(tid) = theirs_snap_id {
+                let their_snap = snap_store.get(tid).await?;
+                obj_store
+                    .get_tree(&crate::object::TreeId(their_snap.tree_hash.clone()))
+                    .await?
+            } else {
+                parent_tree.clone()
+            };
 
-        let result = crate::merge::three_way_merge(&parent_tree, &merge_tree, &theirs_tree)?;
-        let merge_conflicts = extract_conflicts(&result.output);
+            let result = crate::merge::three_way_merge(&parent_tree, &merge_tree, &theirs_tree)?;
+            let merge_conflicts = extract_conflicts(&result.output);
 
-        let target_conflict = merge_conflicts
-            .iter()
-            .find(|c| c.path == filter)
-            .ok_or_else(|| anyhow::anyhow!("no conflict found for path '{filter}'"))?;
+            let target_conflict = merge_conflicts
+                .iter()
+                .find(|c| c.path == filter)
+                .ok_or_else(|| anyhow::anyhow!("no conflict found for path '{filter}'"))?;
 
-        let resolved_blob_id = match resolution {
-            ConflictResolution::Ours => target_conflict.ours_id.as_deref(),
-            ConflictResolution::Theirs => target_conflict.theirs_id.as_deref(),
-        }
-        .ok_or_else(|| anyhow::anyhow!("no blob id available for resolution"))?;
+            let resolved_blob_id = match resolution {
+                ConflictResolution::Ours => target_conflict.ours_id.as_deref(),
+                ConflictResolution::Theirs => target_conflict.theirs_id.as_deref(),
+            }
+            .ok_or_else(|| anyhow::anyhow!("no blob id available for resolution"))?;
 
-        for entry in &mut resolved_entries {
-            if entry.name == filter {
-                entry.id = resolved_blob_id.to_string();
+            for entry in &mut resolved_entries {
+                if entry.name == filter {
+                    entry.id = resolved_blob_id.to_string();
+                }
             }
         }
     } else if merge_snap.parents.len() >= 2 {

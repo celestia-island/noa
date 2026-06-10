@@ -90,8 +90,9 @@ enum Commands {
     Sync {
         #[arg(short, long, default_value = "/tmp/noa-sync.sock")]
         socket: String,
+        /// Path to the workspace root directory (default: current directory)
         #[arg(short, long, default_value = ".")]
-        workspace: String,
+        path: String,
     },
 }
 
@@ -277,10 +278,10 @@ async fn main() -> anyhow::Result<()> {
             let repo = libnoa::repo::Repository::open(&root)?;
             cli::resolve_cmd::run_resolve(&repo, &strategy, path.as_deref()).await?;
         }
-        Some(Commands::Sync { socket, workspace }) => {
-            let root = std::path::Path::new(&workspace)
+        Some(Commands::Sync { socket, path }) => {
+            let root = std::path::Path::new(&path)
                 .canonicalize()
-                .unwrap_or_else(|_| std::path::PathBuf::from(&workspace));
+                .unwrap_or_else(|_| std::path::PathBuf::from(&path));
             let ws_root = libnoa::repo::Repository::find(&root)?;
             let server =
                 libnoa::sync::SyncServer::new(std::path::Path::new(&socket), &ws_root, "default")?;

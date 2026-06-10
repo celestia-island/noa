@@ -255,7 +255,6 @@ impl Repository {
         if !noa_dir.exists() {
             std::fs::create_dir_all(&noa_dir)?;
             std::fs::create_dir_all(noa_dir.join(AGENT_LOGS_DIR))?;
-            std::fs::create_dir_all(noa_dir.join(SNAPSHOTS_DIR))?;
 
             let config = RepoConfig::default();
             config.save_to_dir(&noa_dir)?;

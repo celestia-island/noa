@@ -227,13 +227,8 @@ pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<
         .await?;
 
     ws_mgr
-        .update_head_and_seq(&current, &merge_snapshot.id, new_seq)
+        .update_head_seq_and_base(&current, &merge_snapshot.id, new_seq, &from_ws.head)
         .await?;
-
-    if let Ok(Some(mut cur_ws_data)) = ws_mgr.get(&current).await {
-        cur_ws_data.base = from_ws.head.clone();
-        ws_mgr.put(&cur_ws_data).await?;
-    }
 
     if conflicts.is_empty() {
         println!("Merged {} into {} -> {}", from, current, merge_snapshot.id);

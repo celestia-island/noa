@@ -69,7 +69,10 @@ impl IgnoreMatcher {
     }
 
     fn is_noa_internal(path: &str) -> bool {
-        path.starts_with(".noa/") || path == ".noa" || path.starts_with(".noa\\")
+        path == ".noa"
+            || path.starts_with(".noa/")
+            || path.starts_with(".noa\\")
+            || path.starts_with(".noa\u{FEFF}")
     }
 
     fn find_gitignore(root: &Path) -> Option<std::path::PathBuf> {

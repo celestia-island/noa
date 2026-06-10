@@ -111,16 +111,16 @@ fn max_seq_from_lines<'a>(lines: impl DoubleEndedIterator<Item = &'a str>) -> Re
 #[async_trait]
 impl AgentLog for FileAgentLog {
     async fn append(&self, entry: &LogEntry) -> Result<u64> {
+        let _guard = self.compact_lock.lock().await;
         let seq = self
             .next_seq
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let mut assigned_entry = entry.clone();
         assigned_entry.seq = seq;
         let line = format::serialize_entry(&assigned_entry)?;
         let mut record = line.into_bytes();
         record.push(b'\n');
         let path = self.path.clone();
-        let _guard = self.compact_lock.lock().await;
         tokio::task::spawn_blocking(move || {
             use std::io::Write;
             let mut file = OpenOptions::new().create(true).append(true).open(&path)?;

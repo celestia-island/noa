@@ -202,6 +202,42 @@ impl WorkspaceManager {
         })
         .await?
     }
+
+    pub async fn update_head_seq_and_base(
+        &self,
+        name: &str,
+        new_head: &SnapshotId,
+        last_seq: u64,
+        new_base: &SnapshotId,
+    ) -> Result<()> {
+        let db = self.db.clone();
+        let name = name.to_string();
+        let new_head = new_head.clone();
+        let new_base = new_base.clone();
+        let now = crate::now_micros();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_write()?;
+            {
+                let mut table = txn.open_table(WORKSPACES)?;
+                let ws_slice = {
+                    let guard = table
+                        .get(name.as_str())?
+                        .ok_or_else(|| NoaError::WorkspaceNotFound { name: name.clone() })?;
+                    guard.value().to_vec()
+                };
+                let mut ws: Workspace = rmp_serde::from_slice(&ws_slice)?;
+                ws.head = new_head;
+                ws.last_seq = last_seq;
+                ws.base = new_base;
+                ws.updated_at = now;
+                let data = rmp_serde::to_vec(&ws)?;
+                table.insert(name.as_str(), data.as_slice())?;
+            }
+            txn.commit()?;
+            Ok(())
+        })
+        .await?
+    }
 }
 
 #[cfg(test)]
