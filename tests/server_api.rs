@@ -127,11 +127,7 @@ async fn test_upload_trees() {
 async fn test_create_snapshot() {
     let (_tmp, app) = make_app().await;
     // Compute the expected content-addressed snapshot ID
-    let expected_id = libnoa::snapshot::content_addressed_snapshot_id(
-        "tree123",
-        &[],
-        "default",
-    );
+    let expected_id = libnoa::snapshot::content_addressed_snapshot_id("tree123", &[], "default");
     let body = format!(
         r#"{{"snapshot": {{"id": "{}", "tree_hash": "tree123", "parents": [], "workspace": "default", "author": "test", "timestamp": 1000, "message": "test snapshot"}}}}"#,
         expected_id

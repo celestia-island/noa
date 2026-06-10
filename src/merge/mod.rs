@@ -1,8 +1,6 @@
 mod conflict;
-mod consolidate;
 
 pub use conflict::{ConflictDetector, ConflictResolution, FileConflict, MergeOutput, MergedEntry};
-pub use consolidate::Consolidator;
 
 use crate::{
     error::Result,
@@ -33,10 +31,7 @@ enum Change {
     Deleted,
 }
 
-fn compute_change(
-    base_entry: Option<&TreeEntry>,
-    side_entry: Option<&TreeEntry>,
-) -> Change {
+fn compute_change(base_entry: Option<&TreeEntry>, side_entry: Option<&TreeEntry>) -> Change {
     match (base_entry, side_entry) {
         (None, None) => Change::Unchanged,
         (None, Some(o)) => Change::Modified((*o).clone()),

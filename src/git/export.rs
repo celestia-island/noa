@@ -67,46 +67,41 @@ pub fn detect_lfs_available(repo_root: &Path) -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
-pub fn lfs_install(repo_root: &Path) {
-    if let Err(e) = Command::new("git")
+pub fn lfs_install(repo_root: &Path) -> Result<()> {
+    Command::new("git")
         .args(["lfs", "install"])
         .current_dir(repo_root)
         .status()
-    {
-        tracing::warn!("git lfs install failed: {e}");
-    }
+        .map_err(|e| NoaError::Remote(format!("git lfs install failed: {e}")))?;
+    Ok(())
 }
 
-pub fn lfs_pull(repo_root: &Path) {
-    match Command::new("git")
+pub fn lfs_pull(repo_root: &Path) -> Result<()> {
+    let status = Command::new("git")
         .args(["lfs", "pull"])
         .current_dir(repo_root)
         .status()
-    {
-        Ok(status) if !status.success() => {
-            tracing::warn!("git lfs pull exited with non-zero status: {status}");
-        }
-        Err(e) => {
-            tracing::warn!("git lfs pull failed: {e}");
-        }
-        _ => {}
+        .map_err(|e| NoaError::Remote(format!("git lfs pull failed: {e}")))?;
+    if !status.success() {
+        return Err(NoaError::Remote(format!(
+            "git lfs pull exited with non-zero status: {status}"
+        )));
     }
+    Ok(())
 }
 
-pub fn lfs_push_all(repo_root: &Path, remote_url: &str) {
-    match Command::new("git")
+pub fn lfs_push_all(repo_root: &Path, remote_url: &str) -> Result<()> {
+    let status = Command::new("git")
         .args(["lfs", "push", "--all", remote_url])
         .current_dir(repo_root)
         .status()
-    {
-        Ok(status) if !status.success() => {
-            tracing::warn!("git lfs push --all exited with non-zero status: {status}");
-        }
-        Err(e) => {
-            tracing::warn!("git lfs push --all failed: {e}");
-        }
-        _ => {}
+        .map_err(|e| NoaError::Remote(format!("git lfs push --all failed: {e}")))?;
+    if !status.success() {
+        return Err(NoaError::Remote(format!(
+            "git lfs push --all exited with non-zero status: {status}"
+        )));
     }
+    Ok(())
 }
 
 #[must_use]
@@ -190,10 +185,9 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
     }
 
     if has_lfs_tracking(repo_root) && detect_lfs_available(repo_root) {
-        let _ = Command::new("git")
-            .args(["lfs", "install"])
-            .current_dir(repo_root)
-            .status();
+        if let Err(e) = lfs_install(repo_root) {
+            tracing::warn!("git lfs install failed: {e}");
+        }
     }
 
     let status_output = Command::new("git")
@@ -280,9 +274,13 @@ pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
     }
 
     if detect_lfs_available(target) {
-        lfs_install(target);
+        if let Err(e) = lfs_install(target) {
+            tracing::warn!("git lfs install failed: {e}");
+        }
         if has_lfs_tracking(target) {
-            lfs_pull(target);
+            if let Err(e) = lfs_pull(target) {
+                tracing::warn!("git lfs pull failed: {e}");
+            }
         }
     }
 

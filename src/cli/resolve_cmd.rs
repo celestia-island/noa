@@ -105,7 +105,14 @@ pub async fn run_resolve(
         let base_tree = obj_store
             .get_tree(&crate::object::TreeId(base_snap.tree_hash.clone()))
             .await?;
-        let theirs_snap = snap_store.get(&merge_snap.parents[1]).await?;
+        let theirs_snap = snap_store
+            .get(
+                merge_snap
+                    .parents
+                    .get(1)
+                    .ok_or_else(|| anyhow::anyhow!("merge snapshot has fewer than 2 parents"))?,
+            )
+            .await?;
         let theirs_tree = obj_store
             .get_tree(&crate::object::TreeId(theirs_snap.tree_hash.clone()))
             .await?;

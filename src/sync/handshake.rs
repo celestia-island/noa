@@ -5,6 +5,7 @@ use super::{NoaAck, RequestNoaHandshake};
 use crate::{
     error::{NoaError, Result},
     repo::{get_current_git_branch, manage_gitignore, Repository},
+    server::constant_time_eq,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,7 +46,7 @@ pub fn handle_handshake_request(
     }
 
     match &req.token {
-        Some(token) if token == expected_token => {}
+        Some(token) if constant_time_eq(token.as_bytes(), expected_token.as_bytes()) => {}
         _ => {
             return Err(NoaError::Sync(
                 "authentication failed: invalid or missing token".to_string(),

@@ -30,10 +30,9 @@ fn is_eof_error(e: &NoaError) -> bool {
 fn generate_sync_token() -> Result<String> {
     use sha2::{Digest, Sha256};
     let mut buf = [0u8; 32];
-    getrandom::getrandom(&mut buf).map_err(|e| {
-        NoaError::Internal(format!("failed to generate random sync token: {e}"))
-    })?;
-    let hash = Sha256::digest(&buf);
+    getrandom::getrandom(&mut buf)
+        .map_err(|e| NoaError::Internal(format!("failed to generate random sync token: {e}")))?;
+    let hash = Sha256::digest(buf);
     Ok(hex::encode(hash))
 }
 
@@ -53,9 +52,7 @@ impl SyncServer {
     }
 
     pub async fn listen(&self) -> Result<()> {
-        if self.socket_path.exists() {
-            std::fs::remove_file(&self.socket_path)?;
-        }
+        let _ = std::fs::remove_file(&self.socket_path);
 
         let listener = UnixListener::bind(&self.socket_path)
             .map_err(|e| NoaError::Sync(format!("failed to bind sync socket: {e}")))?;

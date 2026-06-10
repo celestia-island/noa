@@ -11,7 +11,9 @@ use axum::{
 use crate::{
     object::{BlobId, ObjectStore, RedbObjectStore, TreeEntries, TreeId},
     refs::{RedbRefStore, RefStore},
-    snapshot::{content_addressed_snapshot_id, RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore},
+    snapshot::{
+        content_addressed_snapshot_id, RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore,
+    },
     workspace::{Workspace, WorkspaceManager},
 };
 

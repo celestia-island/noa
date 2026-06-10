@@ -46,7 +46,9 @@ pub async fn run_push(remote_name: &str) -> Result<()> {
 
     if output.status.success() {
         if crate::git::export::detect_lfs_available(&root) {
-            crate::git::export::lfs_push_all(&root, &remote.url);
+            if let Err(e) = crate::git::export::lfs_push_all(&root, &remote.url) {
+                eprintln!("warning: git lfs push --all failed: {e}");
+            }
         }
         println!("Pushed to {} ({})", remote_name, remote.url);
     } else {
@@ -81,7 +83,9 @@ pub async fn run_pull(remote_name: &str) -> Result<()> {
     if crate::git::export::detect_lfs_available(&root)
         && crate::git::export::has_lfs_tracking(&root)
     {
-        crate::git::export::lfs_pull(&root);
+        if let Err(e) = crate::git::export::lfs_pull(&root) {
+            eprintln!("warning: git lfs pull failed: {e}");
+        }
     }
 
     let db = Arc::clone(&repo.db);

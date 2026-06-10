@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use std::{
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
 };
 
@@ -24,12 +24,9 @@ impl FileAgentLog {
             .create(true)
             .append(true)
             .read(true)
+            .mode(0o600)
             .open(path)
             .map_err(NoaError::Io)?;
-        let metadata = file.metadata().map_err(NoaError::Io)?;
-        let mut perms = metadata.permissions();
-        perms.set_mode(0o600);
-        std::fs::set_permissions(path, perms).ok();
         let max_seq = compute_max_seq_from_file(&mut file)?;
         Ok(FileAgentLog {
             path: path.to_path_buf(),
@@ -80,7 +77,16 @@ fn compute_max_seq_from_file(file: &mut File) -> Result<u64> {
     file.seek(SeekFrom::End(-(read_size as i64)))?;
     let mut tail = vec![0u8; read_size as usize];
     file.read_exact(&mut tail)?;
-    let tail_str = String::from_utf8_lossy(&tail);
+
+    // Skip partial first line to avoid UTF-8 split
+    let first_newline = tail.iter().position(|&b| b == b'\n').unwrap_or(0);
+    let tail = if first_newline > 0 {
+        &tail[first_newline + 1..]
+    } else {
+        &tail[..]
+    };
+
+    let tail_str = String::from_utf8_lossy(tail);
     for line in tail_str.lines().rev() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -109,7 +115,7 @@ impl AgentLog for FileAgentLog {
     async fn append(&self, entry: &LogEntry) -> Result<u64> {
         let seq = self
             .next_seq
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut assigned_entry = entry.clone();
         assigned_entry.seq = seq;
         let line = format::serialize_entry(&assigned_entry)?;
@@ -152,7 +158,7 @@ impl AgentLog for FileAgentLog {
     }
 
     async fn next_seq(&self) -> Result<u64> {
-        Ok(self.next_seq.load(std::sync::atomic::Ordering::SeqCst))
+        Ok(self.next_seq.load(std::sync::atomic::Ordering::Relaxed))
     }
 
     async fn compact_to(&self, up_to_seq: u64) -> Result<()> {
@@ -210,7 +216,10 @@ fn cleanup_stale_temp(path: &Path) {
     let temp_path = compact_temp_path(path);
     if temp_path.exists() {
         if let Err(e) = std::fs::remove_file(&temp_path) {
-            tracing::warn!("failed to remove stale compact temp file {}: {e}", temp_path.display());
+            tracing::warn!(
+                "failed to remove stale compact temp file {}: {e}",
+                temp_path.display()
+            );
         } else {
             tracing::debug!("cleaned up stale compact temp file {}", temp_path.display());
         }
