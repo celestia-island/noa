@@ -91,6 +91,7 @@ pub fn handle_handshake_request(
 
 pub fn handle_auth_request(
     workspace_root: &Path,
+    workspace_id: &str,
     selection: &BranchSelection,
     _suggested_branch: &str,
     branch_prefix: &str,
@@ -126,7 +127,7 @@ pub fn handle_auth_request(
     );
 
     Ok(NoaAuthResponse {
-        workspace_id: String::new(),
+        workspace_id: workspace_id.to_string(),
         selected_branch,
         branch_base: base_branch,
         approved: true,
@@ -355,6 +356,7 @@ mod tests {
         init_git_repo(tmp.path());
         let resp = handle_auth_request(
             tmp.path(),
+            "test-ws",
             &BranchSelection::NewSession("sess-123".to_string()),
             "entelecheia/agent-sess-123",
             "entelecheia/agent-",
@@ -369,7 +371,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init_git_repo(tmp.path());
         let current = get_current_git_branch(tmp.path()).unwrap();
-        let resp = handle_auth_request(tmp.path(), &BranchSelection::Current, "", "entelecheia/agent-").unwrap();
+        let resp = handle_auth_request(tmp.path(), "test-ws", &BranchSelection::Current, "", "entelecheia/agent-").unwrap();
         assert_eq!(resp.selected_branch, current);
     }
 

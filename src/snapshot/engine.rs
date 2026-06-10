@@ -183,11 +183,35 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
 
             let mut subdirs: Vec<(String, Vec<TreeEntry>)> = Vec::new();
             for (dir_name, children) in dirs {
-                let needs_deeper = children.iter().any(|(k, _)| k.contains('/'));
-                if needs_deeper {
+                let deep: Vec<_> = children
+                    .iter()
+                    .filter(|(k, _)| k.contains('/'))
+                    .cloned()
+                    .collect();
+                let leaf: Vec<_> = children
+                    .iter()
+                    .filter(|(k, _)| !k.contains('/'))
+                    .cloned()
+                    .collect();
+
+                if !deep.is_empty() {
                     worklist.push(children.clone());
                 }
-                subdirs.push((dir_name, children.into_iter().map(|(_, e)| e).collect()));
+
+                let mut entries: Vec<TreeEntry> =
+                    leaf.into_iter().map(|(_, e)| e).collect();
+                for (deep_path, _) in &deep {
+                    if let Some((immediate, _)) = deep_path.split_once('/') {
+                        if !entries.iter().any(|e| e.name == immediate) {
+                            entries.push(TreeEntry {
+                                name: immediate.to_string(),
+                                kind: EntryKind::Tree,
+                                id: String::new(),
+                            });
+                        }
+                    }
+                }
+                subdirs.push((dir_name, entries));
             }
 
             layers.push((roots, subdirs));
@@ -206,7 +230,17 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
             for (dir_name, children) in subdirs {
                 let mut sub_entries = Vec::new();
                 for entry in children {
-                    if let Some(resolved_entry) = resolved.remove(&entry.name) {
+                    if entry.kind == EntryKind::Tree && entry.id.is_empty() {
+                        if let Some(resolved_entry) = resolved.remove(&entry.name) {
+                            sub_entries.push(resolved_entry);
+                        } else {
+                            tracing::warn!(
+                                "unresolved subdirectory placeholder: {} in {}",
+                                entry.name,
+                                dir_name
+                            );
+                        }
+                    } else if let Some(resolved_entry) = resolved.remove(&entry.name) {
                         sub_entries.push(resolved_entry);
                     } else {
                         sub_entries.push(entry);
@@ -928,5 +962,83 @@ mod tests {
             "target should be ignored"
         );
         assert!(tree.0.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_deep_nested_directories() {
+        let (_tmp, engine) = make_engine().await;
+        engine
+            .log
+            .append(&write_entry(1, "src/a/b/c/d.rs", "h1", 100))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&write_entry(2, "src/a/b/c/e.rs", "h2", 200))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&write_entry(3, "src/a/f.rs", "h3", 300))
+            .await
+            .unwrap();
+
+        let snap = engine
+            .compute("default", vec![], 0, "test", "deep nesting")
+            .await
+            .unwrap();
+        let tree = engine
+            .object_store
+            .get_tree(&crate::object::TreeId(snap.tree_hash))
+            .await
+            .unwrap();
+
+        assert_eq!(tree.0.len(), 1);
+        assert_eq!(tree.0[0].name, "src");
+        assert_eq!(tree.0[0].kind, crate::object::EntryKind::Tree);
+
+        let src_tree = engine
+            .object_store
+            .get_tree(&TreeId(tree.0[0].id.clone()))
+            .await
+            .unwrap();
+        assert_eq!(src_tree.0.len(), 1);
+        assert_eq!(src_tree.0[0].name, "a");
+        assert_eq!(src_tree.0[0].kind, crate::object::EntryKind::Tree);
+
+        let a_tree = engine
+            .object_store
+            .get_tree(&TreeId(src_tree.0[0].id.clone()))
+            .await
+            .unwrap();
+        assert_eq!(a_tree.0.len(), 2);
+
+        let b_entry = a_tree.0.iter().find(|e| e.name == "b").unwrap();
+        assert_eq!(b_entry.kind, crate::object::EntryKind::Tree);
+
+        let f_entry = a_tree.0.iter().find(|e| e.name == "f.rs").unwrap();
+        assert_eq!(f_entry.kind, crate::object::EntryKind::Blob);
+        assert_eq!(f_entry.id, "h3");
+
+        let b_tree = engine
+            .object_store
+            .get_tree(&TreeId(b_entry.id.clone()))
+            .await
+            .unwrap();
+        assert_eq!(b_tree.0.len(), 1);
+        assert_eq!(b_tree.0[0].name, "c");
+        assert_eq!(b_tree.0[0].kind, crate::object::EntryKind::Tree);
+
+        let c_tree = engine
+            .object_store
+            .get_tree(&TreeId(b_tree.0[0].id.clone()))
+            .await
+            .unwrap();
+        assert_eq!(c_tree.0.len(), 2);
+
+        let d_entry = c_tree.0.iter().find(|e| e.name == "d.rs").unwrap();
+        assert_eq!(d_entry.id, "h1");
+        let e_entry = c_tree.0.iter().find(|e| e.name == "e.rs").unwrap();
+        assert_eq!(e_entry.id, "h2");
     }
 }

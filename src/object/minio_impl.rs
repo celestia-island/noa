@@ -177,7 +177,19 @@ impl ObjectStore for MinioObjectStore {
             .key(Self::blob_key(id))
             .send()
             .await;
-        Ok(result.is_ok())
+        match result {
+            Ok(_) => Ok(true),
+            Err(e) => {
+                let is_not_found = e
+                    .as_service_error()
+                    .is_some_and(|se| se.is_not_found());
+                if is_not_found {
+                    Ok(false)
+                } else {
+                    Err(e.into())
+                }
+            }
+        }
     }
 
     async fn put_tree(&self, entries: &TreeEntries) -> Result<TreeId> {
@@ -217,7 +229,19 @@ impl ObjectStore for MinioObjectStore {
             .key(Self::tree_key(id))
             .send()
             .await;
-        Ok(result.is_ok())
+        match result {
+            Ok(_) => Ok(true),
+            Err(e) => {
+                let is_not_found = e
+                    .as_service_error()
+                    .is_some_and(|se| se.is_not_found());
+                if is_not_found {
+                    Ok(false)
+                } else {
+                    Err(e.into())
+                }
+            }
+        }
     }
 }
 

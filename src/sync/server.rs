@@ -251,6 +251,7 @@ impl SyncServer {
                 );
                 let resp = super::handshake::handle_auth_request(
                     workspace_root,
+                    &req.workspace_id,
                     &super::handshake::BranchSelection::Current,
                     &req.suggested_branch,
                     "entelecheia/agent-",

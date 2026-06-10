@@ -2,9 +2,11 @@ use async_trait::async_trait;
 use std::{
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
-    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 
 use super::{format, AgentLog, LogEntry};
 use crate::error::Result;
@@ -21,12 +23,11 @@ impl FileAgentLog {
             std::fs::create_dir_all(parent)?;
         }
         cleanup_stale_temp(path);
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .read(true)
-            .mode(0o600)
-            .open(path)?;
+        let mut opts = OpenOptions::new();
+        opts.create(true).append(true).read(true);
+        #[cfg(unix)]
+        opts.mode(0o600);
+        let mut file = opts.open(path)?;
         let max_seq = compute_max_seq_from_file(&mut file)?;
         Ok(FileAgentLog {
             path: path.to_path_buf(),
