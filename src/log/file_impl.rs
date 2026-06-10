@@ -58,15 +58,7 @@ fn compute_max_seq_from_file(file: &mut File) -> Result<u64> {
         file.seek(SeekFrom::Start(0))?;
         let mut content = String::new();
         file.read_to_string(&mut content)?;
-        for line in content.lines().rev() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            if let Ok(entry) = format::deserialize_entry(line) {
-                return Ok(entry.seq);
-            }
-        }
-        return Ok(0);
+        return max_seq_from_lines(content.lines());
     }
 
     let read_size = 8192u64.min(file_len);
@@ -74,28 +66,44 @@ fn compute_max_seq_from_file(file: &mut File) -> Result<u64> {
     let mut tail = vec![0u8; read_size as usize];
     file.read_exact(&mut tail)?;
 
-    // Skip partial first line to avoid UTF-8 split
-    let first_newline = tail.iter().position(|&b| b == b'\n').unwrap_or(0);
-    let tail = if first_newline > 0 {
-        &tail[first_newline + 1..]
-    } else {
-        &tail[..]
-    };
+    let last_newline = tail.iter().rposition(|&b| b == b'\n').unwrap_or(0);
+    if last_newline > 0 {
+        tail = tail[..last_newline].to_vec();
+    }
 
-    let tail_str = String::from_utf8_lossy(tail);
-    for line in tail_str.lines().rev() {
+    file.seek(SeekFrom::End(0))?;
+    let end_pos = file.stream_position()?;
+    let tail_start = end_pos - tail.len() as u64;
+
+    file.seek(SeekFrom::Start(tail_start))?;
+    let mut tail_content = String::new();
+    file.read_to_string(&mut tail_content)?;
+
+    if let Some(seq) = try_parse_last_seq(&tail_content) {
+        return Ok(seq);
+    }
+
+    file.seek(SeekFrom::Start(0))?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)?;
+    max_seq_from_lines(content.lines())
+}
+
+fn try_parse_last_seq(content: &str) -> Option<u64> {
+    for line in content.lines().rev() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
         if let Ok(entry) = format::deserialize_entry(trimmed) {
-            return Ok(entry.seq);
+            return Some(entry.seq);
         }
     }
-    file.seek(SeekFrom::Start(0))?;
-    let mut content = String::new();
-    file.read_to_string(&mut content)?;
-    for line in content.lines().rev() {
+    None
+}
+
+fn max_seq_from_lines<'a>(lines: impl DoubleEndedIterator<Item = &'a str>) -> Result<u64> {
+    for line in lines.rev() {
         if line.trim().is_empty() {
             continue;
         }

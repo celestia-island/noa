@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -12,6 +12,7 @@ use crate::{
     error::{is_object_not_found, is_workspace_already_exists},
     object::{BlobId, ObjectStore, RedbObjectStore, TreeEntries, TreeId},
     refs::{RedbRefStore, RefStore},
+    server::RateLimiter,
     snapshot::{
         content_addressed_snapshot_id, RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore,
     },
@@ -22,6 +23,7 @@ use crate::{
 pub struct AppState {
     pub db: Arc<redb::Database>,
     pub api_token: String,
+    pub rate_limiter: RateLimiter,
 }
 
 impl AppState {
@@ -30,12 +32,19 @@ impl AppState {
         AppState {
             db,
             api_token: String::new(),
+            rate_limiter: RateLimiter::new(1000, 60),
         }
     }
 
     #[must_use]
     pub fn with_api_token(mut self, token: String) -> Self {
         self.api_token = token;
+        self
+    }
+
+    #[must_use]
+    pub fn with_rate_limit(mut self, max_requests: u32, window_secs: u64) -> Self {
+        self.rate_limiter = RateLimiter::new(max_requests, window_secs);
         self
     }
 
@@ -59,6 +68,18 @@ impl AppState {
 #[derive(Serialize)]
 pub struct ApiError {
     pub error: String,
+}
+
+#[derive(Deserialize)]
+pub struct PaginationParams {
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub offset: usize,
+}
+
+fn default_limit() -> usize {
+    100
 }
 
 fn err_json(msg: impl std::fmt::Display) -> (StatusCode, Json<ApiError>) {
@@ -314,10 +335,25 @@ pub async fn get_tree(
 
 pub async fn list_snapshots(
     State(state): State<AppState>,
+    Query(page): Query<PaginationParams>,
 ) -> Result<Json<Vec<Snapshot>>, (StatusCode, Json<ApiError>)> {
+    if page.limit == 0 || page.limit > 1000 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "limit must be between 1 and 1000".to_string(),
+            }),
+        ));
+    }
     let store = state.snapshot_store().map_err(err_json)?;
-    let snapshots = store.list_all().await.map_err(err_json)?;
-    Ok(Json(snapshots))
+    let mut snapshots = store.list_all().await.map_err(err_json)?;
+    let total = snapshots.len();
+    snapshots.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
+    let start = page.offset.min(total);
+    let end = (start + page.limit).min(total);
+    snapshots.truncate(end);
+    let page_data: Vec<Snapshot> = snapshots.into_iter().skip(start).collect();
+    Ok(Json(page_data))
 }
 
 #[derive(Deserialize)]
@@ -352,10 +388,27 @@ pub async fn create_snapshot(
 
 pub async fn list_workspaces(
     State(state): State<AppState>,
+    Query(page): Query<PaginationParams>,
 ) -> Result<Json<Vec<Workspace>>, (StatusCode, Json<ApiError>)> {
+    if page.limit == 0 || page.limit > 1000 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "limit must be between 1 and 1000".to_string(),
+            }),
+        ));
+    }
     let mgr = state.workspace_manager().map_err(err_json)?;
-    let workspaces = mgr.list().await.map_err(err_json)?;
-    Ok(Json(workspaces))
+    let mut workspaces = mgr.list().await.map_err(err_json)?;
+    workspaces.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
+    let start = page.offset.min(workspaces.len());
+    let end = (start + page.limit).min(workspaces.len());
+    let page_data: Vec<Workspace> = workspaces
+        .into_iter()
+        .skip(start)
+        .take(end - start)
+        .collect();
+    Ok(Json(page_data))
 }
 
 #[derive(Deserialize)]

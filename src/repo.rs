@@ -289,7 +289,7 @@ impl Repository {
         let current_branch = get_current_git_branch(path)?;
 
         Ok(SyncInitResult {
-            repo_id: format!("noa:{}", path.display()),
+            repo_id: format!("sync:{}", path.display()),
             current_branch,
             noa_initialized,
             gitignore_updated,

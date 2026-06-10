@@ -9,12 +9,71 @@ use axum::{
     Router,
 };
 pub use handlers::AppState;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::Mutex;
+
+#[derive(Clone)]
+struct RateLimitEntry {
+    count: u32,
+    window_start: Instant,
+}
+
+#[derive(Clone, Default)]
+pub struct RateLimiter {
+    entries: Arc<Mutex<HashMap<String, RateLimitEntry>>>,
+    max_requests: u32,
+    window_secs: u64,
+}
+
+impl RateLimiter {
+    pub fn new(max_requests: u32, window_secs: u64) -> Self {
+        RateLimiter {
+            entries: Arc::new(Mutex::new(HashMap::new())),
+            max_requests,
+            window_secs,
+        }
+    }
+
+    pub async fn check(&self, key: &str) -> bool {
+        let mut entries = self.entries.lock().await;
+        let now = Instant::now();
+        let window = std::time::Duration::from_secs(self.window_secs);
+
+        let entry = entries.entry(key.to_string()).or_insert(RateLimitEntry {
+            count: 0,
+            window_start: now,
+        });
+
+        if now.duration_since(entry.window_start) > window {
+            entry.count = 0;
+            entry.window_start = now;
+        }
+
+        entry.count += 1;
+        entry.count <= self.max_requests
+    }
+}
 
 async fn auth_middleware(
     axum::extract::State(state): axum::extract::State<AppState>,
     req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    {
+        let key = req
+            .headers()
+            .get("x-forwarded-for")
+            .or_else(|| req.headers().get("x-real-ip"))
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("default");
+
+        if !state.rate_limiter.check(key).await {
+            return Err(StatusCode::TOO_MANY_REQUESTS);
+        }
+    }
+
     if state.api_token.is_empty() {
         tracing::warn!("NOA_API_TOKEN not set — rejecting all API requests");
         return Err(StatusCode::UNAUTHORIZED);
@@ -113,5 +172,22 @@ mod tests {
         let mut b = b"test".to_vec();
         b[3] ^= 1;
         assert!(!constant_time_eq(a, &b));
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_allows_within_limit() {
+        let limiter = RateLimiter::new(3, 60);
+        assert!(limiter.check("key").await);
+        assert!(limiter.check("key").await);
+        assert!(limiter.check("key").await);
+        assert!(!limiter.check("key").await);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_independent_keys() {
+        let limiter = RateLimiter::new(1, 60);
+        assert!(limiter.check("a").await);
+        assert!(limiter.check("b").await);
+        assert!(!limiter.check("a").await);
     }
 }

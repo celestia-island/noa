@@ -59,13 +59,33 @@ impl SyncServer {
     pub async fn listen(&self) -> Result<()> {
         let _ = std::fs::remove_file(&self.socket_path);
 
-        let listener =
-            UnixListener::bind(&self.socket_path).with_context(|| "failed to bind sync socket")?;
-        if let Ok(metadata) = std::fs::metadata(&self.socket_path) {
-            let mut perms = metadata.permissions();
-            perms.set_mode(0o600);
-            std::fs::set_permissions(&self.socket_path, perms).ok();
+        let socket_dir = self.socket_path.parent();
+        if let Some(dir) = socket_dir {
+            std::fs::create_dir_all(dir)?;
         }
+
+        let listener = if let Some(dir) = socket_dir {
+            let file_name = self
+                .socket_path
+                .file_name()
+                .map_or_else(|| "sock".to_string(), |n| n.to_string_lossy().into_owned());
+            let tmp_path = dir.join(format!(".{file_name}.bind.tmp"));
+
+            let _ = std::fs::remove_file(&tmp_path);
+            let tmp_listener = UnixListener::bind(&tmp_path)
+                .with_context(|| "failed to bind sync socket (temp)")?;
+
+            let mut perms = std::fs::metadata(&tmp_path)?.permissions();
+            perms.set_mode(0o600);
+            std::fs::set_permissions(&tmp_path, perms)?;
+
+            std::fs::rename(&tmp_path, &self.socket_path)
+                .with_context(|| "failed to rename socket to final path")?;
+
+            tmp_listener
+        } else {
+            UnixListener::bind(&self.socket_path).with_context(|| "failed to bind sync socket")?
+        };
 
         tracing::info!(
             "Noa sync server listening on {}",

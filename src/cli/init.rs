@@ -46,24 +46,6 @@ pub fn run(args: &InitArgs) -> Result<()> {
                 anyhow::bail!("git init failed: {stderr}");
             }
         }
-
-        let gitignore = path.join(".gitignore");
-        let content = if gitignore.exists() {
-            std::fs::read_to_string(&gitignore)?
-        } else {
-            String::new()
-        };
-        if !content
-            .lines()
-            .any(|l| l.trim() == ".noa/" || l.trim() == ".noa")
-        {
-            let updated = if content.is_empty() {
-                ".noa/\n".to_string()
-            } else {
-                format!("{}\n.noa/\n", content.trim_end())
-            };
-            std::fs::write(&gitignore, updated)?;
-        }
     }
 
     println!(
