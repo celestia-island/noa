@@ -11,13 +11,21 @@ use crate::{
     refs::RedbRefStore, snapshot::RedbSnapshotStore, workspace::WorkspaceManager,
 };
 
+/// Name of the `.noa` directory that lives alongside `.git`.
 pub const NOA_DIR_NAME: &str = ".noa";
+/// Filename of the embedded redb database inside `.noa/`.
 pub const DB_NAME: &str = "noa.redb";
+/// Subdirectory holding per-workspace JSONL agent logs.
 pub const AGENT_LOGS_DIR: &str = "agent-logs";
-pub const SNAPSHOTS_DIR: &str = "snapshots";
+/// Filename of the HEAD pointer (contains the active workspace name).
 pub const HEAD_FILE: &str = "HEAD";
+/// Filename of the ORIG_HEAD pointer (saved before merge operations).
 pub const ORIG_HEAD_FILE: &str = "ORIG_HEAD";
 
+/// Handle to an opened noa repository (the `.noa/` directory alongside `.git`).
+///
+/// Provides access to the object store, snapshot store, ref store, workspace
+/// manager, and agent logs for a single repository.
 pub struct Repository {
     pub root: PathBuf,
     pub noa_dir: PathBuf,
@@ -26,10 +34,15 @@ pub struct Repository {
 }
 
 impl Repository {
+    /// Initializes a new `.noa/` repository at the given path.
+    ///
+    /// # Errors
+    /// Returns an error if `.noa/` already exists or if filesystem operations fail.
     pub fn init(path: &Path) -> Result<Self> {
         Self::init_with_noa_remote(path, None)
     }
 
+    /// Initializes with an optional noa remote URL (also configures `.gitattributes`).
     pub fn init_with_noa_remote(path: &Path, noa_remote: Option<&str>) -> Result<Self> {
         let config = RepoConfig {
             noa_remote: noa_remote.map(std::string::ToString::to_string),
@@ -91,6 +104,10 @@ impl Repository {
         })
     }
 
+    /// Opens an existing `.noa/` repository at the given path.
+    ///
+    /// # Errors
+    /// Returns an error if `.noa/` does not exist or is invalid.
     pub fn open(path: &Path) -> Result<Self> {
         let noa_dir = path.join(NOA_DIR_NAME);
 
@@ -112,6 +129,10 @@ impl Repository {
         })
     }
 
+    /// Walks up from `from` to find the nearest `.noa/` repository root.
+    ///
+    /// # Errors
+    /// Returns an error if no `.noa/` is found in any ancestor directory.
     pub fn find(from: &Path) -> Result<PathBuf> {
         let mut current = from.to_path_buf();
         loop {

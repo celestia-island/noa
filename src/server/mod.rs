@@ -96,16 +96,21 @@ async fn auth_middleware(
 
     {
         let key = req
-            .headers()
-            .get("x-forwarded-for")
-            .or_else(|| req.headers().get("x-real-ip"))
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
+            .extensions()
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|c| c.0.ip().to_string())
             .unwrap_or_else(|| {
-                req.extensions()
-                    .get::<ConnectInfo<SocketAddr>>()
-                    .map(|c| c.0.ip().to_string())
-                    .unwrap_or_else(|| "default".to_string())
+                req.headers()
+                    .get("x-forwarded-for")
+                    .or_else(|| req.headers().get("x-real-ip"))
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| {
+                        s.split(',')
+                            .next()
+                            .map(|s| s.trim().to_string())
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_else(|| "unknown".to_string())
             });
 
         if !state.rate_limiter.check(&key).await {

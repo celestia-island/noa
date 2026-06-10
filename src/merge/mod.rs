@@ -7,6 +7,7 @@ use crate::{
     object::{EntryKind, ObjectStore, TreeEntries, TreeEntry, TreeId},
 };
 
+/// Result of a three-way merge, containing the merged output and conflict status.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MergeResult {
     pub output: MergeOutput,
@@ -41,6 +42,16 @@ fn compute_change(base_entry: Option<&TreeEntry>, side_entry: Option<&TreeEntry>
     }
 }
 
+/// Performs a three-way merge of tree entries against a common base.
+///
+/// Returns a `MergeResult` indicating whether conflicts were detected and
+/// containing the merged entries. Use `extract_conflicts` to list individual
+/// file-level conflicts.
+///
+/// # Arguments
+/// * `base` - The common ancestor tree
+/// * `ours` - Our side's tree
+/// * `theirs` - Their side's tree
 pub fn three_way_merge(
     base: &TreeEntries,
     ours: &TreeEntries,
@@ -123,6 +134,7 @@ pub fn three_way_merge(
     })
 }
 
+/// Extracts individual file conflicts from a merge output.
 #[must_use]
 pub fn extract_conflicts(output: &MergeOutput) -> Vec<FileConflict> {
     output

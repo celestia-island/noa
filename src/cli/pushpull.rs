@@ -106,15 +106,20 @@ pub async fn run_push(remote_name: &str) -> Result<()> {
     .await??;
 
     if output.status.success() {
-        tokio::task::spawn_blocking(move || {
-            if crate::git::export::detect_lfs_available(&root_lfs) {
-                if let Err(e) = crate::git::export::lfs_push_all(&root_lfs, &url_for_lfs) {
-                    eprintln!("warning: git lfs push --all failed: {e}");
-                }
-            }
-            Ok::<(), anyhow::Error>(())
+        let root_lfs_check = root_lfs.clone();
+        let has_lfs = tokio::task::spawn_blocking(move || {
+            crate::git::export::detect_lfs_available(&root_lfs_check)
+                && crate::git::export::has_lfs_tracking(&root_lfs_check)
         })
-        .await??;
+        .await?;
+        if has_lfs {
+            let root_lfs_push = root_lfs.clone();
+            let url_for_lfs_push = url_for_lfs.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::git::export::lfs_push_all(&root_lfs_push, &url_for_lfs_push)
+            })
+            .await??;
+        }
         println!("Pushed to {} ({})", remote_name_owned, remote_url);
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -135,22 +140,27 @@ pub async fn run_pull(remote_name: &str) -> Result<()> {
         .clone();
 
     crate::git::export::validate_git_url(&remote.url)?;
-    let output = std::process::Command::new("git")
-        .args(["pull", &remote.url])
-        .current_dir(&root)
-        .output()?;
+    let root_pull = root.clone();
+    let url_for_pull = remote.url.clone();
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("git")
+            .args(["pull", &url_for_pull])
+            .current_dir(&root_pull)
+            .output()
+    })
+    .await??;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("git pull failed: {}", stderr.trim());
     }
 
+    let root_lfs_pull = root.clone();
     if crate::git::export::detect_lfs_available(&root)
         && crate::git::export::has_lfs_tracking(&root)
     {
-        if let Err(e) = crate::git::export::lfs_pull(&root) {
-            eprintln!("warning: git lfs pull failed: {e}");
-        }
+        tokio::task::spawn_blocking(move || crate::git::export::lfs_pull(&root_lfs_pull))
+            .await??;
     }
 
     let db = Arc::clone(&repo.db);

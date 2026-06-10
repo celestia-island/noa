@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     body::Body,
+    extract::ConnectInfo,
     http::{Method, Request, StatusCode},
 };
 use tower::ServiceExt;
@@ -276,4 +277,64 @@ async fn test_push_ref_name_with_double_dot_rejected() {
     let req = make_request(Method::POST, "/api/v1/refs", Some(body));
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+async fn make_rate_limited_app() -> (tempfile::TempDir, axum::Router) {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let db = Arc::new(
+        redb::Database::builder()
+            .create(tmp.path().join("rate-limit-test.redb"))
+            .unwrap(),
+    );
+    let state = AppState::new(db)
+        .with_api_token(TEST_API_TOKEN.to_string())
+        .with_rate_limit(3, 60);
+    let app = router(state);
+    (tmp, app)
+}
+
+fn make_request_with_connect_info(
+    method: Method,
+    uri: &str,
+    addr: std::net::SocketAddr,
+    body: Option<String>,
+) -> Request<Body> {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("Authorization", format!("Bearer {}", TEST_API_TOKEN))
+        .extension(ConnectInfo(addr));
+    if let Some(b) = body {
+        builder = builder.header("content-type", "application/json");
+        builder.body(Body::from(b)).unwrap()
+    } else {
+        builder.body(Body::empty()).unwrap()
+    }
+}
+
+#[tokio::test]
+async fn test_rate_limit_per_ip_independent_buckets() {
+    let (_tmp, app) = make_rate_limited_app().await;
+
+    let addr_a: std::net::SocketAddr = "127.0.0.1:1111".parse().unwrap();
+    let addr_b: std::net::SocketAddr = "127.0.0.2:2222".parse().unwrap();
+
+    for _ in 0..3 {
+        let req = make_request_with_connect_info(
+            Method::GET,
+            "/api/v1/refs",
+            addr_a,
+            None,
+        );
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    let req = make_request_with_connect_info(Method::GET, "/api/v1/refs", addr_a, None);
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    let req = make_request_with_connect_info(Method::GET, "/api/v1/refs", addr_b, None);
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
 }

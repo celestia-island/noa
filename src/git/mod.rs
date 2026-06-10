@@ -39,10 +39,14 @@ impl RemoteBackend for GitBackend {
 
     async fn push(&self, url: &str, _: &[PushSpec]) -> Result<PushResult> {
         export::validate_git_url(url)?;
-        let output = Command::new("git")
-            .args(["push", url])
-            .output()
-            .with_context(|| "git push failed")?;
+        let url_owned = url.to_string();
+        let output = tokio::task::spawn_blocking(move || {
+            Command::new("git")
+                .args(["push", &url_owned])
+                .output()
+                .with_context(|| "git push failed")
+        })
+        .await??;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -59,10 +63,14 @@ impl RemoteBackend for GitBackend {
 
     async fn fetch(&self, url: &str, _: &[FetchSpec]) -> Result<FetchResult> {
         export::validate_git_url(url)?;
-        let output = Command::new("git")
-            .args(["fetch", url])
-            .output()
-            .with_context(|| "git fetch failed")?;
+        let url_owned = url.to_string();
+        let output = tokio::task::spawn_blocking(move || {
+            Command::new("git")
+                .args(["fetch", &url_owned])
+                .output()
+                .with_context(|| "git fetch failed")
+        })
+        .await??;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -74,10 +82,14 @@ impl RemoteBackend for GitBackend {
 
     async fn list_refs(&self, url: &str) -> Result<Vec<RemoteRef>> {
         export::validate_git_url(url)?;
-        let output = Command::new("git")
-            .args(["ls-remote", "--refs", url])
-            .output()
-            .with_context(|| "git ls-remote failed")?;
+        let url_owned = url.to_string();
+        let output = tokio::task::spawn_blocking(move || {
+            Command::new("git")
+                .args(["ls-remote", "--refs", &url_owned])
+                .output()
+                .with_context(|| "git ls-remote failed")
+        })
+        .await??;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

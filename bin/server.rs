@@ -67,7 +67,11 @@ async fn main() -> anyhow::Result<()> {
     println!("noa-server listening on {addr} (API token authentication enabled)");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, router).await?;
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
