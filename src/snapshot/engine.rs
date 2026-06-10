@@ -7,6 +7,7 @@ use crate::{
     error::Result,
     ignore::IgnoreMatcher,
     log::{AgentLog, LogEntry, OpType},
+    merge::{self, ConflictResolution},
     object::{EntryKind, ObjectStore, TreeEntries, TreeEntry, TreeId},
     snapshot::{content_addressed_snapshot_id, Snapshot, SnapshotId, SnapshotStore},
 };
@@ -20,7 +21,7 @@ pub struct SnapshotEngine<L: AgentLog, S: SnapshotStore, O: ObjectStore> {
     compact_on_snapshot: bool,
 }
 
-impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
+impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEngine<L, S, O> {
     pub fn new(log: L, snapshot_store: S, object_store: O) -> Self {
         SnapshotEngine {
             log,
@@ -55,7 +56,37 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
         author: &str,
         message: &str,
     ) -> Result<Snapshot> {
-        let tree = if let Some(parent_id) = parent_ids.first() {
+        let tree = if parent_ids.len() > 1 {
+            let first_parent = self.snapshot_store.get(&parent_ids[0]).await?;
+            let first_tree = self
+                .object_store
+                .get_tree(&crate::object::TreeId(first_parent.tree_hash))
+                .await?;
+            let mut merged_tree = first_tree;
+            for extra_parent_id in &parent_ids[1..] {
+                let extra_parent = self.snapshot_store.get(extra_parent_id).await?;
+                let extra_tree = self
+                    .object_store
+                    .get_tree(&crate::object::TreeId(extra_parent.tree_hash))
+                    .await?;
+                let merge_result = merge::merge_trees_recursive(
+                    merged_tree.clone(),
+                    merged_tree.clone(),
+                    extra_tree,
+                    self.object_store.clone(),
+                    &ConflictResolution::Theirs,
+                )
+                .await?;
+                merged_tree = merge_result.into_tree_entries(&ConflictResolution::Theirs);
+            }
+            let entries = if since_seq > 0 {
+                self.log.read_since(since_seq).await?
+            } else {
+                self.log.read_all().await?
+            };
+            self.build_tree_from_entries_with_base(&merged_tree.0, &entries)
+                .await?
+        } else if let Some(parent_id) = parent_ids.first() {
             let parent = self.snapshot_store.get(parent_id).await?;
             let parent_tree = self
                 .object_store
@@ -171,12 +202,13 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
             let mut roots: Vec<TreeEntry> = Vec::new();
             let mut dirs: BTreeMap<String, Vec<(String, TreeEntry)>> = BTreeMap::new();
 
-            for (path, mut entry) in current {
+            for (path, entry) in current {
                 if let Some((dir, rest)) = path.split_once('/') {
-                    entry.name = rest.to_string();
+                    let mut child = entry.clone();
+                    child.name = rest.to_string();
                     dirs.entry(dir.to_string())
                         .or_default()
-                        .push((rest.to_string(), entry));
+                        .push((rest.to_string(), child));
                 } else {
                     roots.push(entry);
                 }
@@ -196,7 +228,7 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
                     .collect();
 
                 if !deep.is_empty() {
-                    worklist.push(children.clone());
+                    worklist.push(deep.clone());
                 }
 
                 let mut entries: Vec<TreeEntry> = leaf.into_iter().map(|(_, e)| e).collect();
