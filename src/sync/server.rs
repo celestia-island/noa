@@ -235,7 +235,6 @@ impl SyncServer {
 
                 let mut sessions = authenticated_sessions.lock().await;
                 sessions.insert(resp.workspace_id.clone(), Instant::now());
-                drop(sessions);
 
                 Ok(JsonRpcMessage::response(id, serde_json::to_value(resp)?))
             }
