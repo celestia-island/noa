@@ -249,41 +249,13 @@ impl Repository {
 
     pub fn init_for_sync(path: &Path) -> Result<SyncInitResult> {
         let noa_dir = path.join(NOA_DIR_NAME);
-        let mut noa_initialized = false;
-        let mut gitignore_updated = false;
 
-        if !noa_dir.exists() {
-            std::fs::create_dir_all(&noa_dir)?;
-            std::fs::create_dir_all(noa_dir.join(AGENT_LOGS_DIR))?;
-
-            let config = RepoConfig::default();
-            config.save_to_dir(&noa_dir)?;
-
-            std::fs::write(noa_dir.join(HEAD_FILE), "default\n")?;
-
-            let db = Self::open_db(&noa_dir)?;
-            Self::init_tables(&db)?;
-
-            let db = Arc::new(db);
-            Self::create_default_workspace(&db)?;
-
-            noa_initialized = true;
-        }
-
-        let gitignore_path = path.join(".gitignore");
-        if gitignore_path.exists() {
-            let content = std::fs::read_to_string(&gitignore_path)?;
-            let has_noa = content
-                .lines()
-                .any(|l| l.trim() == ".noa/" || l.trim() == ".noa");
-            if !has_noa {
-                manage_gitignore(path)?;
-                gitignore_updated = true;
-            }
+        let noa_initialized = if !noa_dir.exists() {
+            Self::init_inner(path, RepoConfig::default(), |_p, _c| Ok(()))?;
+            true
         } else {
-            manage_gitignore(path)?;
-            gitignore_updated = true;
-        }
+            false
+        };
 
         let current_branch = get_current_git_branch(path)?;
 
@@ -291,7 +263,7 @@ impl Repository {
             repo_id: format!("{}:{}", "sync", path.display()),
             current_branch,
             noa_initialized,
-            gitignore_updated,
+            gitignore_updated: false,
         })
     }
 }

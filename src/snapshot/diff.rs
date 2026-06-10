@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::object::{EntryKind, ObjectStore, TreeId};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DiffKind {
     Added,
     Modified,
@@ -174,7 +174,7 @@ async fn diff_tree_entries_inner<O: ObjectStore>(
                 } else {
                     diffs.push(FileDiff {
                         path: child_path,
-                        kind: kind.clone(),
+                        kind,
                     });
                 }
             }

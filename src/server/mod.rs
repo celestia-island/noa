@@ -37,13 +37,19 @@ impl RateLimiter {
         }
     }
 
+    fn is_expired(entry: &RateLimitEntry, window: Duration) -> bool {
+        Instant::now().duration_since(entry.window_start) > window * 2
+    }
+
     pub async fn check(&self, key: &str) -> bool {
         let mut entries = self.entries.lock().await;
         let now = Instant::now();
         let window = Duration::from_secs(self.window_secs);
 
         if entries.len() > 10000 {
-            cleanup_rate_limiter(&mut entries, window);
+            entries.retain(|_, entry| !Self::is_expired(entry, window));
+        } else if entries.len() % 100 == 0 && !entries.is_empty() {
+            entries.retain(|_, entry| !Self::is_expired(entry, window));
         }
 
         let entry = entries.entry(key.to_string()).or_insert(RateLimitEntry {
@@ -59,11 +65,6 @@ impl RateLimiter {
         entry.count += 1;
         entry.count <= self.max_requests
     }
-}
-
-fn cleanup_rate_limiter(entries: &mut HashMap<String, RateLimitEntry>, window: Duration) {
-    let now = Instant::now();
-    entries.retain(|_, entry| now.duration_since(entry.window_start) <= window * 2);
 }
 
 async fn auth_middleware(
@@ -120,9 +121,9 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
         let x = a.get(i).copied().unwrap_or(0);
         let y = b.get(i).copied().unwrap_or(0);
         result |= x ^ y;
+        std::hint::black_box(result);
     }
     let ok = result.wrapping_sub(1) >> 7;
-    std::hint::black_box(ok);
     ok == 1
 }
 

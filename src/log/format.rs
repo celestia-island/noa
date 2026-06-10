@@ -7,9 +7,6 @@ pub fn serialize_entry(entry: &LogEntry) -> Result<String> {
 
 pub fn deserialize_entry(line: &str) -> Result<LogEntry> {
     let trimmed = line.trim();
-    if trimmed.is_empty() {
-        anyhow::bail!("empty log line");
-    }
     Ok(serde_json::from_str::<LogEntry>(trimmed)?)
 }
 

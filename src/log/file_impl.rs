@@ -125,7 +125,6 @@ impl AgentLog for FileAgentLog {
         record.push(b'\n');
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || {
-            use std::io::Write;
             let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
             file.write_all(&record)?;
             file.sync_all()?;

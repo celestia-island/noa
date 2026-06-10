@@ -254,8 +254,9 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
             layers.push((roots, subdirs));
         }
 
-        // Phase 2: rebuild bottom-up, matching resolved entries by position so that
+        // Phase 2: rebuild bottom-up, drain resolved into a name-indexed map so that
         // sibling directories with same-named children each get the correct sub-tree.
+        // Uses a HashMap for O(1) lookup + O(1) pop instead of O(n) position() + O(n) remove().
         let mut resolved: Vec<(String, TreeEntry)> = Vec::new();
 
         for (roots, subdirs) in layers.into_iter().rev() {
@@ -265,14 +266,29 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                 level_map.insert(entry.name.clone(), entry);
             }
 
+            let mut resolved_by_name: std::collections::HashMap<String, Vec<TreeEntry>> =
+                std::collections::HashMap::new();
+            for (_, entry) in std::mem::take(&mut resolved) {
+                resolved_by_name
+                    .entry(entry.name.clone())
+                    .or_default()
+                    .push(entry);
+            }
+
             for (dir_name, children) in subdirs {
                 let mut sub_entries = Vec::new();
                 for entry in children {
                     if entry.kind == EntryKind::Tree && entry.id.is_empty() {
-                        if let Some(pos) = resolved.iter().position(|(_, re)| re.name == entry.name)
-                        {
-                            let (_, resolved_entry) = resolved.remove(pos);
-                            sub_entries.push(resolved_entry);
+                        if let Some(entries) = resolved_by_name.get_mut(&entry.name) {
+                            if let Some(resolved_entry) = entries.pop() {
+                                sub_entries.push(resolved_entry);
+                            } else {
+                                tracing::warn!(
+                                    "unresolved subdirectory placeholder: {} in {}",
+                                    entry.name,
+                                    dir_name
+                                );
+                            }
                         } else {
                             tracing::warn!(
                                 "unresolved subdirectory placeholder: {} in {}",
@@ -280,11 +296,12 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                                 dir_name
                             );
                         }
-                    } else if let Some(pos) =
-                        resolved.iter().position(|(_, re)| re.name == entry.name)
-                    {
-                        let (_, resolved_entry) = resolved.remove(pos);
-                        sub_entries.push(resolved_entry);
+                    } else if let Some(entries) = resolved_by_name.get_mut(&entry.name) {
+                        if let Some(resolved_entry) = entries.pop() {
+                            sub_entries.push(resolved_entry);
+                        } else {
+                            sub_entries.push(entry);
+                        }
                     } else {
                         sub_entries.push(entry);
                     }
@@ -301,8 +318,12 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                 );
             }
 
+            let remaining: Vec<(String, TreeEntry)> = resolved_by_name
+                .into_values()
+                .flat_map(|entries| entries.into_iter().map(|e| (e.name.clone(), e)))
+                .collect();
             let mut new_resolved: Vec<(String, TreeEntry)> = level_map.into_iter().collect();
-            new_resolved.append(&mut resolved);
+            new_resolved.extend(remaining);
             resolved = new_resolved;
         }
 
