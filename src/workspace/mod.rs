@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use redb::ReadableTable;
 
-use crate::{error::Result, snapshot::SnapshotId};
+use crate::{error::{NoaError, Result}, snapshot::SnapshotId};
 
 pub fn validate_workspace_name(name: &str) -> Result<()> {
     if name.is_empty() {
@@ -68,7 +68,7 @@ impl WorkspaceManager {
                 let mut table = txn.open_table(WORKSPACES)?;
                 let exists = table.get(ws.name.as_str())?.is_some();
                 if exists {
-                    anyhow::bail!("workspace already exists: {}", ws.name);
+                    return Err(NoaError::WorkspaceAlreadyExists { name: ws.name }.into());
                 }
                 table.insert(ws.name.as_str(), data.as_slice())?;
             }
@@ -155,7 +155,7 @@ impl WorkspaceManager {
                 let ws_slice = {
                     let guard = table
                         .get(name.as_str())?
-                        .ok_or_else(|| anyhow::anyhow!("workspace not found: {name}"))?;
+                        .ok_or_else(|| NoaError::WorkspaceNotFound { name: name.clone() })?;
                     guard.value().to_vec()
                 };
                 let mut ws: Workspace = rmp_serde::from_slice(&ws_slice)?;
@@ -187,7 +187,7 @@ impl WorkspaceManager {
                 let ws_slice = {
                     let guard = table
                         .get(name.as_str())?
-                        .ok_or_else(|| anyhow::anyhow!("workspace not found: {name}"))?;
+                        .ok_or_else(|| NoaError::WorkspaceNotFound { name: name.clone() })?;
                     guard.value().to_vec()
                 };
                 let mut ws: Workspace = rmp_serde::from_slice(&ws_slice)?;

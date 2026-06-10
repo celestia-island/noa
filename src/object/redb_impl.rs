@@ -3,7 +3,7 @@ use std::sync::Arc;
 use redb::Database;
 
 use super::{sha256_hex, BlobId, ObjectStore, TreeEntries, TreeId};
-use crate::error::Result;
+use crate::error::{NoaError, Result};
 
 const BLOBS: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new("blobs");
 const TREES: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new("trees");
@@ -56,7 +56,7 @@ impl ObjectStore for RedbObjectStore {
             let table = txn.open_table(BLOBS)?;
             match table.get(id.as_bytes())? {
                 Some(guard) => Ok(guard.value().to_vec()),
-                None => anyhow::bail!("object not found: {id}"),
+                None => Err(NoaError::ObjectNotFound { id: id.0 }.into()),
             }
         })
         .await?
@@ -98,7 +98,7 @@ impl ObjectStore for RedbObjectStore {
             let table = txn.open_table(TREES)?;
             match table.get(id.as_bytes())? {
                 Some(guard) => Ok(rmp_serde::from_slice::<TreeEntries>(guard.value())?),
-                None => anyhow::bail!("object not found: {}", id),
+                None => Err(NoaError::ObjectNotFound { id: id.0 }.into()),
             }
         })
         .await?

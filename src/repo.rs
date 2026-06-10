@@ -7,7 +7,7 @@ use anyhow::Context;
 use redb::Database;
 
 use crate::{
-    config::RepoConfig, error::Result, log::FileAgentLog, object::RedbObjectStore,
+    config::RepoConfig, error::{NoaError, Result}, log::FileAgentLog, object::RedbObjectStore,
     refs::RedbRefStore, snapshot::RedbSnapshotStore, workspace::WorkspaceManager,
 };
 
@@ -63,7 +63,7 @@ impl Repository {
         let noa_dir = path.join(NOA_DIR_NAME);
 
         if noa_dir.exists() {
-            anyhow::bail!("repository already exists at {}", noa_dir.display());
+            return Err(NoaError::RepositoryAlreadyExists { path: noa_dir.display().to_string() }.into());
         }
 
         std::fs::create_dir_all(&noa_dir)?;
@@ -95,7 +95,7 @@ impl Repository {
         let noa_dir = path.join(NOA_DIR_NAME);
 
         if !noa_dir.exists() {
-            anyhow::bail!("repository not found at {}", noa_dir.display());
+            return Err(NoaError::RepositoryNotFound { path: noa_dir.display().to_string() }.into());
         }
 
         Self::validate(&noa_dir)?;
@@ -120,7 +120,7 @@ impl Repository {
             }
             match current.parent() {
                 Some(parent) => current = parent.to_path_buf(),
-                None => anyhow::bail!("repository not found: reached filesystem root"),
+                None => return Err(NoaError::RepositoryNotFound { path: from.display().to_string() }.into()),
             }
         }
     }

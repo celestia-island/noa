@@ -3,7 +3,7 @@ use std::sync::Arc;
 use redb::{Database, ReadableTable};
 
 use super::{Snapshot, SnapshotId, SnapshotStore};
-use crate::error::Result;
+use crate::error::{NoaError, Result};
 
 const SNAPSHOTS: redb::TableDefinition<&str, &[u8]> = redb::TableDefinition::new("snapshots");
 const PARENT_INDEX: redb::TableDefinition<&str, &str> =
@@ -45,7 +45,7 @@ impl SnapshotStore for RedbSnapshotStore {
 
             match table.get(id.as_str())? {
                 Some(guard) => Ok(rmp_serde::from_slice::<Snapshot>(guard.value())?),
-                None => anyhow::bail!("snapshot not found: {}", id),
+                None => Err(NoaError::SnapshotNotFound { id: id.0 }.into()),
             }
         })
         .await?
