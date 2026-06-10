@@ -103,7 +103,9 @@ pub async fn run_resolve(
         return Ok(());
     }
 
-    let latest_merge = merge_entries.last().unwrap();
+    let latest_merge = merge_entries
+        .last()
+        .expect("merge_entries guaranteed non-empty after is_empty check");
 
     let snap_store = repo.snapshot_store()?;
     let obj_store = repo.object_store()?;
