@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use redb::ReadableTable;
 
-use crate::{,
+use crate::{
+    error::Result,
     snapshot::SnapshotId,
 };
 
