@@ -80,7 +80,7 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore> SnapshotEngine<L, S, O> {
 
         let timestamp = crate::now_micros();
 
-        let id = content_addressed_snapshot_id(&tree_id.0, &parent_ids, workspace);
+        let id = content_addressed_snapshot_id(&tree_id.0, &parent_ids, workspace, author, message);
 
         let snapshot = Snapshot {
             id,

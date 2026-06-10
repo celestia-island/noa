@@ -53,7 +53,7 @@ pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Resul
     let time = commit.time()?;
 
     let snapshot = Snapshot {
-        id: content_addressed_snapshot_id(&noa_tree_id.0, &[], "default"),
+        id: content_addressed_snapshot_id(&noa_tree_id.0, &[], "default", &author, &message),
         tree_hash: noa_tree_id.0,
         parents: vec![],
         workspace: "default".to_string(),

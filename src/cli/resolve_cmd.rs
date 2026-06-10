@@ -240,10 +240,14 @@ pub async fn run_resolve(
         .or_else(|| latest_merge.path.clone())
         .unwrap_or_default();
 
+    let author = "noa-resolve".to_string();
+    let message = format!("resolve conflicts with strategy '{strategy}'");
     let new_snap_id = content_addressed_snapshot_id(
         &new_tree_id.0,
         std::slice::from_ref(&merge_snap.id),
         &current,
+        &author,
+        &message,
     );
 
     let resolved_snapshot = crate::snapshot::Snapshot {
@@ -251,9 +255,9 @@ pub async fn run_resolve(
         tree_hash: new_tree_id.0,
         parents: vec![merge_snap.id.clone()],
         workspace: current.clone(),
-        author: "noa-resolve".to_string(),
+        author,
         timestamp: now,
-        message: format!("resolve conflicts with strategy '{strategy}'"),
+        message,
     };
     snap_store.store(&resolved_snapshot).await?;
     ws_mgr.update_head(&current, &resolved_snapshot.id).await?;

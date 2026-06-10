@@ -44,6 +44,8 @@ pub fn content_addressed_snapshot_id(
     tree_hash: &str,
     parent_ids: &[SnapshotId],
     workspace: &str,
+    author: &str,
+    message: &str,
 ) -> SnapshotId {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -52,9 +54,11 @@ pub fn content_addressed_snapshot_id(
         hasher.update(p.0.as_bytes());
     }
     hasher.update(workspace.as_bytes());
+    hasher.update(author.as_bytes());
+    hasher.update(message.as_bytes());
     let hash = hasher.finalize();
     let hex_str = hex::encode(hash);
-    SnapshotId(format!("noa_{}", &hex_str[..32]))
+    SnapshotId(format!("noa_{hex_str}"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -211,9 +211,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_content_addressed_snapshot_id_format() {
-        let id = content_addressed_snapshot_id("treehash", &[], "workspace");
+        let id = content_addressed_snapshot_id("treehash", &[], "workspace", "author", "msg");
         assert!(id.0.starts_with("noa_"));
-        assert_eq!(id.0.len(), 36);
+        assert_eq!(id.0.len(), 68);
     }
 
     #[tokio::test]

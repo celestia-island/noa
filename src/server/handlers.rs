@@ -361,6 +361,8 @@ pub async fn create_snapshot(
         &body.snapshot.tree_hash,
         &body.snapshot.parents,
         &body.snapshot.workspace,
+        &body.snapshot.author,
+        &body.snapshot.message,
     );
     if body.snapshot.id != expected_id {
         return Err((
