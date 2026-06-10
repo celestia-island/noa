@@ -121,7 +121,7 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
         let y = b.get(i).copied().unwrap_or(0);
         result |= x ^ y;
     }
-    let ok = (result ^ 0).wrapping_sub(1) >> 7;
+    let ok = result.wrapping_sub(1) >> 7;
     std::hint::black_box(ok);
     ok == 1
 }

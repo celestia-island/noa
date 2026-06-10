@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     path::{Component, PathBuf},
 };
 
@@ -62,7 +62,7 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                 .object_store
                 .get_tree(&crate::object::TreeId(first_parent.tree_hash))
                 .await?;
-            let mut merged_tree = first_tree;
+            let mut merged_tree = first_tree.clone();
             for extra_parent_id in &parent_ids[1..] {
                 let extra_parent = self.snapshot_store.get(extra_parent_id).await?;
                 let extra_tree = self
@@ -70,8 +70,8 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                     .get_tree(&crate::object::TreeId(extra_parent.tree_hash))
                     .await?;
                 let merge_result = merge::merge_trees_recursive(
-                    merged_tree.clone(),
-                    merged_tree.clone(),
+                    first_tree.clone(),
+                    merged_tree,
                     extra_tree,
                     self.object_store.clone(),
                     &ConflictResolution::Theirs,
@@ -184,21 +184,26 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
     }
 
     /// Build a hierarchical tree from a flat map.
-    /// Decomposes into layers by depth, then rebuilds bottom-up, storing sub-trees.
-    /// Avoids async recursion by using a worklist.
+    /// Decomposes into layers by depth (top-down), then rebuilds bottom-up, storing sub-trees.
+    /// Uses a FIFO worklist during decomposition to ensure sibling directories at the same
+    /// depth are processed in order, and a position-based resolved list during assembly
+    /// so that sibling directories with same-named children do not collide.
     async fn build_hierarchical_tree(
         &self,
         flat_map: &BTreeMap<String, TreeEntry>,
     ) -> Result<TreeEntries> {
         type LayerEntry = (Vec<TreeEntry>, Vec<(String, Vec<TreeEntry>)>);
-        // Phase 1: decompose into layers (top-down)
+        // Phase 1: decompose into layers (top-down, FIFO order)
         let mut layers: Vec<LayerEntry> = Vec::new();
-        let mut worklist: Vec<Vec<(String, TreeEntry)>> = vec![flat_map
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect()];
+        let mut work_queue: VecDeque<Vec<(String, TreeEntry)>> = VecDeque::new();
+        work_queue.push_back(
+            flat_map
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        );
 
-        while let Some(current) = worklist.pop() {
+        while let Some(current) = work_queue.pop_front() {
             let mut roots: Vec<TreeEntry> = Vec::new();
             let mut dirs: BTreeMap<String, Vec<(String, TreeEntry)>> = BTreeMap::new();
 
@@ -228,7 +233,7 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                     .collect();
 
                 if !deep.is_empty() {
-                    worklist.push(deep.clone());
+                    work_queue.push_back(deep.clone());
                 }
 
                 let mut entries: Vec<TreeEntry> = leaf.into_iter().map(|(_, e)| e).collect();
@@ -249,8 +254,9 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
             layers.push((roots, subdirs));
         }
 
-        // Phase 2: rebuild bottom-up, storing sub-trees
-        let mut resolved: BTreeMap<String, TreeEntry> = BTreeMap::new();
+        // Phase 2: rebuild bottom-up, matching resolved entries by position so that
+        // sibling directories with same-named children each get the correct sub-tree.
+        let mut resolved: Vec<(String, TreeEntry)> = Vec::new();
 
         for (roots, subdirs) in layers.into_iter().rev() {
             let mut level_map = BTreeMap::new();
@@ -263,7 +269,9 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                 let mut sub_entries = Vec::new();
                 for entry in children {
                     if entry.kind == EntryKind::Tree && entry.id.is_empty() {
-                        if let Some(resolved_entry) = resolved.remove(&entry.name) {
+                        if let Some(pos) = resolved.iter().position(|(_, re)| re.name == entry.name)
+                        {
+                            let (_, resolved_entry) = resolved.remove(pos);
                             sub_entries.push(resolved_entry);
                         } else {
                             tracing::warn!(
@@ -272,7 +280,10 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                                 dir_name
                             );
                         }
-                    } else if let Some(resolved_entry) = resolved.remove(&entry.name) {
+                    } else if let Some(pos) =
+                        resolved.iter().position(|(_, re)| re.name == entry.name)
+                    {
+                        let (_, resolved_entry) = resolved.remove(pos);
                         sub_entries.push(resolved_entry);
                     } else {
                         sub_entries.push(entry);
@@ -290,10 +301,12 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                 );
             }
 
-            resolved = level_map;
+            let mut new_resolved: Vec<(String, TreeEntry)> = level_map.into_iter().collect();
+            new_resolved.append(&mut resolved);
+            resolved = new_resolved;
         }
 
-        Ok(TreeEntries(resolved.into_values().collect()))
+        Ok(TreeEntries(resolved.into_iter().map(|(_, v)| v).collect()))
     }
 
     async fn build_tree_from_entries_with_base(
@@ -1085,5 +1098,64 @@ mod tests {
         assert_eq!(d_entry.id, "h1");
         let e_entry = c_tree.0.iter().find(|e| e.name == "e.rs").unwrap();
         assert_eq!(e_entry.id, "h2");
+    }
+
+    #[tokio::test]
+    async fn test_sibling_dirs_with_same_named_children() {
+        // Regression test: sibling directories with same-named children must
+        // each produce independent sub-trees instead of colliding in the
+        // hierarchical tree builder.
+        let (_tmp, engine) = make_engine().await;
+        engine
+            .log
+            .append(&write_entry(1, "src/a/main.rs", "hash_a", 100))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&write_entry(2, "src/b/main.rs", "hash_b", 200))
+            .await
+            .unwrap();
+
+        let snap = engine
+            .compute("default", vec![], 0, "test", "sibling same-name")
+            .await
+            .unwrap();
+        let tree = engine
+            .object_store
+            .get_tree(&crate::object::TreeId(snap.tree_hash))
+            .await
+            .unwrap();
+        assert_eq!(tree.0.len(), 1);
+        assert_eq!(tree.0[0].name, "src");
+
+        let src_tree = engine
+            .object_store
+            .get_tree(&TreeId(tree.0[0].id.clone()))
+            .await
+            .unwrap();
+        assert_eq!(src_tree.0.len(), 2);
+
+        let a_entry = src_tree.0.iter().find(|e| e.name == "a").unwrap();
+        let b_entry = src_tree.0.iter().find(|e| e.name == "b").unwrap();
+        assert_eq!(a_entry.kind, crate::object::EntryKind::Tree);
+        assert_eq!(b_entry.kind, crate::object::EntryKind::Tree);
+
+        let a_tree = engine
+            .object_store
+            .get_tree(&TreeId(a_entry.id.clone()))
+            .await
+            .unwrap();
+        let b_tree = engine
+            .object_store
+            .get_tree(&TreeId(b_entry.id.clone()))
+            .await
+            .unwrap();
+        assert_eq!(a_tree.0.len(), 1);
+        assert_eq!(a_tree.0[0].name, "main.rs");
+        assert_eq!(a_tree.0[0].id, "hash_a");
+        assert_eq!(b_tree.0.len(), 1);
+        assert_eq!(b_tree.0[0].name, "main.rs");
+        assert_eq!(b_tree.0[0].id, "hash_b");
     }
 }
