@@ -5,7 +5,7 @@ mod redb_impl;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-pub use diff::{diff_snapshots, DiffKind, FileDiff};
+pub use diff::{diff_snapshots, diff_snapshots_recursive, DiffKind, FileDiff};
 pub use engine::SnapshotEngine;
 pub use redb_impl::RedbSnapshotStore;
 

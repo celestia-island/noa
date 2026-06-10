@@ -81,8 +81,8 @@ impl MergeOutput {
             .filter_map(|entry| match entry {
                 MergedEntry::Clean(e) => Some(e.clone()),
                 MergedEntry::Conflict { ours, theirs, .. } => match resolution {
-                    ConflictResolution::Ours => ours.clone(),
-                    ConflictResolution::Theirs => theirs.clone(),
+                    ConflictResolution::Ours => ours.clone().or_else(|| theirs.clone()),
+                    ConflictResolution::Theirs => theirs.clone().or_else(|| ours.clone()),
                 },
             })
             .collect()
