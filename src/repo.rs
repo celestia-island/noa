@@ -161,9 +161,7 @@ impl Repository {
 
     fn open_db(noa_dir: &Path) -> Result<Database> {
         let db_path = noa_dir.join(DB_NAME);
-        let mut db = Database::builder().create(&db_path)?;
-        db.check_integrity()
-            .map_err(|e| anyhow::anyhow!(format!("database integrity check failed: {e}")))?;
+        let db = Database::builder().create(&db_path)?;
         Ok(db)
     }
 

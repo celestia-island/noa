@@ -80,6 +80,57 @@ impl MinioObjectStore {
                     }
                 }
             }
+        } else {
+            use std::net::ToSocketAddrs;
+            let resolved = format!("{host}:443").to_socket_addrs();
+            match resolved {
+                Ok(addrs) => {
+                    for addr in addrs {
+                        let ip = addr.ip();
+                        match ip {
+                            std::net::IpAddr::V4(v4) => {
+                                if v4.is_loopback()
+                                    || v4.is_link_local()
+                                    || v4.is_broadcast()
+                                    || v4.is_multicast()
+                                {
+                                    anyhow::bail!("endpoint resolves to forbidden IP: {ip}");
+                                }
+                                if !allow_private {
+                                    let octets = v4.octets();
+                                    if octets[0] == 10
+                                        || (octets[0] == 172
+                                            && octets[1] >= 16
+                                            && octets[1] <= 31)
+                                        || (octets[0] == 192 && octets[1] == 168)
+                                    {
+                                        anyhow::bail!(
+                                            "endpoint resolves to private IP: {ip}"
+                                        );
+                                    }
+                                }
+                            }
+                            std::net::IpAddr::V6(v6) => {
+                                if v6.is_loopback() || v6.is_multicast() {
+                                    anyhow::bail!(
+                                        "endpoint resolves to forbidden IPv6: {ip}"
+                                    );
+                                }
+                                if !allow_private
+                                    && (v6.octets()[0] == 0xfc || v6.octets()[0] == 0xfd)
+                                {
+                                    anyhow::bail!(
+                                        "endpoint resolves to forbidden IPv6: {ip}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    tracing::warn!("could not resolve endpoint host for SSRF check: {host}");
+                }
+            }
         }
         Ok(())
     }

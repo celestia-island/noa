@@ -12,6 +12,22 @@ use crate::{
 };
 use anyhow::Context;
 
+fn get_git_email(repo_root: &Path) -> String {
+    std::process::Command::new("git")
+        .args(["config", "user.email"])
+        .current_dir(repo_root)
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "noa@noa.local".to_string())
+}
+
 fn is_safe_relative_path(path: &str) -> bool {
     let pb = PathBuf::from(path);
     for comp in pb.components() {
@@ -209,13 +225,14 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
             "[noa export] snapshot {} from workspace {}",
             snapshot.id, snapshot.workspace
         );
+        let git_email = get_git_email(repo_root);
         Command::new("git")
             .args(["commit", "-m", &msg])
             .current_dir(repo_root)
             .env("GIT_AUTHOR_NAME", &snapshot.author)
-            .env("GIT_AUTHOR_EMAIL", "noa@noa.local")
+            .env("GIT_AUTHOR_EMAIL", &git_email)
             .env("GIT_COMMITTER_NAME", &snapshot.author)
-            .env("GIT_COMMITTER_EMAIL", "noa@noa.local")
+            .env("GIT_COMMITTER_EMAIL", &git_email)
             .status()
             .with_context(|| "git commit failed")?;
     }

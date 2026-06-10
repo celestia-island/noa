@@ -1,10 +1,3 @@
-#[macro_export]
-macro_rules! redb_err {
-    ($result:expr) => {
-        $result
-    };
-}
-
 pub use anyhow::Result;
 
 pub fn is_eof_error(e: &anyhow::Error) -> bool {

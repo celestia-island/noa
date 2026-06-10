@@ -93,19 +93,20 @@ pub fn handle_auth_request(
     workspace_root: &Path,
     selection: &BranchSelection,
     _suggested_branch: &str,
+    branch_prefix: &str,
 ) -> Result<NoaAuthResponse> {
     let base_branch = get_current_git_branch(workspace_root)?;
 
     let selected_branch = match selection {
         BranchSelection::NewSession(session_id) => {
             validate_git_ref_component(session_id)?;
-            let name = format!("entelecheia/agent-{session_id}");
+            let name = format!("{branch_prefix}{session_id}");
             create_git_branch(workspace_root, &name, &base_branch)?;
             name
         }
         BranchSelection::NewTask(task_name) => {
             validate_git_ref_component(task_name)?;
-            let name = format!("entelecheia/agent-{task_name}");
+            let name = format!("{branch_prefix}{task_name}");
             create_git_branch(workspace_root, &name, &base_branch)?;
             name
         }
@@ -356,6 +357,7 @@ mod tests {
             tmp.path(),
             &BranchSelection::NewSession("sess-123".to_string()),
             "entelecheia/agent-sess-123",
+            "entelecheia/agent-",
         )
         .unwrap();
         assert_eq!(resp.selected_branch, "entelecheia/agent-sess-123");
@@ -367,7 +369,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         init_git_repo(tmp.path());
         let current = get_current_git_branch(tmp.path()).unwrap();
-        let resp = handle_auth_request(tmp.path(), &BranchSelection::Current, "").unwrap();
+        let resp = handle_auth_request(tmp.path(), &BranchSelection::Current, "", "entelecheia/agent-").unwrap();
         assert_eq!(resp.selected_branch, current);
     }
 

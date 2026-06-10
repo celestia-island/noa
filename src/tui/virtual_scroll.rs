@@ -11,7 +11,7 @@ impl VirtualScroll {
         Self {
             total_items,
             scroll_offset: 0,
-            visible_height: 0,
+            visible_height: 20,
         }
     }
 

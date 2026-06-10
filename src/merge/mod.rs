@@ -151,6 +151,7 @@ pub async fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
     ours: TreeEntries,
     theirs: TreeEntries,
     object_store: O,
+    resolution: &ConflictResolution,
 ) -> Result<MergeResult> {
     let base_map: std::collections::HashMap<String, TreeEntry> =
         base.0.into_iter().map(|e| (e.name.clone(), e)).collect();
@@ -190,6 +191,7 @@ pub async fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
                     ours_sub,
                     theirs_sub,
                     object_store.clone(),
+                    resolution,
                 ))
                 .await?;
                 if sub_result.has_conflicts() {
@@ -205,7 +207,7 @@ pub async fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
                 } else {
                     let merged_tree = sub_result
                         .output
-                        .resolve_with_strategy(&ConflictResolution::Ours);
+                        .resolve_with_strategy(resolution);
                     let merged_tree_id = object_store.put_tree(&TreeEntries(merged_tree)).await?;
                     entries.insert(
                         path.clone(),

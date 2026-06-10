@@ -2,6 +2,7 @@ use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     sync::Arc,
+    time::{Duration, Instant},
 };
 use tokio::{net::UnixListener, sync::Mutex};
 
@@ -17,11 +18,12 @@ pub struct SyncServer {
     workspace_root: PathBuf,
     workspace_name: String,
     auth_token: String,
-    authenticated_sessions: Arc<Mutex<std::collections::HashSet<String>>>,
+    authenticated_sessions: Arc<Mutex<std::collections::HashMap<String, Instant>>>,
 }
 
 const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
 const MAX_CONNECTIONS: usize = 32;
+const SESSION_TTL: Duration = Duration::from_secs(3600);
 
 fn is_eof_error(e: &anyhow::Error) -> bool {
     e.downcast_ref::<std::io::Error>()
@@ -42,14 +44,21 @@ impl SyncServer {
     pub fn new(socket_path: &Path, workspace_root: &Path, workspace_name: &str) -> Result<Self> {
         let auth_token = match std::env::var("NOA_SYNC_TOKEN") {
             Ok(token) => token,
-            Err(_) => generate_sync_token()?,
+            Err(_) => {
+                let token = generate_sync_token()?;
+                eprintln!(
+                    "Noa sync server generated token: {token}\n\
+                     Set NOA_SYNC_TOKEN env var to use a fixed token."
+                );
+                token
+            }
         };
         Ok(SyncServer {
             socket_path: socket_path.to_path_buf(),
             workspace_root: workspace_root.to_path_buf(),
             workspace_name: workspace_name.to_string(),
             auth_token,
-            authenticated_sessions: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            authenticated_sessions: Arc::new(Mutex::new(std::collections::HashMap::new())),
         })
     }
 
@@ -120,7 +129,7 @@ impl SyncServer {
         workspace_root: &Path,
         workspace_name: &str,
         auth_token: &str,
-        authenticated_sessions: &Arc<Mutex<std::collections::HashSet<String>>>,
+        authenticated_sessions: &Arc<Mutex<std::collections::HashMap<String, Instant>>>,
     ) -> Result<()> {
         let (reader, writer) = stream.into_split();
         let reader = Arc::new(Mutex::new(reader));
@@ -195,7 +204,7 @@ impl SyncServer {
         workspace_root: &Path,
         workspace_name: &str,
         auth_token: &str,
-        authenticated_sessions: &Arc<Mutex<std::collections::HashSet<String>>>,
+        authenticated_sessions: &Arc<Mutex<std::collections::HashMap<String, Instant>>>,
     ) -> Result<JsonRpcMessage> {
         let id = msg.id.unwrap_or(0);
         let Some(method) = msg.method else {
@@ -211,7 +220,7 @@ impl SyncServer {
                     super::handshake::handle_handshake_request(workspace_root, &req, auth_token)?;
 
                 let mut sessions = authenticated_sessions.lock().await;
-                sessions.insert(resp.workspace_id.clone());
+                sessions.insert(resp.workspace_id.clone(), Instant::now());
                 drop(sessions);
 
                 Ok(JsonRpcMessage::response(id, serde_json::to_value(resp)?))
@@ -220,12 +229,23 @@ impl SyncServer {
                 let req: NoaAuthRequest = serde_json::from_value(params)?;
 
                 {
-                    let sessions = authenticated_sessions.lock().await;
-                    if !sessions.contains(&req.workspace_id) {
+                    let mut sessions = authenticated_sessions.lock().await;
+                    let is_valid = match sessions.get_mut(&req.workspace_id) {
+                        Some(last_seen) if last_seen.elapsed() < SESSION_TTL => {
+                            *last_seen = Instant::now();
+                            true
+                        }
+                        Some(_) => {
+                            sessions.remove(&req.workspace_id);
+                            false
+                        }
+                        None => false,
+                    };
+                    if !is_valid {
                         return Ok(JsonRpcMessage::error_response(
                             id,
                             -32001,
-                            "unauthorized: workspace not authenticated",
+                            "unauthorized: workspace not authenticated or session expired",
                         ));
                     }
                 }
@@ -239,6 +259,7 @@ impl SyncServer {
                     workspace_root,
                     &super::handshake::BranchSelection::Current,
                     &req.suggested_branch,
+                    "entelecheia/agent-",
                 )?;
                 Ok(JsonRpcMessage::response(id, serde_json::to_value(resp)?))
             }
@@ -255,12 +276,23 @@ impl SyncServer {
                 let sync_msg: NoaEventSyncMessage = serde_json::from_value(params)?;
 
                 {
-                    let sessions = authenticated_sessions.lock().await;
-                    if !sessions.contains(&sync_msg.workspace_id) {
+                    let mut sessions = authenticated_sessions.lock().await;
+                    let is_valid = match sessions.get_mut(&sync_msg.workspace_id) {
+                        Some(last_seen) if last_seen.elapsed() < SESSION_TTL => {
+                            *last_seen = Instant::now();
+                            true
+                        }
+                        Some(_) => {
+                            sessions.remove(&sync_msg.workspace_id);
+                            false
+                        }
+                        None => false,
+                    };
+                    if !is_valid {
                         return Ok(JsonRpcMessage::error_response(
                             id,
                             -32001,
-                            "unauthorized: workspace not authenticated",
+                            "unauthorized: workspace not authenticated or session expired",
                         ));
                     }
                 }

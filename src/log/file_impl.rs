@@ -122,7 +122,6 @@ impl AgentLog for FileAgentLog {
             use std::io::Write;
             let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
             file.write_all(&record)?;
-            file.sync_data()?;
             Ok(seq)
         })
         .await?

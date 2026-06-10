@@ -109,9 +109,9 @@ impl EventSyncEngine {
                     tracing::warn!("rejecting path traversal attempt: {}", path);
                     continue;
                 };
-                if let Some(parent) = file_path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
+
+                let workspace_root = self.workspace_root.clone();
+                let from_path_raw = event.from_path.clone();
 
                 match event.op.as_str() {
                     "write" => {
@@ -120,7 +120,14 @@ impl EventSyncEngine {
                             let blob_id = crate::object::BlobId(blob_id.clone());
                             match obj_store.get_blob(&blob_id).await {
                                 Ok(data) => {
-                                    std::fs::write(&file_path, &data)?;
+                                    let fp = file_path.clone();
+                                    tokio::task::spawn_blocking(move || {
+                                        if let Some(parent) = fp.parent() {
+                                            std::fs::create_dir_all(parent)?;
+                                        }
+                                        std::fs::write(&fp, &data)
+                                    })
+                                    .await??;
                                     applied += 1;
                                 }
                                 Err(e) if is_object_not_found(&e) => {
@@ -131,30 +138,41 @@ impl EventSyncEngine {
                         }
                     }
                     "delete" => {
-                        if file_path.exists() {
-                            std::fs::remove_file(&file_path)?;
-                        }
+                        let fp = file_path.clone();
+                        tokio::task::spawn_blocking(move || {
+                            if fp.exists() {
+                                std::fs::remove_file(&fp)?;
+                            }
+                            Ok::<(), anyhow::Error>(())
+                        })
+                        .await??;
                         applied += 1;
                     }
                     "rename" => {
-                        if let Some(from) = &event.from_path {
-                            let Some(from_path) = sanitize_path(&self.workspace_root, from) else {
+                        if let Some(from) = &from_path_raw {
+                            let from_sanitized = sanitize_path(&workspace_root, from);
+                            if let Some(from_path) = from_sanitized {
+                                let fp = file_path.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    if from_path.exists() {
+                                        if let Err(e) = std::fs::rename(&from_path, &fp) {
+                                            if e.raw_os_error() == Some(18) {
+                                                std::fs::copy(&from_path, &fp)?;
+                                                std::fs::remove_file(&from_path)?;
+                                            } else {
+                                                anyhow::bail!(e);
+                                            }
+                                        }
+                                    }
+                                    Ok::<(), anyhow::Error>(())
+                                })
+                                .await??;
+                                applied += 1;
+                            } else {
                                 tracing::warn!(
                                     "rejecting path traversal in rename source: {}",
                                     from
                                 );
-                                continue;
-                            };
-                            if from_path.exists() {
-                                if let Err(e) = std::fs::rename(&from_path, &file_path) {
-                                    if e.raw_os_error() == Some(18) {
-                                        std::fs::copy(&from_path, &file_path)?;
-                                        std::fs::remove_file(&from_path)?;
-                                    } else {
-                                        anyhow::bail!(e);
-                                    }
-                                }
-                                applied += 1;
                             }
                         }
                     }
