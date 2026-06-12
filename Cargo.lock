@@ -4964,6 +4964,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[patch.unused]]
+name = "arona"
+version = "0.1.0"
+
+[[patch.unused]]
 name = "hikari-animation"
 version = "0.2.7"
 
@@ -4982,10 +4986,6 @@ version = "0.2.7"
 [[patch.unused]]
 name = "hikari-theme"
 version = "0.2.7"
-
-[[patch.unused]]
-name = "arona"
-version = "0.1.0"
 
 [[patch.unused]]
 name = "aoba"

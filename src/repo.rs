@@ -535,4 +535,116 @@ mod tests {
         assert!(content.contains("*.bin binary"));
         assert!(content.contains("noa-remote="));
     }
+
+    #[test]
+    fn test_parasitic_mode_functional() {
+        let tmp = TempDir::new().unwrap();
+        let output = std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(tmp.path())
+            .output()
+            .expect("git init failed");
+        assert!(output.status.success(), "git init must succeed");
+        assert!(tmp.path().join(".git").is_dir(), ".git/ must exist");
+
+        {
+            let repo = Repository::init(tmp.path()).unwrap();
+            let expected = tmp.path().join(".git").join("noa");
+            assert_eq!(
+                repo.noa_dir, expected,
+                "parasitic noa dir must be .git/noa/"
+            );
+            assert!(repo.is_parasitic(), "is_parasitic() must return true");
+            assert!(
+                tmp.path().join(".git/noa").exists(),
+                ".git/noa/ must exist on disk"
+            );
+        }
+        assert!(Repository::exists(tmp.path()), "exists() must return true");
+
+        let opened = Repository::open(tmp.path());
+        assert!(
+            opened.is_ok(),
+            "open() must succeed in parasitic mode, got: {:?}",
+            opened.err()
+        );
+        assert!(opened.unwrap().is_parasitic());
+
+        let subdir = tmp.path().join("src").join("deep");
+        std::fs::create_dir_all(&subdir).unwrap();
+        let found = Repository::find(&subdir);
+        assert!(found.is_ok(), "find() from subdir must succeed");
+        assert_eq!(found.unwrap(), tmp.path());
+
+        let gitignore_path = tmp.path().join(".gitignore");
+        if gitignore_path.exists() {
+            let content = std::fs::read_to_string(&gitignore_path).unwrap();
+            assert!(
+                !content.contains(".noa/"),
+                "parasitic mode must NOT add .noa/ to .gitignore, got: {content}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_standalone_mode_functional() {
+        let tmp = TempDir::new().unwrap();
+        assert!(
+            !tmp.path().join(".git").exists(),
+            "must start without .git/"
+        );
+
+        let repo = Repository::init(tmp.path()).unwrap();
+
+        let expected = tmp.path().join(".noa");
+        assert_eq!(
+            repo.noa_dir, expected,
+            "standalone noa dir must be .noa/"
+        );
+        assert!(
+            !repo.is_parasitic(),
+            "is_parasitic() must return false"
+        );
+        assert!(
+            tmp.path().join(".noa").exists(),
+            ".noa/ must exist on disk"
+        );
+
+        let gitignore_path = tmp.path().join(".gitignore");
+        assert!(gitignore_path.exists(), ".gitignore must be created");
+        let content = std::fs::read_to_string(&gitignore_path).unwrap();
+        assert!(
+            content.contains(".noa/"),
+            "standalone mode must add .noa/ to .gitignore"
+        );
+    }
+
+    #[test]
+    fn test_backward_compat_existing_standalone() {
+        let tmp = TempDir::new().unwrap();
+        {
+            Repository::init(tmp.path()).unwrap();
+        }
+        let original_dir = tmp.path().join(".noa");
+        assert!(original_dir.exists(), "pre-existing .noa/ must exist");
+
+        let opened = Repository::open(tmp.path());
+        assert!(
+            opened.is_ok(),
+            "open() must succeed on existing standalone repo"
+        );
+        let opened = opened.unwrap();
+        assert!(!opened.is_parasitic());
+
+        assert!(
+            Repository::exists(tmp.path()),
+            "exists() must return true"
+        );
+
+        let subdir = tmp.path().join("sub");
+        std::fs::create_dir_all(&subdir).unwrap();
+        let found = Repository::find(&subdir);
+        assert!(found.is_ok(), "find() must find existing standalone repo");
+        assert_eq!(found.unwrap(), tmp.path());
+    }
 }
