@@ -186,7 +186,8 @@ async fn test_git_clone_and_push_roundtrip() {
         .unwrap();
 
     assert!(cloned_path.join(".git").exists());
-    assert!(cloned_path.join(".noa").exists());
+    let noa_dir = libnoa::repo::Repository::resolve_noa_dir(&cloned_path);
+    assert!(noa_dir.exists());
     assert!(cloned_path.join("main.rs").exists());
     assert!(cloned_path.join("lib.rs").exists());
 }
@@ -240,11 +241,10 @@ fn test_export_noa_to_git_roundtrip() {
         r#"{{"seq":1,"op":"write","path":"main.rs","blob_id":"{}","ts":{}}}"#,
         blob_id, ts
     );
+    let noa_dir = libnoa::repo::Repository::resolve_noa_dir(&work_path);
+    std::fs::create_dir_all(noa_dir.join("agent-logs")).unwrap();
     std::fs::write(
-        work_path
-            .join(".noa")
-            .join("agent-logs")
-            .join("default.log"),
+        noa_dir.join("agent-logs").join("default.log"),
         &log_entry,
     )
     .unwrap();
