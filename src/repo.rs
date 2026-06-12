@@ -11,8 +11,10 @@ use crate::{
     refs::RedbRefStore, snapshot::RedbSnapshotStore, workspace::WorkspaceManager,
 };
 
-/// Name of the `.noa` directory that lives alongside `.git`.
+/// Name of the `.noa` directory when standalone.
 pub const NOA_DIR_NAME: &str = ".noa";
+/// Sub-path inside `.git/` for parasitic mode.
+pub const NOA_PARASITIC_PATH: &str = ".git/noa";
 /// Filename of the embedded redb database inside `.noa/`.
 pub const DB_NAME: &str = "noa.redb";
 /// Subdirectory holding per-workspace JSONL agent logs.
@@ -34,6 +36,23 @@ pub struct Repository {
 }
 
 impl Repository {
+    /// Resolves the noa directory path for a given workspace root.
+    ///
+    /// In parasitic mode (`.git/` exists), returns `<root>/.git/noa`.
+    /// Otherwise returns `<root>/.noa`.
+    pub fn resolve_noa_dir(root: &Path) -> PathBuf {
+        if root.join(".git").is_dir() {
+            root.join(NOA_PARASITIC_PATH)
+        } else {
+            root.join(NOA_DIR_NAME)
+        }
+    }
+
+    /// Returns true if the noa directory is parasitic (inside `.git/`).
+    #[must_use]
+    pub fn is_parasitic(&self) -> bool {
+        self.noa_dir.starts_with(self.root.join(".git"))
+    }
     /// Initializes a new `.noa/` repository at the given path.
     ///
     /// # Errors
@@ -73,7 +92,7 @@ impl Repository {
     where
         F: FnOnce(&Path, &RepoConfig) -> Result<()>,
     {
-        let noa_dir = path.join(NOA_DIR_NAME);
+        let noa_dir = Self::resolve_noa_dir(path);
 
         if noa_dir.exists() {
             return Err(NoaError::RepositoryAlreadyExists { path: noa_dir.display().to_string() }.into());
@@ -92,16 +111,20 @@ impl Repository {
         let db = Arc::new(db);
         Self::create_default_workspace(&db)?;
 
-        manage_gitignore(path)?;
-
-        extra(path, &config)?;
-
-        Ok(Repository {
+        let repo = Repository {
             root: path.to_path_buf(),
             noa_dir,
             db,
             config,
-        })
+        };
+
+        if !repo.is_parasitic() {
+            manage_gitignore(path)?;
+        }
+
+        extra(path, &repo.config)?;
+
+        Ok(repo)
     }
 
     /// Opens an existing `.noa/` repository at the given path.
@@ -109,7 +132,7 @@ impl Repository {
     /// # Errors
     /// Returns an error if `.noa/` does not exist or is invalid.
     pub fn open(path: &Path) -> Result<Self> {
-        let noa_dir = path.join(NOA_DIR_NAME);
+        let noa_dir = Self::resolve_noa_dir(path);
 
         if !noa_dir.exists() {
             return Err(NoaError::RepositoryNotFound { path: noa_dir.display().to_string() }.into());
@@ -136,7 +159,9 @@ impl Repository {
     pub fn find(from: &Path) -> Result<PathBuf> {
         let mut current = from.to_path_buf();
         loop {
-            if current.join(NOA_DIR_NAME).exists() {
+            let standalone = current.join(NOA_DIR_NAME);
+            let parasitic = current.join(NOA_PARASITIC_PATH);
+            if standalone.exists() || parasitic.exists() {
                 return Ok(current);
             }
             match current.parent() {
@@ -148,7 +173,7 @@ impl Repository {
 
     #[must_use]
     pub fn exists(path: &Path) -> bool {
-        path.join(NOA_DIR_NAME).exists()
+        path.join(NOA_DIR_NAME).exists() || path.join(NOA_PARASITIC_PATH).exists()
     }
 
     fn validate(noa_dir: &Path) -> Result<()> {
@@ -269,7 +294,7 @@ impl Repository {
     }
 
     pub fn init_for_sync(path: &Path) -> Result<SyncInitResult> {
-        let noa_dir = path.join(NOA_DIR_NAME);
+        let noa_dir = Self::resolve_noa_dir(path);
 
         let noa_initialized = if !noa_dir.exists() {
             Self::init_inner(path, RepoConfig::default(), |_p, _c| Ok(()))?;
@@ -340,8 +365,10 @@ pub fn manage_gitignore(root: &Path) -> Result<()> {
 }
 
 pub fn manage_gitattributes(root: &Path, noa_remote_url: &str) -> Result<()> {
+    let noa_dir = Repository::resolve_noa_dir(root);
+    let noa_rel = noa_dir.strip_prefix(root).unwrap_or_else(|_| Path::new(".noa"));
     let gitattributes_path = root.join(".gitattributes");
-    let attr_line = format!("{}/**   noa-remote={}", ".noa", noa_remote_url);
+    let attr_line = format!("{}/**   noa-remote={}", noa_rel.display(), noa_remote_url);
 
     if !gitattributes_path.exists() {
         let content = format!(

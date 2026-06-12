@@ -144,7 +144,8 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
     let ws_mgr = crate::workspace::WorkspaceManager::new(Arc::clone(&db))?;
     let obj_store = crate::object::RedbObjectStore::new(db)?;
 
-    let head_ws = tokio::fs::read_to_string(repo_root.join(".noa").join("HEAD"))
+    let noa_dir = crate::repo::Repository::resolve_noa_dir(&repo_root);
+    let head_ws = tokio::fs::read_to_string(noa_dir.join("HEAD"))
         .await?
         .trim()
         .to_string();

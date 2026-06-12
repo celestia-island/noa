@@ -51,13 +51,14 @@ pub fn handle_handshake_request(
         }
     }
 
-    let noa_dir = workspace_root.join(".noa");
+    let noa_dir = crate::repo::Repository::resolve_noa_dir(workspace_root);
     let mut noa_initialized = false;
     let mut gitignore_updated = false;
 
     if noa_dir.exists() {
+        let is_parasitic = noa_dir.starts_with(workspace_root.join(".git"));
         let gitignore_path = workspace_root.join(".gitignore");
-        if gitignore_path.exists() {
+        if !is_parasitic && gitignore_path.exists() {
             let content = std::fs::read_to_string(&gitignore_path)?;
             let has_noa = content
                 .lines()
@@ -274,7 +275,7 @@ mod tests {
         };
         let resp = handle_handshake_request(tmp.path(), &req, TEST_TOKEN).unwrap();
         assert!(resp.noa_initialized);
-        assert!(tmp.path().join(".noa").exists());
+        assert!(tmp.path().join(".git/noa").exists());
     }
 
     #[test]

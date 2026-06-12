@@ -269,7 +269,7 @@ impl SyncServer {
                     req.suggested_branch
                 );
                 let branch_prefix = crate::config::RepoConfig::load_from_dir(
-                    &workspace_root.join(crate::repo::NOA_DIR_NAME),
+                    &crate::repo::Repository::resolve_noa_dir(workspace_root),
                 )
                 .ok()
                 .and_then(|cfg| cfg.sync)

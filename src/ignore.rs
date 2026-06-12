@@ -73,6 +73,9 @@ impl IgnoreMatcher {
             || path.starts_with(".noa/")
             || path.starts_with(".noa\\")
             || path.starts_with(".noa\u{FEFF}")
+            || path == ".git/noa"
+            || path.starts_with(".git/noa/")
+            || path.starts_with(".git/noa\\")
     }
 
     fn find_gitignore(root: &Path) -> Option<std::path::PathBuf> {
@@ -99,8 +102,7 @@ impl IgnoreMatcher {
                     Some(n) => n.to_string_lossy(),
                     None => continue,
                 };
-                if name == ".git" || name == ".noa" {
-                    continue;
+                if name == ".git" || name == ".noa" {                    continue;
                 }
                 let gi = path.join(".gitignore");
                 if gi.exists() {

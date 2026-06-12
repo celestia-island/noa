@@ -25,7 +25,7 @@ pub fn run(args: &InitArgs) -> Result<()> {
     if Repository::exists(&path) {
         anyhow::bail!(
             "repository already exists at {}",
-            path.join(".noa").display()
+            Repository::resolve_noa_dir(&path).display()
         );
     }
 
