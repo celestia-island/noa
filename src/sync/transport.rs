@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::error::{NoaError, Result};
+use crate::error::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcMessage {
@@ -26,6 +26,7 @@ pub struct JsonRpcError {
 }
 
 impl JsonRpcMessage {
+    #[must_use]
     pub fn request(id: u64, method: &str, params: serde_json::Value) -> Self {
         JsonRpcMessage {
             jsonrpc: "2.0".to_string(),
@@ -37,6 +38,7 @@ impl JsonRpcMessage {
         }
     }
 
+    #[must_use]
     pub fn response(id: u64, result: serde_json::Value) -> Self {
         JsonRpcMessage {
             jsonrpc: "2.0".to_string(),
@@ -48,6 +50,7 @@ impl JsonRpcMessage {
         }
     }
 
+    #[must_use]
     pub fn error_response(id: u64, code: i64, message: &str) -> Self {
         JsonRpcMessage {
             jsonrpc: "2.0".to_string(),
@@ -64,11 +67,11 @@ impl JsonRpcMessage {
     }
 
     pub fn to_json(&self) -> Result<String> {
-        serde_json::to_string(self).map_err(|e| NoaError::Serialization(e.to_string()))
+        Ok(serde_json::to_string(self)?)
     }
 
     pub fn from_json(s: &str) -> Result<Self> {
-        serde_json::from_str(s).map_err(|e| NoaError::Serialization(e.to_string()))
+        Ok(serde_json::from_str::<JsonRpcMessage>(s)?)
     }
 
     pub fn to_frame(&self) -> Result<Vec<u8>> {
@@ -82,14 +85,13 @@ impl JsonRpcMessage {
 
     pub fn from_frame(data: &[u8]) -> Result<Self> {
         if data.len() < 4 {
-            return Err(NoaError::Sync("frame too short".to_string()));
+            anyhow::bail!("frame too short");
         }
         let len = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
         if data.len() < 4 + len {
-            return Err(NoaError::Sync("frame incomplete".to_string()));
+            anyhow::bail!("frame incomplete");
         }
-        let json = std::str::from_utf8(&data[4..4 + len])
-            .map_err(|e| NoaError::Serialization(e.to_string()))?;
+        let json = std::str::from_utf8(&data[4..4 + len])?;
         Self::from_json(json)
     }
 }

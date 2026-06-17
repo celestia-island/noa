@@ -131,8 +131,12 @@ install_from_source() {
     fi
 
     local rust_ver
-    rust_ver=$(rustc --version | grep -oP '\d+\.\d+')
-    if [[ -z "$rust_ver" ]] || [[ "$(printf '%s\n' "1.85" "$rust_ver" | sort -V | head -1)" != "1.85" ]]; then
+    rust_ver=$(rustc --version | grep -oE '[0-9]+\.[0-9]+')
+    if [[ -z "$rust_ver" ]]; then
+        echo "Could not detect Rust version." >&2
+        exit 1
+    fi
+    if [[ "$(printf '%s\n' "1.85" "$rust_ver" | sort -t. -k1,1n -k2,2n | head -1)" != "1.85" ]]; then
         echo "Rust >= 1.85 required. Found: $(rustc --version)" >&2
         echo "Update with: rustup update" >&2
         exit 1
@@ -188,7 +192,7 @@ verify_path() {
 
 # --- Main ---
 echo "╔══════════════════════════════════╗"
-echo "║  noa installer  (v0.1.1-alpha)  ║"
+echo "║  noa installer  (v0.3.0)         ║"
 echo "╚══════════════════════════════════╝"
 echo ""
 

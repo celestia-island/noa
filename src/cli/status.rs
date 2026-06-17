@@ -20,14 +20,14 @@ pub async fn run() -> Result<()> {
         _ => head.clone(),
     };
 
-    println!("On workspace: {}", head_info);
+    println!("On workspace: {head_info}");
 
     let ref_store = repo.ref_store()?;
     let refs = ref_store.list().await?;
     if !refs.is_empty() {
         println!("\nRefs:");
         for (name, id) in refs {
-            println!("  {} -> {}", name, id);
+            println!("  {name} -> {id}");
         }
     }
 

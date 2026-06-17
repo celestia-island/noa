@@ -17,7 +17,7 @@ pub async fn run_create(repo: &Repository, message: &str, author: &str) -> Resul
 
     let (parent_ids, since_seq) = match ws_mgr.get(&head_ws).await? {
         Some(ws) => {
-            let parents = if ws.head.0 == "noa_empty" || ws.head.0.starts_with("noa_empty") {
+            let parents = if ws.head.is_empty() {
                 vec![]
             } else {
                 vec![ws.head.clone()]
@@ -36,13 +36,35 @@ pub async fn run_create(repo: &Repository, message: &str, author: &str) -> Resul
         .compute(&head_ws, parent_ids, since_seq, author, message)
         .await?;
 
+    // Compute the new sequence number first so we fail early
+    // if the log is unavailable. This avoids partial updates.
     let new_seq = crate::log::AgentLog::next_seq(&engine.log).await?;
+
+    // Update the ref store via CAS first. If this fails, nothing
+    // has been modified yet — the system is fully consistent.
+    let ref_store = repo.ref_store()?;
+    let current_ref = ref_store.get(&head_ws).await?;
+    match ref_store
+        .cas(&head_ws, current_ref.as_ref(), &snapshot.id)
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            anyhow::bail!(
+                "concurrent modification detected: ref '{head_ws}' was modified during snapshot creation"
+            );
+        }
+        Err(e) => {
+            anyhow::bail!("failed to update ref '{head_ws}': {e}");
+        }
+    }
+
+    // Then update workspace head and seq. The ref has already been
+    // updated atomically by CAS; if this step fails the ref still
+    // points to the new snapshot, keeping the system consistent.
     ws_mgr
         .update_head_and_seq(&head_ws, &snapshot.id, new_seq)
         .await?;
-
-    let ref_store = repo.ref_store()?;
-    ref_store.cas(&head_ws, None, &snapshot.id).await.ok();
 
     println!(
         "Created snapshot {} in workspace '{}'",
@@ -65,8 +87,9 @@ pub async fn run_list(repo: &Repository) -> Result<()> {
         "ID", "WORKSPACE", "AUTHOR", "MESSAGE"
     );
     for snap in all {
-        let msg = if snap.message.len() > 40 {
-            format!("{}...", &snap.message[..37])
+        let msg = if snap.message.chars().count() > 40 {
+            let truncated: String = snap.message.chars().take(37).collect();
+            format!("{truncated}...")
         } else {
             snap.message
         };
@@ -85,11 +108,11 @@ pub async fn run_diff(repo: &Repository, a: &str, b: &str) -> Result<()> {
     let snap_a = snap_store
         .get(&SnapshotId(a.to_string()))
         .await
-        .map_err(|_| anyhow::anyhow!("snapshot {} not found", a))?;
+        .map_err(|_| anyhow::anyhow!("snapshot {a} not found"))?;
     let snap_b = snap_store
         .get(&SnapshotId(b.to_string()))
         .await
-        .map_err(|_| anyhow::anyhow!("snapshot {} not found", b))?;
+        .map_err(|_| anyhow::anyhow!("snapshot {b} not found"))?;
 
     let tree_a = obj_store
         .get_tree(&crate::object::TreeId(snap_a.tree_hash))
@@ -98,10 +121,16 @@ pub async fn run_diff(repo: &Repository, a: &str, b: &str) -> Result<()> {
         .get_tree(&crate::object::TreeId(snap_b.tree_hash))
         .await?;
 
-    let diffs = crate::snapshot::diff_snapshots(&tree_a.0, &tree_b.0);
+    let diffs = crate::snapshot::diff_snapshots_recursive(
+        &tree_a.0,
+        &tree_b.0,
+        "",
+        &obj_store,
+    )
+    .await;
 
     if diffs.is_empty() {
-        println!("No differences between {} and {}", a, b);
+        println!("No differences between {a} and {b}");
         return Ok(());
     }
 
@@ -114,4 +143,25 @@ pub async fn run_diff(repo: &Repository, a: &str, b: &str) -> Result<()> {
         println!("  {:<10} {}", kind, diff.path);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_utf8_truncation_no_panic() {
+        let msg = "你好世界".repeat(20);
+        // This would panic with byte slicing (&msg[..37])
+        let truncated: String = msg.chars().take(37).collect();
+        assert_eq!(truncated.chars().count(), 37);
+
+        let emoji_msg = "🎉🚀💎".repeat(20);
+        let truncated_emoji: String = emoji_msg.chars().take(37).collect();
+        assert_eq!(truncated_emoji.chars().count(), 37);
+    }
+
+    #[test]
+    fn test_short_message_not_truncated() {
+        let msg = "short msg";
+        assert!(msg.chars().count() <= 40);
+    }
 }

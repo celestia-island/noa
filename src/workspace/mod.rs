@@ -3,11 +3,39 @@ use std::sync::Arc;
 
 use redb::ReadableTable;
 
-use crate::{
-    error::{NoaError, Result},
-    redb_err,
-    snapshot::SnapshotId,
-};
+use crate::{error::{NoaError, Result}, snapshot::SnapshotId};
+
+pub fn validate_workspace_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        anyhow::bail!("workspace name must not be empty");
+    }
+    if name.len() > 255 {
+        anyhow::bail!("workspace name must be at most 255 characters");
+    }
+    if name.contains("..") {
+        anyhow::bail!("workspace name must not contain '..'");
+    }
+    if name.starts_with('.') {
+        anyhow::bail!("workspace name must not start with '.'");
+    }
+    for (i, ch) in name.char_indices() {
+        match ch {
+            '/' | '\\' | '\0' => {
+                anyhow::bail!(
+                    "invalid workspace name: contains invalid character {ch:?} at position {i}"
+                );
+            }
+            _ if ch.is_ascii_control() => {
+                anyhow::bail!(
+                    "invalid workspace name: contains control character U+{:04X} at position {i}",
+                    ch as u32
+                );
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Workspace {
@@ -35,75 +63,134 @@ impl WorkspaceManager {
     }
 
     fn ensure_table(&self) -> Result<()> {
-        let txn = redb_err!(self.db.begin_write())?;
-        {
-            let _ = redb_err!(txn.open_table(WORKSPACES));
-        }
-        redb_err!(txn.commit())
+        let txn = self.db.begin_write()?;
+        txn.open_table(WORKSPACES)?;
+        txn.commit()?;
+        Ok(())
     }
 
     pub async fn create(&self, workspace: &Workspace) -> Result<()> {
-        if self.get(&workspace.name).await?.is_some() {
-            return Err(NoaError::WorkspaceAlreadyExists(workspace.name.clone()));
-        }
-        self.put(workspace).await
+        validate_workspace_name(&workspace.name)?;
+        let db = self.db.clone();
+        let ws = workspace.clone();
+        tokio::task::spawn_blocking(move || {
+            let data = rmp_serde::to_vec(&ws)?;
+            let txn = db.begin_write()?;
+            {
+                let mut table = txn.open_table(WORKSPACES)?;
+                let exists = table.get(ws.name.as_str())?.is_some();
+                if exists {
+                    return Err(NoaError::WorkspaceAlreadyExists { name: ws.name }.into());
+                }
+                table.insert(ws.name.as_str(), data.as_slice())?;
+            }
+            txn.commit()?;
+            Ok(())
+        })
+        .await?
     }
 
     pub async fn get(&self, name: &str) -> Result<Option<Workspace>> {
-        let txn = redb_err!(self.db.begin_read())?;
-        let table = redb_err!(txn.open_table(WORKSPACES))?;
-        match redb_err!(table.get(name))? {
-            Some(guard) => {
-                let ws: Workspace = rmp_serde::from_slice(guard.value())
-                    .map_err(|e| NoaError::Serialization(e.to_string()))?;
-                Ok(Some(ws))
+        let db = self.db.clone();
+        let name = name.to_string();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_read()?;
+            let table = txn.open_table(WORKSPACES)?;
+            match table.get(name.as_str())? {
+                Some(guard) => {
+                    let ws: Workspace = rmp_serde::from_slice(guard.value())?;
+                    Ok(Some(ws))
+                }
+                None => Ok(None),
             }
-            None => Ok(None),
-        }
+        })
+        .await?
     }
 
     pub async fn put(&self, workspace: &Workspace) -> Result<()> {
-        let data =
-            rmp_serde::to_vec(workspace).map_err(|e| NoaError::Serialization(e.to_string()))?;
-        let txn = redb_err!(self.db.begin_write())?;
-        {
-            let mut table = redb_err!(txn.open_table(WORKSPACES))?;
-            redb_err!(table.insert(workspace.name.as_str(), data.as_slice()))?;
-        }
-        redb_err!(txn.commit())
+        validate_workspace_name(&workspace.name)?;
+        let db = self.db.clone();
+        let name = workspace.name.clone();
+        let data = rmp_serde::to_vec(workspace)?;
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_write()?;
+            {
+                let mut table = txn.open_table(WORKSPACES)?;
+                table.insert(name.as_str(), data.as_slice())?;
+            }
+            txn.commit()?;
+            Ok(())
+        })
+        .await?
     }
 
     pub async fn delete(&self, name: &str) -> Result<bool> {
-        let txn = redb_err!(self.db.begin_write())?;
-        {
-            let mut table = redb_err!(txn.open_table(WORKSPACES))?;
-            redb_err!(table.remove(name))?;
-        }
-        redb_err!(txn.commit())?;
-        Ok(true)
+        let db = self.db.clone();
+        let name = name.to_string();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_write()?;
+            let existed = {
+                let mut table = txn.open_table(WORKSPACES)?;
+                let removed = table.remove(name.as_str())?;
+                removed.is_some()
+            };
+            txn.commit()?;
+            Ok(existed)
+        })
+        .await?
     }
 
     pub async fn list(&self) -> Result<Vec<Workspace>> {
-        let txn = redb_err!(self.db.begin_read())?;
-        let table = redb_err!(txn.open_table(WORKSPACES))?;
-        let mut result = Vec::new();
-        for entry in redb_err!(table.iter())? {
-            let (_, value) = redb_err!(entry)?;
-            let ws: Workspace = rmp_serde::from_slice(value.value())
-                .map_err(|e| NoaError::Serialization(e.to_string()))?;
-            result.push(ws);
-        }
-        Ok(result)
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_read()?;
+            let table = txn.open_table(WORKSPACES)?;
+            let mut result = Vec::new();
+            for entry in table.iter()? {
+                let (_, value) = entry?;
+                let ws: Workspace = rmp_serde::from_slice(value.value())?;
+                result.push(ws);
+            }
+            Ok(result)
+        })
+        .await?
+    }
+
+    async fn update_workspace<F>(&self, name: &str, update: F) -> Result<()>
+    where
+        F: FnOnce(&mut Workspace) + Send + 'static,
+    {
+        let db = self.db.clone();
+        let name = name.to_string();
+        let now = crate::now_micros();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_write()?;
+            {
+                let mut table = txn.open_table(WORKSPACES)?;
+                let ws_slice = {
+                    let guard = table
+                        .get(name.as_str())?
+                        .ok_or_else(|| NoaError::WorkspaceNotFound { name: name.clone() })?;
+                    guard.value().to_vec()
+                };
+                let mut ws: Workspace = rmp_serde::from_slice(&ws_slice)?;
+                ws.updated_at = now;
+                update(&mut ws);
+                let data = rmp_serde::to_vec(&ws)?;
+                table.insert(name.as_str(), data.as_slice())?;
+            }
+            txn.commit()?;
+            Ok(())
+        })
+        .await?
     }
 
     pub async fn update_head(&self, name: &str, new_head: &SnapshotId) -> Result<()> {
-        let mut ws = self
-            .get(name)
-            .await?
-            .ok_or_else(|| NoaError::WorkspaceNotFound(name.to_string()))?;
-        ws.head = new_head.clone();
-        ws.updated_at = chrono::Utc::now().timestamp_micros() as u64;
-        self.put(&ws).await
+        let new_head = new_head.clone();
+        self.update_workspace(name, move |ws| {
+            ws.head = new_head;
+        })
+        .await
     }
 
     pub async fn update_head_and_seq(
@@ -112,14 +199,29 @@ impl WorkspaceManager {
         new_head: &SnapshotId,
         last_seq: u64,
     ) -> Result<()> {
-        let mut ws = self
-            .get(name)
-            .await?
-            .ok_or_else(|| NoaError::WorkspaceNotFound(name.to_string()))?;
-        ws.head = new_head.clone();
-        ws.last_seq = last_seq;
-        ws.updated_at = chrono::Utc::now().timestamp_micros() as u64;
-        self.put(&ws).await
+        let new_head = new_head.clone();
+        self.update_workspace(name, move |ws| {
+            ws.head = new_head;
+            ws.last_seq = last_seq;
+        })
+        .await
+    }
+
+    pub async fn update_head_seq_and_base(
+        &self,
+        name: &str,
+        new_head: &SnapshotId,
+        last_seq: u64,
+        new_base: &SnapshotId,
+    ) -> Result<()> {
+        let new_head = new_head.clone();
+        let new_base = new_base.clone();
+        self.update_workspace(name, move |ws| {
+            ws.head = new_head;
+            ws.last_seq = last_seq;
+            ws.base = new_base;
+        })
+        .await
     }
 }
 
@@ -279,5 +381,116 @@ mod tests {
         mgr.create(&ws).await.unwrap();
         let got = mgr.get("test").await.unwrap().unwrap();
         assert_eq!(got, ws);
+    }
+
+    #[tokio::test]
+    async fn test_delete_nonexistent_returns_false() {
+        let (_tmp, mgr) = make_manager();
+        let existed = mgr.delete("ghost").await.unwrap();
+        assert!(!existed);
+    }
+
+    #[tokio::test]
+    async fn test_delete_existent_returns_true() {
+        let (_tmp, mgr) = make_manager();
+        mgr.create(&make_workspace("ws1")).await.unwrap();
+        let existed = mgr.delete("ws1").await.unwrap();
+        assert!(existed);
+        assert!(mgr.get("ws1").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_create_only_one_succeeds() {
+        let (_tmp, mgr) = make_manager();
+        let mgr2 = mgr.clone();
+        let ws1 = make_workspace("race-ws");
+        let ws2 = make_workspace("race-ws");
+        let (r1, r2) = tokio::join!(async { mgr.create(&ws1).await }, async {
+            mgr2.create(&ws2).await
+        });
+        let successes = [&r1, &r2].iter().filter(|r| r.is_ok()).count();
+        assert_eq!(successes, 1);
+        let ws = mgr.get("race-ws").await.unwrap().unwrap();
+        assert_eq!(ws.name, "race-ws");
+    }
+
+    #[tokio::test]
+    async fn test_update_head_and_seq() {
+        let (_tmp, mgr) = make_manager();
+        mgr.create(&make_workspace("ws1")).await.unwrap();
+        let new_head = SnapshotId("noa_updated".to_string());
+        mgr.update_head_and_seq("ws1", &new_head, 42).await.unwrap();
+        let ws = mgr.get("ws1").await.unwrap().unwrap();
+        assert_eq!(ws.head, new_head);
+        assert_eq!(ws.last_seq, 42);
+    }
+
+    #[tokio::test]
+    async fn test_update_head_and_seq_nonexistent() {
+        let (_tmp, mgr) = make_manager();
+        let result = mgr
+            .update_head_and_seq("missing", &SnapshotId("noa_x".to_string()), 1)
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_put_creates_if_missing() {
+        let (_tmp, mgr) = make_manager();
+        let ws = make_workspace("new-ws");
+        mgr.put(&ws).await.unwrap();
+        let got = mgr.get("new-ws").await.unwrap().unwrap();
+        assert_eq!(got.name, "new-ws");
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_update_head_is_atomic() {
+        let (_tmp, mgr) = make_manager();
+        mgr.create(&make_workspace("concurrent-ws")).await.unwrap();
+
+        let mgr2 = mgr.clone();
+        let h1 = SnapshotId("noa_head_1".to_string());
+        let h2 = SnapshotId("noa_head_2".to_string());
+
+        let (r1, r2) = tokio::join!(
+            async { mgr.update_head("concurrent-ws", &h1).await },
+            async { mgr2.update_head("concurrent-ws", &h2).await }
+        );
+
+        let successes = [&r1, &r2].iter().filter(|r| r.is_ok()).count();
+        assert!(successes >= 1, "at least one update_head must succeed");
+
+        let ws = mgr.get("concurrent-ws").await.unwrap().unwrap();
+        assert!(
+            ws.head == h1 || ws.head == h2,
+            "head must be one of the concurrent updates, got {}",
+            ws.head
+        );
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_update_head_and_seq_is_atomic() {
+        let (_tmp, mgr) = make_manager();
+        mgr.create(&make_workspace("atomic-ws")).await.unwrap();
+
+        let mgr2 = mgr.clone();
+        let h1 = SnapshotId("noa_head_seq_1".to_string());
+        let h2 = SnapshotId("noa_head_seq_2".to_string());
+
+        let (r1, r2) = tokio::join!(
+            async { mgr.update_head_and_seq("atomic-ws", &h1, 10).await },
+            async { mgr2.update_head_and_seq("atomic-ws", &h2, 20).await }
+        );
+
+        let successes = [&r1, &r2].iter().filter(|r| r.is_ok()).count();
+        assert!(successes >= 1);
+
+        let ws = mgr.get("atomic-ws").await.unwrap().unwrap();
+        let expected = if ws.head == h1 { (h1, 10) } else { (h2, 20) };
+        assert_eq!(
+            (ws.head, ws.last_seq),
+            expected,
+            "head and last_seq must be consistent"
+        );
     }
 }

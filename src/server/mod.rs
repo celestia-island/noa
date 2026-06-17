@@ -1,7 +1,7 @@
 mod handlers;
 
 use axum::{
-    extract::Request,
+    extract::{ConnectInfo, Request},
     http::StatusCode,
     middleware::Next,
     response::Response,
@@ -9,15 +9,72 @@ use axum::{
     Router,
 };
 pub use handlers::AppState;
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
+
+#[derive(Clone)]
+struct RateLimitEntry {
+    count: u32,
+    window_start: Instant,
+}
+
+#[derive(Clone)]
+pub struct RateLimiter {
+    entries: Arc<Mutex<HashMap<String, RateLimitEntry>>>,
+    max_requests: u32,
+    window_secs: u64,
+}
+
+impl RateLimiter {
+    pub fn new(max_requests: u32, window_secs: u64) -> Self {
+        RateLimiter {
+            entries: Arc::new(Mutex::new(HashMap::new())),
+            max_requests,
+            window_secs,
+        }
+    }
+
+    fn is_expired(entry: &RateLimitEntry, window: Duration) -> bool {
+        Instant::now().duration_since(entry.window_start) > window * 2
+    }
+
+    pub async fn check(&self, key: &str) -> bool {
+        let mut entries = self.entries.lock().await;
+        let now = Instant::now();
+        let window = Duration::from_secs(self.window_secs);
+
+        if entries.len() > 10000 {
+            entries.retain(|_, entry| !Self::is_expired(entry, window));
+        } else if entries.len() % 100 == 0 && !entries.is_empty() {
+            entries.retain(|_, entry| !Self::is_expired(entry, window));
+        }
+
+        let entry = entries.entry(key.to_string()).or_insert(RateLimitEntry {
+            count: 0,
+            window_start: now,
+        });
+
+        if now.duration_since(entry.window_start) > window {
+            entry.count = 0;
+            entry.window_start = now;
+        }
+
+        entry.count += 1;
+        entry.count <= self.max_requests
+    }
+}
 
 async fn auth_middleware(
     axum::extract::State(state): axum::extract::State<AppState>,
     req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    let expected = &state.api_token;
-    if expected.is_empty() {
-        return Ok(next.run(req).await);
+    if state.api_token.is_empty() {
+        tracing::warn!("NOA_API_TOKEN not set — rejecting all API requests");
+        return Err(StatusCode::UNAUTHORIZED);
     }
 
     let auth_header = req
@@ -25,17 +82,48 @@ async fn auth_middleware(
         .get("Authorization")
         .and_then(|v| v.to_str().ok());
 
-    match auth_header {
+    let authenticated = match auth_header {
         Some(val) if val.starts_with("Bearer ") => {
             let token = &val[7..];
-            if token == expected {
-                Ok(next.run(req).await)
-            } else {
-                Err(StatusCode::UNAUTHORIZED)
-            }
+            constant_time_eq(token.as_bytes(), state.api_token.as_bytes())
         }
-        _ => Err(StatusCode::UNAUTHORIZED),
+        _ => false,
+    };
+
+    if !authenticated {
+        return Err(StatusCode::UNAUTHORIZED);
     }
+
+    {
+        let key = req
+            .extensions()
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|c| c.0.ip().to_string())
+            .unwrap_or_else(|| {
+                req.headers()
+                    .get("x-forwarded-for")
+                    .or_else(|| req.headers().get("x-real-ip"))
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| {
+                        s.split(',')
+                            .next()
+                            .map(|s| s.trim().to_string())
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_else(|| "unknown".to_string())
+            });
+
+        if !state.rate_limiter.check(&key).await {
+            return Err(StatusCode::TOO_MANY_REQUESTS);
+        }
+    }
+
+    Ok(next.run(req).await)
+}
+
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    use subtle::ConstantTimeEq;
+    a.ct_eq(b).into()
 }
 
 pub fn router(state: AppState) -> Router {
@@ -62,4 +150,54 @@ pub fn router(state: AppState) -> Router {
             auth_middleware,
         ))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_constant_time_eq_equal() {
+        assert!(constant_time_eq(b"hello", b"hello"));
+        assert!(constant_time_eq(b"", b""));
+        assert!(constant_time_eq(b"a", b"a"));
+    }
+
+    #[test]
+    fn test_constant_time_eq_not_equal() {
+        assert!(!constant_time_eq(b"hello", b"world"));
+        assert!(!constant_time_eq(b"hello", b"hellp"));
+    }
+
+    #[test]
+    fn test_constant_time_eq_different_lengths() {
+        assert!(!constant_time_eq(b"short", b"longer"));
+        assert!(!constant_time_eq(b"", b"a"));
+        assert!(!constant_time_eq(b"a", b""));
+    }
+
+    #[test]
+    fn test_constant_time_eq_single_bit_diff() {
+        let a = b"test";
+        let mut b = b"test".to_vec();
+        b[3] ^= 1;
+        assert!(!constant_time_eq(a, &b));
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_allows_within_limit() {
+        let limiter = RateLimiter::new(3, 60);
+        assert!(limiter.check("key").await);
+        assert!(limiter.check("key").await);
+        assert!(limiter.check("key").await);
+        assert!(!limiter.check("key").await);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_independent_keys() {
+        let limiter = RateLimiter::new(1, 60);
+        assert!(limiter.check("a").await);
+        assert!(limiter.check("b").await);
+        assert!(!limiter.check("a").await);
+    }
 }

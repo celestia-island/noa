@@ -3,11 +3,7 @@ use std::sync::Arc;
 
 use redb::ReadableTable;
 
-use crate::{
-    error::{NoaError, Result},
-    redb_err,
-    snapshot::SnapshotId,
-};
+use crate::{error::Result, snapshot::SnapshotId};
 
 #[async_trait]
 pub trait RefStore: Send + Sync {
@@ -31,80 +27,107 @@ impl RedbRefStore {
     }
 
     fn ensure_table(&self) -> Result<()> {
-        let txn = redb_err!(self.db.begin_write())?;
-        {
-            let _ = redb_err!(txn.open_table(REFS));
+        let txn = self.db.begin_write()?;
+        txn.open_table(REFS)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn clone_inner(&self) -> Self {
+        RedbRefStore {
+            db: self.db.clone(),
         }
-        redb_err!(txn.commit())
     }
 }
 
 #[async_trait]
 impl RefStore for RedbRefStore {
     async fn get(&self, name: &str) -> Result<Option<SnapshotId>> {
-        let txn = redb_err!(self.db.begin_read())?;
-        let table = redb_err!(txn.open_table(REFS))?;
-        match redb_err!(table.get(name))? {
-            Some(guard) => {
-                let id_str = String::from_utf8(guard.value().to_vec())
-                    .map_err(|e| NoaError::Serialization(e.to_string()))?;
-                Ok(Some(SnapshotId(id_str)))
+        let db = self.db.clone();
+        let name = name.to_string();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_read()?;
+            let table = txn.open_table(REFS)?;
+            match table.get(name.as_str())? {
+                Some(guard) => {
+                    let id_str = String::from_utf8(guard.value().to_vec())?;
+                    Ok(Some(SnapshotId(id_str)))
+                }
+                None => Ok(None),
             }
-            None => Ok(None),
-        }
+        })
+        .await?
     }
 
     async fn cas(&self, name: &str, old: Option<&SnapshotId>, new: &SnapshotId) -> Result<bool> {
-        let txn = redb_err!(self.db.begin_write())?;
-        {
-            let mut table = redb_err!(txn.open_table(REFS))?;
+        let db = self.db.clone();
+        let name = name.to_string();
+        let old = old.cloned();
+        let new = new.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let txn = db.begin_write()?;
+            {
+                let mut table = txn.open_table(REFS)?;
 
-            let current: Option<SnapshotId> = match redb_err!(table.get(name))? {
-                Some(guard) => {
-                    let s = String::from_utf8(guard.value().to_vec())
-                        .map_err(|e| NoaError::Serialization(e.to_string()))?;
-                    Some(SnapshotId(s))
+                let current: Option<SnapshotId> = match table.get(&*name)? {
+                    Some(guard) => {
+                        let s = String::from_utf8(guard.value().to_vec())?;
+                        Some(SnapshotId(s))
+                    }
+                    None => None,
+                };
+
+                let matches = match (&old, &current) {
+                    (None, None) => true,
+                    (Some(expected), Some(cur)) => expected == cur,
+                    _ => false,
+                };
+
+                if !matches {
+                    return Ok(false);
                 }
-                None => None,
-            };
-
-            let matches = match (old, &current) {
-                (None, None) => true,
-                (Some(expected), Some(current)) => expected == current,
-                _ => false,
-            };
-
-            if !matches {
-                return Ok(false);
+                table.insert(&*name, new.0.as_bytes())?;
             }
-
-            redb_err!(table.insert(name, new.0.as_bytes()))?;
-        }
-        redb_err!(txn.commit())?;
-        Ok(true)
+            match txn.commit() {
+                Ok(()) => Ok(true),
+                Err(e) => Err(e.into()),
+            }
+        })
+        .await?;
+        result
     }
 
     async fn list(&self) -> Result<Vec<(String, SnapshotId)>> {
-        let txn = redb_err!(self.db.begin_read())?;
-        let table = redb_err!(txn.open_table(REFS))?;
-        let mut result = Vec::new();
-        for entry in redb_err!(table.iter())? {
-            let (key, value) = redb_err!(entry)?;
-            let id_str = String::from_utf8(value.value().to_vec())
-                .map_err(|e| NoaError::Serialization(e.to_string()))?;
-            result.push((key.value().to_string(), SnapshotId(id_str)));
-        }
-        Ok(result)
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_read()?;
+            let table = txn.open_table(REFS)?;
+            let mut result = Vec::new();
+            for entry in table.iter()? {
+                let (key, value) = entry?;
+                let id_str = String::from_utf8(value.value().to_vec())?;
+                result.push((key.value().to_string(), SnapshotId(id_str)));
+            }
+            Ok(result)
+        })
+        .await?
     }
 
     async fn delete(&self, name: &str) -> Result<bool> {
-        let txn = redb_err!(self.db.begin_write())?;
-        {
-            let mut table = redb_err!(txn.open_table(REFS))?;
-            redb_err!(table.remove(name))?;
-        }
-        redb_err!(txn.commit())?;
-        Ok(true)
+        let db = self.db.clone();
+        let name = name.to_string();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_write()?;
+            let existed = {
+                let mut table = txn.open_table(REFS)?;
+                let removed = table.remove(name.as_str())?;
+                removed.is_some()
+            };
+            txn.commit()?;
+            Ok(existed)
+        })
+        .await?
     }
 }
 
@@ -236,10 +259,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_nonexistent() {
+    async fn test_delete_nonexistent_returns_false() {
         let (_tmp, store) = make_store();
-        let ok = store.delete("nonexistent").await.unwrap();
-        assert!(ok);
+        let existed = store.delete("nonexistent").await.unwrap();
+        assert!(!existed);
     }
 
     #[tokio::test]
@@ -261,5 +284,69 @@ mod tests {
         store.cas("main", Some(&v2), &v3).await.unwrap();
 
         assert_eq!(store.get("main").await.unwrap(), Some(v3));
+    }
+
+    #[tokio::test]
+    async fn test_cas_concurrent_only_one_wins() {
+        let (_tmp, store) = make_store();
+        let v1 = SnapshotId("noa_v1".to_string());
+        store.cas("main", None, &v1).await.unwrap();
+
+        let v_a = SnapshotId("noa_a".to_string());
+        let v_b = SnapshotId("noa_b".to_string());
+
+        let store_c1 = store.clone_inner();
+        let store_c2 = store.clone_inner();
+
+        let (r1, r2) = tokio::join!(
+            async { store_c1.cas("main", Some(&v1), &v_a).await },
+            async { store_c2.cas("main", Some(&v1), &v_b).await }
+        );
+        let ok1 = r1.unwrap();
+        let ok2 = r2.unwrap();
+        assert!(
+            ok1 != ok2,
+            "exactly one CAS should succeed, got ok1={} ok2={}",
+            ok1,
+            ok2
+        );
+        let final_val = store.get("main").await.unwrap().unwrap();
+        assert!(final_val == v_a || final_val == v_b);
+    }
+
+    #[tokio::test]
+    async fn test_cas_create_concurrent_only_one_wins() {
+        let (_tmp, store) = make_store();
+
+        let v_a = SnapshotId("noa_a".to_string());
+        let v_b = SnapshotId("noa_b".to_string());
+
+        let store_c1 = store.clone_inner();
+        let store_c2 = store.clone_inner();
+
+        let (r1, r2) = tokio::join!(async { store_c1.cas("new-ref", None, &v_a).await }, async {
+            store_c2.cas("new-ref", None, &v_b).await
+        });
+        let ok1 = r1.unwrap();
+        let ok2 = r2.unwrap();
+        assert!(ok1 || ok2, "at least one must succeed");
+        assert!(!(ok1 && ok2), "both should not succeed");
+    }
+
+    #[tokio::test]
+    async fn test_list_after_delete() {
+        let (_tmp, store) = make_store();
+        store
+            .cas("a", None, &SnapshotId("noa_1".to_string()))
+            .await
+            .unwrap();
+        store
+            .cas("b", None, &SnapshotId("noa_2".to_string()))
+            .await
+            .unwrap();
+        store.delete("a").await.unwrap();
+        let refs = store.list().await.unwrap();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].0, "b");
     }
 }

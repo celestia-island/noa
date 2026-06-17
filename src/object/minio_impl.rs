@@ -4,9 +4,37 @@ use aws_config::BehaviorVersion;
 use aws_sdk_s3::{primitives::ByteStream, Client};
 
 use crate::{
-    error::{NoaError, Result},
-    object::{BlobId, ObjectStore, TreeEntries, TreeId},
+    error::Result,
+    object::{sha256_hex, BlobId, ObjectStore, TreeEntries, TreeId},
 };
+
+fn validate_ip(ip: &std::net::IpAddr, allow_private: bool) -> Result<()> {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            if v4.is_loopback() || v4.is_link_local() || v4.is_broadcast() || v4.is_multicast() {
+                anyhow::bail!("endpoint resolves to forbidden IP: {ip}");
+            }
+            if !allow_private {
+                let octets = v4.octets();
+                if octets[0] == 10
+                    || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
+                    || (octets[0] == 192 && octets[1] == 168)
+                {
+                    anyhow::bail!("endpoint resolves to private IP: {ip}");
+                }
+            }
+        }
+        std::net::IpAddr::V6(v6) => {
+            if v6.is_loopback() || v6.is_multicast() {
+                anyhow::bail!("endpoint resolves to forbidden IPv6: {ip}");
+            }
+            if !allow_private && (v6.octets()[0] == 0xfc || v6.octets()[0] == 0xfd) {
+                anyhow::bail!("endpoint resolves to forbidden IPv6: {ip}");
+            }
+        }
+    }
+    Ok(())
+}
 
 pub struct MinioObjectStore {
     client: Client,
@@ -14,6 +42,7 @@ pub struct MinioObjectStore {
 }
 
 impl MinioObjectStore {
+    #[must_use]
     pub fn new(client: Client, bucket: String) -> Self {
         MinioObjectStore { client, bucket }
     }
@@ -25,44 +54,46 @@ impl MinioObjectStore {
             .unwrap_or(endpoint);
 
         let host_port = without_scheme.split('/').next().unwrap_or(without_scheme);
-        let host = host_port.split(':').next().unwrap_or(host_port);
+        let host = if host_port.starts_with('[') {
+            host_port
+                .trim_start_matches('[')
+                .split(']')
+                .next()
+                .unwrap_or(host_port)
+        } else {
+            host_port.split(':').next().unwrap_or(host_port)
+        };
 
         let blocked = [
             "169.254.169.254",
             "metadata.google.internal",
             "metadata",
             "100.100.100.200",
+            "localhost",
         ];
         for &b in &blocked {
             if host == b {
-                return Err(NoaError::Config(format!("blocked SSRF endpoint: {}", host)));
+                anyhow::bail!("blocked SSRF endpoint: {host}");
             }
         }
+
+        let allow_private = std::env::var("NOA_MINIO_ALLOW_PRIVATE")
+            .is_ok_and(|v| v == "true" || v == "1" || v == "yes");
+
         if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-            match ip {
-                std::net::IpAddr::V4(v4) => {
-                    if v4.is_loopback()
-                        || v4.is_link_local()
-                        || v4.is_broadcast()
-                        || v4.is_multicast()
-                    {
-                        return Err(NoaError::Config(format!(
-                            "endpoint resolves to forbidden IP: {}",
-                            ip
-                        )));
-                    }
-                    let octets = v4.octets();
-                    if octets[0] == 10
-                        || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
-                        || (octets[0] == 192 && octets[1] == 168)
-                    {
-                        return Err(NoaError::Config(format!(
-                            "endpoint resolves to private IP: {}",
-                            ip
-                        )));
+            validate_ip(&ip, allow_private)?;
+        } else {
+            use std::net::ToSocketAddrs;
+            let resolved = format!("{host}:443").to_socket_addrs();
+            match resolved {
+                Ok(addrs) => {
+                    for addr in addrs {
+                        validate_ip(&addr.ip(), allow_private)?;
                     }
                 }
-                std::net::IpAddr::V6(_) => {}
+                Err(_) => {
+                    anyhow::bail!("could not resolve endpoint host for SSRF check: {host}");
+                }
             }
         }
         Ok(())
@@ -113,9 +144,7 @@ impl MinioObjectStore {
 #[async_trait]
 impl ObjectStore for MinioObjectStore {
     async fn put_blob(&self, content: &[u8]) -> Result<BlobId> {
-        use sha2::{Digest, Sha256};
-        let hash = hex::encode(Sha256::digest(content));
-        let id = BlobId(hash);
+        let id = BlobId(sha256_hex(content));
 
         self.client
             .put_object()
@@ -123,8 +152,7 @@ impl ObjectStore for MinioObjectStore {
             .key(Self::blob_key(&id))
             .body(ByteStream::from(content.to_vec()))
             .send()
-            .await
-            .map_err(|e| NoaError::Remote(e.to_string()))?;
+            .await?;
 
         Ok(id)
     }
@@ -136,14 +164,9 @@ impl ObjectStore for MinioObjectStore {
             .bucket(&self.bucket)
             .key(Self::blob_key(id))
             .send()
-            .await
-            .map_err(|e| NoaError::ObjectNotFound(e.to_string()))?;
+            .await?;
 
-        let bytes = output
-            .body
-            .collect()
-            .await
-            .map_err(|e| NoaError::Remote(e.to_string()))?;
+        let bytes = output.body.collect().await?;
         Ok(bytes.into_bytes().to_vec())
     }
 
@@ -155,16 +178,23 @@ impl ObjectStore for MinioObjectStore {
             .key(Self::blob_key(id))
             .send()
             .await;
-        Ok(result.is_ok())
+        match result {
+            Ok(_) => Ok(true),
+            Err(e) => {
+                let is_not_found = e.as_service_error().is_some_and(|se| se.is_not_found());
+                if is_not_found {
+                    Ok(false)
+                } else {
+                    Err(e.into())
+                }
+            }
+        }
     }
 
     async fn put_tree(&self, entries: &TreeEntries) -> Result<TreeId> {
-        let data =
-            rmp_serde::to_vec(entries).map_err(|e| NoaError::Serialization(e.to_string()))?;
+        let data = rmp_serde::to_vec(entries)?;
 
-        use sha2::{Digest, Sha256};
-        let hash = hex::encode(Sha256::digest(&data));
-        let id = TreeId(hash);
+        let id = TreeId(sha256_hex(&data));
 
         self.client
             .put_object()
@@ -172,8 +202,7 @@ impl ObjectStore for MinioObjectStore {
             .key(Self::tree_key(&id))
             .body(ByteStream::from(data))
             .send()
-            .await
-            .map_err(|e| NoaError::Remote(e.to_string()))?;
+            .await?;
 
         Ok(id)
     }
@@ -185,16 +214,10 @@ impl ObjectStore for MinioObjectStore {
             .bucket(&self.bucket)
             .key(Self::tree_key(id))
             .send()
-            .await
-            .map_err(|e| NoaError::ObjectNotFound(e.to_string()))?;
+            .await?;
 
-        let bytes = output
-            .body
-            .collect()
-            .await
-            .map_err(|e| NoaError::Remote(e.to_string()))?;
-        rmp_serde::from_slice(&bytes.into_bytes())
-            .map_err(|e| NoaError::Serialization(e.to_string()))
+        let bytes = output.body.collect().await?;
+        Ok(rmp_serde::from_slice::<TreeEntries>(&bytes.into_bytes())?)
     }
 
     async fn has_tree(&self, id: &TreeId) -> Result<bool> {
@@ -205,6 +228,71 @@ impl ObjectStore for MinioObjectStore {
             .key(Self::tree_key(id))
             .send()
             .await;
-        Ok(result.is_ok())
+        match result {
+            Ok(_) => Ok(true),
+            Err(e) => {
+                let is_not_found = e.as_service_error().is_some_and(|se| se.is_not_found());
+                if is_not_found {
+                    Ok(false)
+                } else {
+                    Err(e.into())
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_endpoint_blocks_aws_metadata() {
+        assert!(MinioObjectStore::validate_endpoint("http://169.254.169.254/latest").is_err());
+    }
+
+    #[test]
+    fn test_validate_endpoint_blocks_google_metadata() {
+        assert!(MinioObjectStore::validate_endpoint("http://metadata.google.internal").is_err());
+    }
+
+    #[test]
+    fn test_validate_endpoint_blocks_alicloud_metadata() {
+        assert!(MinioObjectStore::validate_endpoint("http://100.100.100.200/latest").is_err());
+    }
+
+    #[test]
+    fn test_validate_endpoint_blocks_loopback() {
+        assert!(MinioObjectStore::validate_endpoint("http://127.0.0.1:9000").is_err());
+        assert!(MinioObjectStore::validate_endpoint("http://localhost:9000").is_err());
+    }
+
+    #[test]
+    fn test_validate_endpoint_blocks_private_ip() {
+        assert!(MinioObjectStore::validate_endpoint("http://10.0.0.1:9000").is_err());
+        assert!(MinioObjectStore::validate_endpoint("http://172.16.0.1:9000").is_err());
+        assert!(MinioObjectStore::validate_endpoint("http://192.168.1.1:9000").is_err());
+    }
+
+    #[test]
+    fn test_validate_endpoint_blocks_ipv6_loopback() {
+        assert!(MinioObjectStore::validate_endpoint("http://[::1]:9000").is_err());
+    }
+
+    #[test]
+    fn test_validate_endpoint_allows_public_ip() {
+        assert!(MinioObjectStore::validate_endpoint("http://1.2.3.4:9000").is_ok());
+    }
+
+    #[test]
+    fn test_validate_endpoint_rejects_unresolvable_domain() {
+        assert!(MinioObjectStore::validate_endpoint("https://minio.example.com").is_err());
+    }
+
+    #[test]
+    fn test_validate_endpoint_blocks_ipv6_ula() {
+        assert!(MinioObjectStore::validate_endpoint("http://[fc00::1]:9000").is_err());
+        assert!(MinioObjectStore::validate_endpoint("http://[fd00::1]:9000").is_err());
+        assert!(MinioObjectStore::validate_endpoint("http://[fd12:3456::1]:9000").is_err());
     }
 }

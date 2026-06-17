@@ -20,7 +20,14 @@ pub fn run_interactive(
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
-                if app.handle_key(key) {
+                let result =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| app.handle_key(key)));
+                if let Ok(should_quit) = result {
+                    if should_quit {
+                        break;
+                    }
+                } else {
+                    tracing::error!("panic in TUI key handler, exiting gracefully");
                     break;
                 }
             }

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 pub use minio_impl::MinioObjectStore;
 pub use redb_impl::RedbObjectStore;
+use sha2::{Digest, Sha256};
 
 use crate::error::Result;
 
@@ -13,6 +14,7 @@ use crate::error::Result;
 pub struct BlobId(pub String);
 
 impl BlobId {
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()
     }
@@ -28,6 +30,7 @@ impl std::fmt::Display for BlobId {
 pub struct TreeId(pub String);
 
 impl TreeId {
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()
     }
@@ -62,6 +65,7 @@ impl Default for TreeEntries {
 }
 
 impl TreeEntries {
+    #[must_use]
     pub fn new() -> Self {
         TreeEntries(Vec::new())
     }
@@ -69,6 +73,13 @@ impl TreeEntries {
     pub fn sort(&mut self) {
         self.0.sort_by(|a, b| a.name.cmp(&b.name));
     }
+}
+
+#[must_use]
+pub fn sha256_hex(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hex::encode(hasher.finalize())
 }
 
 #[async_trait]

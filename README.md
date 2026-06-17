@@ -19,10 +19,7 @@
   <a href="https://docs.rs/libnoa">
     <img src="https://img.shields.io/docsrs/libnoa" alt="Docs.rs" />
   </a>
-  <a href="LICENSE">
-    <img src="https://img.shields.io/badge/License-Apache--2.0-blue.svg" alt="License" />
-  </a>
-  <a href="https://github.com/celestia-island/noa/releases">
+  [[![License: SySL](https://img.shields.io/badge/license-SySL%201.0-blue)](./LICENSE.txt)](./LICENSE.txt)<a href="https://github.com/celestia-island/noa/releases">
     <img src="https://img.shields.io/github/v/release/celestia-island/noa?label=release" alt="GitHub Release" />
   </a>
 </div>
@@ -125,6 +122,13 @@ cargo build --release
 ```
 
 ### As a Library (Cargo)
+
+```toml
+[dependencies]
+libnoa = "0.3.0"
+```
+
+Or from git:
 
 ```toml
 [dependencies]
@@ -291,29 +295,33 @@ libnoa exposes a Rust API for embedding noa functionality into other tools:
 use libnoa::repo::Repository;
 use libnoa::snapshot::SnapshotEngine;
 use libnoa::log::FileAgentLog;
+use libnoa::workspace::Workspace;
+use libnoa::snapshot::SnapshotId;
 
 // Open a repository
 let repo = Repository::open(&path)?;
 
 // Create a workspace
 let ws_mgr = repo.workspace_manager()?;
+let now = chrono::Utc::now().timestamp_micros() as u64;
 ws_mgr.create(&Workspace {
     name: "feat-x".into(),
-    head: base_snap_id.clone(),
-    base: base_snap_id.clone(),
+    head: SnapshotId("noa_empty".into()),
+    base: SnapshotId("noa_empty".into()),
     agent_id: Some("my-agent".into()),
+    last_seq: 0,
     created_at: now,
     updated_at: now,
 }).await?;
 
 // Build a snapshot from agent logs
 let engine = SnapshotEngine::new(
-    FileAgentLog::new(&path, "my-agent")?,
+    repo.agent_log("feat-x")?,
     repo.snapshot_store()?,
     repo.object_store()?,
 )
 .with_repo_root(repo.root.clone());
-let snapshot = engine.compute("feat-x", vec![], "author", "message").await?;
+let snapshot = engine.compute("feat-x", vec![], 0, "author", "message").await?;
 
 // Export snapshot to git
 libnoa::git::export_noa_to_git(&repo.root, repo.db.clone()).await?;
@@ -349,4 +357,4 @@ NOA_PORT=3000 NOA_DB_PATH=/data/noa/server.redb target/release/noa-server
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Licensed under the [Synthetic Source License (SySL), Version 1.0](./LICENSE.txt).

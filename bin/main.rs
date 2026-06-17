@@ -90,8 +90,9 @@ enum Commands {
     Sync {
         #[arg(short, long, default_value = "/tmp/noa-sync.sock")]
         socket: String,
+        /// Path to the workspace root directory (default: current directory)
         #[arg(short, long, default_value = ".")]
-        workspace: String,
+        path: String,
     },
 }
 
@@ -129,6 +130,8 @@ enum WorkspaceSub {
     },
     Merge {
         from: String,
+        #[arg(short, long, default_value = "ours")]
+        strategy: String,
     },
 }
 
@@ -141,6 +144,7 @@ enum RemoteSub {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let _ = tracing_subscriber::fmt().try_init();
     let app = App::parse();
 
     match app.command {
@@ -231,27 +235,27 @@ async fn main() -> anyhow::Result<()> {
                 let repo = libnoa::repo::Repository::open(&root)?;
                 cli::workspace_cmd::run_delete(&repo, &name).await?;
             }
-            WorkspaceSub::Merge { from } => {
+            WorkspaceSub::Merge { from, strategy } => {
                 let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
                 let repo = libnoa::repo::Repository::open(&root)?;
-                cli::workspace_cmd::run_merge(&repo, &from).await?;
+                cli::workspace_cmd::run_merge(&repo, &from, &strategy).await?;
             }
         },
         Some(Commands::Remote { cmd }) => match cmd {
             RemoteSub::Add { name, url } => {
                 let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
                 let mut repo = libnoa::repo::Repository::open(&root)?;
-                cli::remote_cmd::run_add(&mut repo, &name, &url).await?;
+                cli::remote_cmd::run_add(&mut repo, &name, &url)?;
             }
             RemoteSub::Remove { name } => {
                 let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
                 let mut repo = libnoa::repo::Repository::open(&root)?;
-                cli::remote_cmd::run_remove(&mut repo, &name).await?;
+                cli::remote_cmd::run_remove(&mut repo, &name)?;
             }
             RemoteSub::List => {
                 let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
                 let repo = libnoa::repo::Repository::open(&root)?;
-                cli::remote_cmd::run_list(&repo).await?;
+                cli::remote_cmd::run_list(&repo)?;
             }
         },
         Some(Commands::Push { remote }) => {
@@ -275,17 +279,28 @@ async fn main() -> anyhow::Result<()> {
             let repo = libnoa::repo::Repository::open(&root)?;
             cli::resolve_cmd::run_resolve(&repo, &strategy, path.as_deref()).await?;
         }
-        Some(Commands::Sync { socket, workspace }) => {
-            let root = std::path::Path::new(&workspace)
+        Some(Commands::Sync { socket, path }) => {
+            let root = std::path::Path::new(&path)
                 .canonicalize()
-                .unwrap_or_else(|_| std::path::PathBuf::from(&workspace));
+                .unwrap_or_else(|_| std::path::PathBuf::from(&path));
             let ws_root = libnoa::repo::Repository::find(&root)?;
             let server =
-                libnoa::sync::SyncServer::new(std::path::Path::new(&socket), &ws_root, "default");
-            tracing_subscriber::fmt::init();
+                libnoa::sync::SyncServer::new(std::path::Path::new(&socket), &ws_root, "default")?;
             server.listen().await?;
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_try_init_called_twice_does_not_panic() {
+        // Simulating what happens if `noa sync` is called in a long-running process
+        // where tracing_subscriber::fmt::init() could be called multiple times
+        let _ = tracing_subscriber::fmt().try_init();
+        let _ = tracing_subscriber::fmt().try_init();
+        // If we reach here without panic, the fix works
+    }
 }

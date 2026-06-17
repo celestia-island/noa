@@ -13,14 +13,16 @@ on:
 
 jobs:
   test:
-    name: Test
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.toolchain }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        toolchain:
-          - stable
-          - nightly
+        os: [ubuntu-latest, macos-latest]
+        toolchain: [stable, nightly]
+        include:
+          - os: windows-latest
+            toolchain: stable
 
     steps:
       - uses: actions/checkout@v4
