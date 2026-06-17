@@ -10,7 +10,7 @@ pub async fn run(workspace: Option<&str>, limit: usize) -> Result<()> {
     let all = snap_store.list_all().await?;
 
     let ws_name = workspace
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .or_else(|| repo.read_head().ok());
     let filtered: Vec<_> = if let Some(ref ws) = ws_name {
         all.into_iter().filter(|s| &s.workspace == ws).collect()
@@ -27,8 +27,9 @@ pub async fn run(workspace: Option<&str>, limit: usize) -> Result<()> {
 
     println!("{:<16} {:<12} {:<16} MESSAGE", "ID", "WORKSPACE", "AUTHOR");
     for snap in &display {
-        let msg = if snap.message.len() > 50 {
-            format!("{}...", &snap.message[..47])
+        let msg = if snap.message.chars().count() > 50 {
+            let truncated: String = snap.message.chars().take(47).collect();
+            format!("{truncated}...")
         } else {
             snap.message.clone()
         };
@@ -39,4 +40,26 @@ pub async fn run(workspace: Option<&str>, limit: usize) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_utf8_truncation_no_panic() {
+        let msg = "你好世界".repeat(20);
+        // This would panic with byte slicing (&msg[..47])
+        let truncated: String = msg.chars().take(47).collect();
+        assert_eq!(truncated.chars().count(), 47);
+        assert!(format!("{}...", truncated).chars().count() <= 50);
+
+        let emoji_msg = "🎉🚀💎".repeat(20);
+        let truncated_emoji: String = emoji_msg.chars().take(47).collect();
+        assert_eq!(truncated_emoji.chars().count(), 47);
+    }
+
+    #[test]
+    fn test_short_message_not_truncated() {
+        let msg = "short msg";
+        assert!(msg.chars().count() <= 50);
+    }
 }

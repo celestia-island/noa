@@ -1,4 +1,8 @@
-use crate::{error::Result, snapshot::SnapshotId, workspace::{Workspace, WorkspaceManager}};
+use crate::{
+    error::Result,
+    snapshot::SnapshotId,
+    workspace::{Workspace, WorkspaceManager},
+};
 
 pub async fn create(
     mgr: &WorkspaceManager,
@@ -6,7 +10,7 @@ pub async fn create(
     base_snapshot: &SnapshotId,
     agent_id: Option<String>,
 ) -> Result<Workspace> {
-    let now = chrono::Utc::now().timestamp_micros() as u64;
+    let now = crate::now_micros();
     let ws = Workspace {
         name: name.to_string(),
         head: base_snapshot.clone(),
@@ -20,13 +24,13 @@ pub async fn create(
     Ok(ws)
 }
 
-pub async fn switch(
+pub async fn ensure_exists(
     mgr: &WorkspaceManager,
     name: &str,
 ) -> Result<()> {
     mgr.get(name)
         .await?
-        .ok_or_else(|| crate::error::NoaError::WorkspaceNotFound(name.to_string()))?;
+        .ok_or_else(|| anyhow::anyhow!("workspace not found: {name}"))?;
     Ok(())
 }
 
@@ -73,13 +77,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ops_switch() {
+    async fn test_ops_ensure_exists() {
         let (_tmp, mgr) = make_mgr();
         create(&mgr, "ws1", &SnapshotId("noa_base".to_string()), None)
             .await
             .unwrap();
-        assert!(switch(&mgr, "ws1").await.is_ok());
-        assert!(switch(&mgr, "missing").await.is_err());
+        assert!(ensure_exists(&mgr, "ws1").await.is_ok());
+        assert!(ensure_exists(&mgr, "missing").await.is_err());
     }
 
     #[tokio::test]

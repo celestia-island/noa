@@ -3,10 +3,7 @@ use std::sync::Arc;
 use redb::{Database, ReadableTable};
 
 use super::{Snapshot, SnapshotId, SnapshotStore};
-use crate::{
-    error::{NoaError, Result},
-    redb_err,
-};
+use crate::error::{NoaError, Result};
 
 const SNAPSHOTS: redb::TableDefinition<&str, &[u8]> = redb::TableDefinition::new("snapshots");
 const PARENT_INDEX: redb::TableDefinition<&str, &str> =
@@ -25,79 +22,96 @@ impl RedbSnapshotStore {
     }
 
     fn ensure_table(&self) -> Result<()> {
-        let txn = redb_err!(self.db.begin_write())?;
-        {
-            let _ = redb_err!(txn.open_table(SNAPSHOTS));
-            let _ = redb_err!(txn.open_table(PARENT_INDEX));
-        }
-        redb_err!(txn.commit())
+        let txn = self.db.begin_write()?;
+        txn.open_table(SNAPSHOTS)?;
+        txn.open_table(PARENT_INDEX)?;
+        txn.commit()?;
+        Ok(())
     }
 
     fn index_key(parent_id: &str, child_id: &str) -> String {
-        format!("{}:{}", parent_id, child_id)
+        format!("{parent_id}:{child_id}")
     }
 }
 
 #[async_trait::async_trait]
 impl SnapshotStore for RedbSnapshotStore {
     async fn get(&self, id: &SnapshotId) -> Result<Snapshot> {
-        let txn = redb_err!(self.db.begin_read())?;
-        let table = redb_err!(txn.open_table(SNAPSHOTS))?;
+        let db = Arc::clone(&self.db);
+        let id = id.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_read()?;
+            let table = txn.open_table(SNAPSHOTS)?;
 
-        match redb_err!(table.get(id.as_str()))? {
-            Some(guard) => rmp_serde::from_slice(guard.value())
-                .map_err(|e| NoaError::Serialization(e.to_string())),
-            None => Err(NoaError::SnapshotNotFound(id.to_string())),
-        }
+            match table.get(id.as_str())? {
+                Some(guard) => Ok(rmp_serde::from_slice::<Snapshot>(guard.value())?),
+                None => Err(NoaError::SnapshotNotFound { id: id.0 }.into()),
+            }
+        })
+        .await?
     }
 
     async fn store(&self, snapshot: &Snapshot) -> Result<()> {
-        let data =
-            rmp_serde::to_vec(snapshot).map_err(|e| NoaError::Serialization(e.to_string()))?;
+        let data = rmp_serde::to_vec(snapshot)?;
 
-        let txn = redb_err!(self.db.begin_write())?;
-        {
-            let mut table = redb_err!(txn.open_table(SNAPSHOTS))?;
-            redb_err!(table.insert(snapshot.id.as_str(), data.as_slice()))?;
+        let db = Arc::clone(&self.db);
+        let id = snapshot.id.clone();
+        let parents = snapshot.parents.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_write()?;
+            {
+                let mut table = txn.open_table(SNAPSHOTS)?;
+                table.insert(id.as_str(), data.as_slice())?;
 
-            let mut parent_idx = redb_err!(txn.open_table(PARENT_INDEX))?;
-            for parent in &snapshot.parents {
-                let key = Self::index_key(parent.as_str(), snapshot.id.as_str());
-                redb_err!(parent_idx.insert(key.as_str(), snapshot.id.as_str()))?;
+                let mut parent_idx = txn.open_table(PARENT_INDEX)?;
+                for parent in &parents {
+                    let key = Self::index_key(parent.as_str(), id.as_str());
+                    parent_idx.insert(key.as_str(), id.as_str())?;
+                }
             }
-        }
-        redb_err!(txn.commit())
+            txn.commit()?;
+            Ok(())
+        })
+        .await?
     }
 
     async fn children_of(&self, parent: &SnapshotId) -> Result<Vec<SnapshotId>> {
-        let txn = redb_err!(self.db.begin_read())?;
-        let table = redb_err!(txn.open_table(PARENT_INDEX))?;
+        let db = Arc::clone(&self.db);
+        let parent = parent.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_read()?;
+            let table = txn.open_table(PARENT_INDEX)?;
 
-        let prefix = format!("{}:", parent.as_str());
-        let mut children = Vec::new();
-        for entry in redb_err!(table.range(prefix.as_str()..))? {
-            let (key, value) = redb_err!(entry)?;
-            let key_str = key.value();
-            if !key_str.starts_with(&prefix) {
-                break;
+            let prefix = format!("{}:", parent.as_str());
+            let mut children = Vec::new();
+            for entry in table.range(prefix.as_str()..)? {
+                let (key, value) = entry?;
+                let key_str = key.value();
+                if !key_str.starts_with(&prefix) {
+                    break;
+                }
+                children.push(SnapshotId(value.value().to_string()));
             }
-            children.push(SnapshotId(value.value().to_string()));
-        }
-        Ok(children)
+            Ok(children)
+        })
+        .await?
     }
 
     async fn list_all(&self) -> Result<Vec<Snapshot>> {
-        let txn = redb_err!(self.db.begin_read())?;
-        let table = redb_err!(txn.open_table(SNAPSHOTS))?;
+        let db = Arc::clone(&self.db);
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_read()?;
+            let table = txn.open_table(SNAPSHOTS)?;
 
-        let mut result = Vec::new();
-        for entry in redb_err!(table.iter())? {
-            let (_, value) = redb_err!(entry)?;
-            let snapshot: Snapshot = rmp_serde::from_slice(value.value())
-                .map_err(|e| NoaError::Serialization(e.to_string()))?;
-            result.push(snapshot);
-        }
-        Ok(result)
+            let mut result = Vec::new();
+            for entry in table.iter()? {
+                let (_, value) = entry?;
+                let snapshot: Snapshot = rmp_serde::from_slice(value.value())?;
+                result.push(snapshot);
+            }
+            Ok(result)
+        })
+        .await?
     }
 }
 
@@ -197,9 +211,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_content_addressed_snapshot_id_format() {
-        let id = content_addressed_snapshot_id("treehash", &[], "workspace");
+        let id = content_addressed_snapshot_id("treehash", &[], "workspace", "author", "msg");
         assert!(id.0.starts_with("noa_"));
-        assert_eq!(id.0.len(), 20);
+        assert_eq!(id.0.len(), 68);
     }
 
     #[tokio::test]

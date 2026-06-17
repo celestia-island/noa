@@ -25,7 +25,7 @@ pub fn run(args: &InitArgs) -> Result<()> {
     if Repository::exists(&path) {
         anyhow::bail!(
             "repository already exists at {}",
-            path.join(".noa").display()
+            Repository::resolve_noa_dir(&path).display()
         );
     }
 
@@ -43,26 +43,8 @@ pub fn run(args: &InitArgs) -> Result<()> {
                 .output()?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("git init failed: {}", stderr);
+                anyhow::bail!("git init failed: {stderr}");
             }
-        }
-
-        let gitignore = path.join(".gitignore");
-        let content = if gitignore.exists() {
-            std::fs::read_to_string(&gitignore)?
-        } else {
-            String::new()
-        };
-        if !content
-            .lines()
-            .any(|l| l.trim() == ".noa/" || l.trim() == ".noa")
-        {
-            let updated = if content.is_empty() {
-                ".noa/\n".to_string()
-            } else {
-                format!("{}\n.noa/\n", content.trim_end())
-            };
-            std::fs::write(&gitignore, updated)?;
         }
     }
 

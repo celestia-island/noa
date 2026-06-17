@@ -1,6 +1,7 @@
 pub mod export;
 pub mod import;
 
+use anyhow::Context;
 use async_trait::async_trait;
 use std::process::Command;
 
@@ -11,7 +12,7 @@ pub use export::{
 pub use import::{import_git_to_noa, is_lfs_pointer};
 
 use crate::{
-    error::{NoaError, Result},
+    error::Result,
     remote::{FetchResult, FetchSpec, PushResult, PushSpec, RemoteBackend, RemoteRef},
 };
 
@@ -24,6 +25,7 @@ impl Default for GitBackend {
 }
 
 impl GitBackend {
+    #[must_use]
     pub fn new() -> Self {
         GitBackend
     }
@@ -31,16 +33,20 @@ impl GitBackend {
 
 #[async_trait]
 impl RemoteBackend for GitBackend {
-    fn protocol(&self) -> &str {
+    fn protocol(&self) -> &'static str {
         "git"
     }
 
     async fn push(&self, url: &str, _: &[PushSpec]) -> Result<PushResult> {
         export::validate_git_url(url)?;
-        let output = Command::new("git")
-            .args(["push", url])
-            .output()
-            .map_err(|e| NoaError::Remote(format!("git push failed: {}", e)))?;
+        let url_owned = url.to_string();
+        let output = tokio::task::spawn_blocking(move || {
+            Command::new("git")
+                .args(["push", &url_owned])
+                .output()
+                .with_context(|| "git push failed")
+        })
+        .await??;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -48,26 +54,27 @@ impl RemoteBackend for GitBackend {
         if output.status.success() {
             Ok(PushResult {
                 ok: true,
-                message: format!("{}\n{}", stdout, stderr).trim().to_string(),
+                message: format!("{stdout}\n{stderr}").trim().to_string(),
             })
         } else {
-            Ok(PushResult {
-                ok: false,
-                message: stderr,
-            })
+            anyhow::bail!("git push failed: {stderr}")
         }
     }
 
     async fn fetch(&self, url: &str, _: &[FetchSpec]) -> Result<FetchResult> {
         export::validate_git_url(url)?;
-        let output = Command::new("git")
-            .args(["fetch", url])
-            .output()
-            .map_err(|e| NoaError::Remote(format!("git fetch failed: {}", e)))?;
+        let url_owned = url.to_string();
+        let output = tokio::task::spawn_blocking(move || {
+            Command::new("git")
+                .args(["fetch", &url_owned])
+                .output()
+                .with_context(|| "git fetch failed")
+        })
+        .await??;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(NoaError::Remote(format!("git fetch failed: {}", stderr)));
+            anyhow::bail!("git fetch failed: {stderr}");
         }
 
         self.list_refs(url).await.map(|refs| FetchResult { refs })
@@ -75,17 +82,18 @@ impl RemoteBackend for GitBackend {
 
     async fn list_refs(&self, url: &str) -> Result<Vec<RemoteRef>> {
         export::validate_git_url(url)?;
-        let output = Command::new("git")
-            .args(["ls-remote", "--refs", url])
-            .output()
-            .map_err(|e| NoaError::Remote(format!("git ls-remote failed: {}", e)))?;
+        let url_owned = url.to_string();
+        let output = tokio::task::spawn_blocking(move || {
+            Command::new("git")
+                .args(["ls-remote", "--refs", &url_owned])
+                .output()
+                .with_context(|| "git ls-remote failed")
+        })
+        .await??;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(NoaError::Remote(format!(
-                "git ls-remote failed: {}",
-                stderr
-            )));
+            anyhow::bail!("git ls-remote failed: {stderr}");
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);

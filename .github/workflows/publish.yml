@@ -44,7 +44,7 @@ jobs:
             exit 1
           fi
           cargo login "$CRATES_IO_API_TOKEN"
-          cargo publish -p libnoa --allow-dirty -v
+          cargo publish -p libnoa -v
 
   build-release:
     name: Build ${{ matrix.target }}

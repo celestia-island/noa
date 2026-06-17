@@ -126,7 +126,7 @@ fn render_branches(f: &mut Frame, area: Rect, app: &App) {
             let agent = ws
                 .agent_id
                 .as_deref()
-                .map(|a| format!(" ({})", a))
+                .map(|a| format!(" ({a})"))
                 .unwrap_or_default();
             ListItem::new(Line::from(Span::styled(
                 format!("{}{}{}", marker, ws.name, agent),
@@ -142,10 +142,6 @@ fn render_branches(f: &mut Frame, area: Rect, app: &App) {
             state.select(Some(idx));
         }
     }
-
-    let inner_height = inner.height.saturating_sub(1) as usize;
-    let mut scroll = app.branch_scroll.clone();
-    scroll.set_visible_height(inner_height);
     f.render_stateful_widget(list, inner, &mut state);
 }
 
@@ -169,15 +165,17 @@ fn render_log(f: &mut Frame, area: Rect, app: &App) {
     let items: Vec<ListItem> = display
         .iter()
         .map(|snap| {
-            let msg = if snap.message.len() > 35 {
-                format!("{}...", &snap.message[..32])
+            let msg = if snap.message.chars().count() > 35 {
+                let truncated: String = snap.message.chars().take(32).collect();
+                format!("{truncated}...")
             } else {
                 snap.message.clone()
             };
-            let id_short = if snap.id.0.len() > 12 {
-                &snap.id.0[..12]
+            let id_display: String = snap.id.0.chars().take(12).collect();
+            let id_short = if snap.id.0.chars().count() > 12 {
+                id_display
             } else {
-                &snap.id.0
+                snap.id.0.clone()
             };
             let ts = chrono::DateTime::from_timestamp(snap.timestamp as i64 / 1_000_000, 0)
                 .map(|dt| dt.format("%m/%d %H:%M").to_string())
@@ -185,14 +183,14 @@ fn render_log(f: &mut Frame, area: Rect, app: &App) {
 
             let line = Line::from(vec![
                 Span::styled(
-                    format!("{:<12} ", id_short),
+                    format!("{id_short:<12} "),
                     Style::default().fg(Color::Yellow),
                 ),
                 Span::styled(
                     format!("{:<8} ", snap.workspace),
                     Style::default().fg(Color::Cyan),
                 ),
-                Span::styled(format!("{:<10} ", ts), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{ts:<10} "), Style::default().fg(Color::DarkGray)),
                 Span::raw(msg),
             ]);
             ListItem::new(line)
@@ -226,26 +224,25 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let snap = match app.selected_snapshot() {
-        Some(s) => s,
-        None => {
-            let hint = Paragraph::new("Select a snapshot to view details")
-                .style(Style::default().fg(Color::DarkGray));
-            f.render_widget(hint, inner);
-            return;
-        }
+    let Some(snap) = app.selected_snapshot() else {
+        let hint = Paragraph::new("Select a snapshot to view details")
+            .style(Style::default().fg(Color::DarkGray));
+        f.render_widget(hint, inner);
+        return;
     };
 
-    let ts = chrono::DateTime::from_timestamp(snap.timestamp as i64 / 1_000_000, 0)
-        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+    let ts = chrono::DateTime::from_timestamp(snap.timestamp as i64 / 1_000_000, 0).map_or_else(
+        || "unknown".to_string(),
+        |dt| dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+    );
 
     let parents: String = snap
         .parents
         .iter()
         .map(|p| {
-            if p.0.len() > 12 {
-                format!("{}...", &p.0[..12])
+            if p.0.chars().count() > 12 {
+                let truncated: String = p.0.chars().take(12).collect();
+                format!("{truncated}...")
             } else {
                 p.0.clone()
             }
@@ -272,8 +269,9 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
         ]),
         Line::from(vec![
             Span::styled("Tree:     ", Style::default().fg(Color::Yellow).bold()),
-            Span::raw(if snap.tree_hash.len() > 20 {
-                format!("{}...", &snap.tree_hash[..20])
+            Span::raw(if snap.tree_hash.chars().count() > 20 {
+                let truncated: String = snap.tree_hash.chars().take(20).collect();
+                format!("{truncated}...")
             } else {
                 snap.tree_hash.clone()
             }),
@@ -452,7 +450,7 @@ mod tests {
                 &format!("noa_s{}", i),
                 "default",
                 &format!("commit {}", i),
-                (1000000000 + i as u64) * 1_000_000,
+                (1_000_000_000 + i as u64) * 1_000_000,
             ));
         }
         app.snapshots = snaps;
@@ -478,5 +476,41 @@ mod tests {
         let buf2 = t2.backend().buffer().clone();
 
         assert_ne!(buf1, buf2);
+    }
+
+    #[test]
+    fn test_utf8_long_message_no_panic() {
+        let mut app = make_log_app();
+        app.snapshots.push(make_snap(
+            "noa_cjk",
+            "default",
+            &"你好世界".repeat(20),
+            1_000_002_000_000_000,
+        ));
+        app.snapshots.push(make_snap(
+            "noa_emoji",
+            "default",
+            &"🎉🚀💎".repeat(20),
+            1_000_003_000_000_000,
+        ));
+        app.log_scroll.set_total(app.snapshots.len());
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn test_utf8_long_id_no_panic() {
+        let mut app = make_log_app();
+        app.snapshots.push(make_snap(
+            &"你好".repeat(20),
+            "default",
+            "normal message",
+            1_000_004_000_000_000,
+        ));
+        app.log_scroll.set_total(app.snapshots.len());
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
     }
 }

@@ -19,9 +19,61 @@ fn validate_svn_url(url: &str) -> Result<()> {
         && !url.starts_with("svn+ssh://")
         && !url.starts_with("file://")
     {
-        anyhow::bail!("invalid SVN URL format: {}", url);
+        anyhow::bail!("invalid SVN URL format: {url}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_svn_url_valid_https() {
+        assert!(validate_svn_url("https://svn.example.com/repo").is_ok());
+    }
+
+    #[test]
+    fn test_validate_svn_url_valid_http() {
+        assert!(validate_svn_url("http://svn.example.com/repo").is_ok());
+    }
+
+    #[test]
+    fn test_validate_svn_url_valid_svn() {
+        assert!(validate_svn_url("svn://example.com/repo").is_ok());
+    }
+
+    #[test]
+    fn test_validate_svn_url_valid_svn_ssh() {
+        assert!(validate_svn_url("svn+ssh://example.com/repo").is_ok());
+    }
+
+    #[test]
+    fn test_validate_svn_url_valid_file() {
+        assert!(validate_svn_url("file:///path/to/repo").is_ok());
+    }
+
+    #[test]
+    fn test_validate_svn_url_empty() {
+        assert!(validate_svn_url("").is_err());
+    }
+
+    #[test]
+    fn test_validate_svn_url_control_chars() {
+        assert!(validate_svn_url("http://example.com/repo\n").is_err());
+        assert!(validate_svn_url("http://example.com/repo\0").is_err());
+    }
+
+    #[test]
+    fn test_validate_svn_url_dash_prefix() {
+        assert!(validate_svn_url("-http://example.com").is_err());
+    }
+
+    #[test]
+    fn test_validate_svn_url_invalid_scheme() {
+        assert!(validate_svn_url("ftp://example.com/repo").is_err());
+        assert!(validate_svn_url("git://example.com/repo").is_err());
+    }
 }
 
 pub async fn run_push(remote_name: &str) -> Result<()> {
@@ -31,25 +83,47 @@ pub async fn run_push(remote_name: &str) -> Result<()> {
     let remote = repo
         .config
         .get_remote(remote_name)
-        .ok_or_else(|| anyhow::anyhow!("remote '{}' not found", remote_name))?
+        .ok_or_else(|| anyhow::anyhow!("remote '{remote_name}' not found"))?
         .clone();
+    let remote_url = remote.url.clone();
+    let remote_name_owned = remote_name.to_string();
 
     let db = Arc::clone(&repo.db);
     drop(repo);
     crate::git::export_noa_to_git(&root, db).await?;
 
-    let output = std::process::Command::new("git")
-        .args(["push", &remote.url])
-        .current_dir(&root)
-        .output()?;
+    crate::git::export::validate_git_url(&remote_url)?;
+    let root_push = root.clone();
+    let root_lfs = root.clone();
+    let url_for_push = remote_url.clone();
+    let url_for_lfs = remote_url.clone();
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("git")
+            .args(["push", &url_for_push])
+            .current_dir(&root_push)
+            .output()
+    })
+    .await??;
 
     if output.status.success() {
-        if crate::git::export::detect_lfs_available(&root) {
-            crate::git::export::lfs_push_all(&root, &remote.url);
+        let root_lfs_check = root_lfs.clone();
+        let has_lfs = tokio::task::spawn_blocking(move || {
+            crate::git::export::detect_lfs_available(&root_lfs_check)
+                && crate::git::export::has_lfs_tracking(&root_lfs_check)
+        })
+        .await?;
+        if has_lfs {
+            let root_lfs_push = root_lfs.clone();
+            let url_for_lfs_push = url_for_lfs.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::git::export::lfs_push_all(&root_lfs_push, &url_for_lfs_push)
+            })
+            .await??;
         }
-        println!("Pushed to {} ({})", remote_name, remote.url);
+        println!("Pushed to {} ({})", remote_name_owned, remote_url);
     } else {
-        anyhow::bail!("git push failed");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git push failed: {}", stderr.trim());
     }
 
     Ok(())
@@ -62,26 +136,42 @@ pub async fn run_pull(remote_name: &str) -> Result<()> {
     let remote = repo
         .config
         .get_remote(remote_name)
-        .ok_or_else(|| anyhow::anyhow!("remote '{}' not found", remote_name))?
+        .ok_or_else(|| anyhow::anyhow!("remote '{remote_name}' not found"))?
         .clone();
 
-    let output = std::process::Command::new("git")
-        .args(["pull", &remote.url])
-        .current_dir(&root)
-        .output()?;
+    crate::git::export::validate_git_url(&remote.url)?;
+    let root_pull = root.clone();
+    let url_for_pull = remote.url.clone();
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("git")
+            .args(["pull", &url_for_pull])
+            .current_dir(&root_pull)
+            .output()
+    })
+    .await??;
 
     if !output.status.success() {
-        anyhow::bail!("git pull failed");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git pull failed: {}", stderr.trim());
     }
 
+    let root_lfs_pull = root.clone();
     if crate::git::export::detect_lfs_available(&root)
         && crate::git::export::has_lfs_tracking(&root)
     {
-        crate::git::export::lfs_pull(&root);
+        tokio::task::spawn_blocking(move || crate::git::export::lfs_pull(&root_lfs_pull))
+            .await??;
     }
 
     let db = Arc::clone(&repo.db);
     let head_ws = repo.read_head()?;
+
+    let ws_mgr_before = crate::workspace::WorkspaceManager::new(db.clone())?;
+    let before_head = ws_mgr_before
+        .get(&head_ws)
+        .await?
+        .map_or_else(crate::snapshot::empty_snapshot_id, |ws| ws.head.clone());
+
     drop(repo);
     crate::git::import::import_git_to_noa(&root, db.clone()).await?;
 
@@ -91,11 +181,18 @@ pub async fn run_pull(remote_name: &str) -> Result<()> {
         .ok()
         .flatten();
     if let Some(snap_id) = head_ref {
-        let ws_mgr = crate::workspace::WorkspaceManager::new(db)?;
-        ws_mgr.update_head(&head_ws, &snap_id).await.ok();
+        if snap_id == before_head {
+            println!("Already up to date.");
+        } else {
+            let ws_mgr = crate::workspace::WorkspaceManager::new(db)?;
+            if let Err(e) = ws_mgr.update_head(&head_ws, &snap_id).await {
+                eprintln!("warning: failed to update workspace head after pull: {e}");
+            }
+            println!("Pulled from {remote_name} and re-imported into noa");
+        }
+    } else {
+        println!("Pulled from {remote_name} (no new changes)");
     }
-
-    println!("Pulled from {} and re-imported into noa", remote_name);
 
     Ok(())
 }
@@ -107,7 +204,7 @@ pub async fn run_fetch(remote_name: &str) -> Result<()> {
     let remote = repo
         .config
         .get_remote(remote_name)
-        .ok_or_else(|| anyhow::anyhow!("remote '{}' not found", remote_name))?
+        .ok_or_else(|| anyhow::anyhow!("remote '{remote_name}' not found"))?
         .clone();
 
     let backend = crate::git::GitBackend::new();
@@ -118,7 +215,7 @@ pub async fn run_fetch(remote_name: &str) -> Result<()> {
         return Ok(());
     }
 
-    println!("Remote refs from {}:", remote_name);
+    println!("Remote refs from {remote_name}:");
     for r in &refs {
         println!(
             "  {} -> {}",
@@ -167,21 +264,35 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
 
     let export_output = std::process::Command::new("svn")
         .args(["export", "--force", &svn_url, &target.to_string_lossy()])
-        .output()?;
+        .output()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                anyhow::anyhow!("'svn' command not found — please install Subversion")
+            } else {
+                anyhow::anyhow!("svn export failed: {e}")
+            }
+        })?;
 
     if !export_output.status.success() {
-        anyhow::bail!("svn export failed");
+        let stderr = String::from_utf8_lossy(&export_output.stderr);
+        anyhow::bail!("svn export failed: {}", stderr.trim());
     }
 
-    std::process::Command::new("git")
+    let git_init = std::process::Command::new("git")
         .args(["init"])
         .current_dir(&target)
         .status()?;
+    if !git_init.success() {
+        anyhow::bail!("git init failed");
+    }
 
-    std::process::Command::new("git")
+    let git_add = std::process::Command::new("git")
         .args(["add", "-A"])
         .current_dir(&target)
         .status()?;
+    if !git_add.success() {
+        anyhow::bail!("git add -A failed");
+    }
 
     let svn_rev_output = std::process::Command::new("svn")
         .args(["info", "--show-item", "revision", &svn_url])
@@ -190,12 +301,11 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
 
     let rev_info = svn_rev_output
         .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "?".to_string());
+        .map_or_else(|| "?".to_string(), |s| s.trim().to_string());
 
-    let commit_msg = format!("imported from SVN {}@r{}", svn_url, rev_info);
+    let commit_msg = format!("imported from SVN {svn_url}@r{rev_info}");
 
-    std::process::Command::new("git")
+    let git_commit = std::process::Command::new("git")
         .args(["commit", "-m", &commit_msg])
         .current_dir(&target)
         .env("GIT_AUTHOR_NAME", "noa-svn-bridge")
@@ -203,44 +313,18 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
         .env("GIT_COMMITTER_NAME", "noa-svn-bridge")
         .env("GIT_COMMITTER_EMAIL", "noa@noa.local")
         .status()?;
-
-    let db_path = target.join(".noa").join("noa.redb");
-    std::fs::create_dir_all(target.join(".noa").join("agent-logs"))?;
-
-    let db = std::sync::Arc::new(
-        redb::Database::builder()
-            .create(&db_path)
-            .map_err(|e| anyhow::anyhow!("db create failed: {}", e))?,
-    );
-
-    {
-        let txn = db
-            .begin_write()
-            .map_err(|e| anyhow::anyhow!("db write failed: {}", e))?;
-        {
-            let _ = txn.open_table(redb::TableDefinition::<&[u8], &[u8]>::new("blobs"));
-            let _ = txn.open_table(redb::TableDefinition::<&[u8], &[u8]>::new("trees"));
-            let _ = txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("snapshots"));
-            let _ = txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("workspaces"));
-            let _ = txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("refs"));
-        }
-        txn.commit()
-            .map_err(|e| anyhow::anyhow!("db commit failed: {}", e))?;
+    if !git_commit.success() {
+        anyhow::bail!("git commit failed");
     }
 
-    let config = crate::config::RepoConfig {
-        name: "default".to_string(),
-        remotes: vec![crate::config::RemoteConfig {
-            name: "svn-origin".to_string(),
-            url: url.to_string(),
-            protocol: "svn".to_string(),
-        }],
-        noa_remote: None,
-        sync: None,
+    let remote_config = crate::config::RemoteConfig {
+        name: "svn-origin".to_string(),
+        url: url.to_string(),
+        protocol: "svn".to_string(),
     };
-    config.save_to_dir(&target.join(".noa"))?;
-    std::fs::write(target.join(".noa").join("HEAD"), "default\n")?;
+    let repo = crate::repo::Repository::init_with_remotes(&target, vec![remote_config])?;
 
+    let db = std::sync::Arc::clone(&repo.db);
     crate::git::import::import_git_to_noa(&target, std::sync::Arc::clone(&db)).await?;
 
     let ref_store = crate::refs::RedbRefStore::new(std::sync::Arc::clone(&db))?;
@@ -248,35 +332,12 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
         .await
         .ok()
         .flatten();
-    let head_snap_id =
-        head_ref.unwrap_or_else(|| crate::snapshot::SnapshotId("noa_empty".to_string()));
+    let head_snap_id = head_ref.unwrap_or_else(crate::snapshot::empty_snapshot_id);
 
-    let ws_mgr = crate::workspace::WorkspaceManager::new(std::sync::Arc::clone(&db))?;
-    let now = chrono::Utc::now().timestamp_micros() as u64;
-    ws_mgr
-        .create(&crate::workspace::Workspace {
-            name: "default".to_string(),
-            head: head_snap_id.clone(),
-            base: head_snap_id.clone(),
-            agent_id: None,
-            last_seq: 0,
-            created_at: now,
-            updated_at: now,
-        })
-        .await
-        .ok();
-
-    let gitignore_path = target.join(".gitignore");
-    if !gitignore_path.exists() {
-        std::fs::write(&gitignore_path, "# Added by noa\n.noa/\n")?;
-    } else {
-        let content = std::fs::read_to_string(&gitignore_path)?;
-        if !content
-            .lines()
-            .any(|l| l.trim() == ".noa/" || l.trim() == ".noa")
-        {
-            std::fs::write(&gitignore_path, format!("{}\n.noa/\n", content.trim_end()))?;
-        }
+    // Update the existing default workspace's head (created by init_with_remotes)
+    let ws_mgr = crate::workspace::WorkspaceManager::new(db)?;
+    if let Err(e) = ws_mgr.update_head("default", &head_snap_id).await {
+        eprintln!("warning: failed to update default workspace head: {e}");
     }
 
     println!(

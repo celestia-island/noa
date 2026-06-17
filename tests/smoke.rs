@@ -520,11 +520,11 @@ async fn smoke_test_manage_gitignore_idempotent() {
     let tmp = tempfile::TempDir::new().unwrap();
     let root = tmp.path();
 
-    manage_gitignore(root);
+    manage_gitignore(root).unwrap();
     let first = std::fs::read_to_string(root.join(".gitignore")).unwrap();
     assert!(first.contains(".noa/"));
 
-    manage_gitignore(root);
+    manage_gitignore(root).unwrap();
     let second = std::fs::read_to_string(root.join(".gitignore")).unwrap();
     assert_eq!(first, second);
 }
@@ -534,11 +534,11 @@ async fn smoke_test_manage_gitattributes_idempotent() {
     let tmp = tempfile::TempDir::new().unwrap();
     let root = tmp.path();
 
-    manage_gitattributes(root, "https://noa.example.com/repo");
+    manage_gitattributes(root, "https://noa.example.com/repo").unwrap();
     let first = std::fs::read_to_string(root.join(".gitattributes")).unwrap();
     assert!(first.contains("noa-remote="));
 
-    manage_gitattributes(root, "https://noa.example.com/repo");
+    manage_gitattributes(root, "https://noa.example.com/repo").unwrap();
     let second = std::fs::read_to_string(root.join(".gitattributes")).unwrap();
     let count = second.matches("noa-remote=").count();
     assert_eq!(count, 1);

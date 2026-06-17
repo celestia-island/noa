@@ -1,38 +1,41 @@
+use anyhow::Context;
 use std::{path::Path, sync::Arc};
 
 use crate::{
-    error::{NoaError, Result},
+    error::Result,
     object::{EntryKind, ObjectStore, TreeEntries, TreeEntry},
     refs::{RedbRefStore, RefStore},
-    snapshot::{RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore},
+    snapshot::{content_addressed_snapshot_id_with_ts, RedbSnapshotStore, Snapshot, SnapshotStore},
 };
 
 pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Result<()> {
-    let repo = gix::open(git_dir).map_err(|e| NoaError::Remote(e.to_string()))?;
+    let git_dir = git_dir.to_path_buf();
+    let repo = tokio::task::spawn_blocking(move || gix::open(&git_dir).map_err(Box::new))
+        .await?
+        .map_err(|e| anyhow::anyhow!("failed to open git repo: {e}"))?;
 
     let obj_store = crate::object::RedbObjectStore::new(Arc::clone(&db))?;
     let snap_store = RedbSnapshotStore::new(Arc::clone(&db))?;
-    let ref_store = RedbRefStore::new(db)?;
+    let ref_store = RedbRefStore::new(Arc::clone(&db))?;
+    let ws_mgr = crate::workspace::WorkspaceManager::new(Arc::clone(&db))?;
 
-    let head_id = repo
-        .head_id()
-        .map_err(|e| NoaError::Remote(e.to_string()))?
-        .detach();
+    let head_id = match repo.head_id() {
+        Ok(id) => id.detach(),
+        Err(_) => {
+            tracing::warn!("git repository has no HEAD (empty repo), skipping import");
+            return Ok(());
+        }
+    };
 
-    let head_obj = repo
-        .find_object(head_id)
-        .map_err(|e| NoaError::Remote(e.to_string()))?;
+    let head_obj = repo.find_object(head_id)?;
 
     let commit = head_obj
         .try_into_commit()
-        .map_err(|e| NoaError::Remote(format!("HEAD is not a commit: {}", e)))?;
+        .with_context(|| "HEAD is not a commit")?;
 
-    let tree_id = commit
-        .tree_id()
-        .map_err(|e| NoaError::Remote(e.to_string()))?
-        .detach();
+    let tree_id = commit.tree_id()?.detach();
 
-    let entries = import_tree_recursive(&repo, tree_id, &obj_store)?;
+    let entries = import_tree_recursive(&repo, tree_id, &obj_store).await?;
 
     let mut sorted = entries;
     sorted.sort_by(|a, b| a.name.cmp(&b.name));
@@ -41,87 +44,117 @@ pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Resul
     let author = commit
         .author()
         .ok()
-        .map(|a| a.name.to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+        .map_or_else(|| "unknown".to_string(), |a| a.name.to_string());
 
     let message = commit
         .message_raw()
-        .map(|m| m.to_string())
+        .map(std::string::ToString::to_string)
         .unwrap_or_default();
 
-    let time = commit.time().map_err(|e| NoaError::Remote(e.to_string()))?;
+    let time = commit.time()?;
+    let timestamp = (time.seconds as u64) * 1_000_000;
 
     let snapshot = Snapshot {
-        id: SnapshotId(format!("noa_{}", &head_id.to_hex().to_string()[..12])),
+        id: content_addressed_snapshot_id_with_ts(&noa_tree_id.0, &[], "default", &author, &message, timestamp),
         tree_hash: noa_tree_id.0,
         parents: vec![],
         workspace: "default".to_string(),
         author,
-        timestamp: time.seconds as u64,
+        timestamp,
         message,
     };
     snap_store.store(&snapshot).await?;
     ref_store.cas("HEAD", None, &snapshot.id).await?;
 
+    let now = crate::now_micros();
+    let ws = crate::workspace::Workspace {
+        name: "default".to_string(),
+        head: snapshot.id.clone(),
+        base: crate::snapshot::empty_snapshot_id(),
+        agent_id: None,
+        last_seq: 0,
+        created_at: now,
+        updated_at: now,
+    };
+    if let Err(e) = ws_mgr.create(&ws).await {
+        // Workspace may already exist from init_with_remotes; update in place
+        if crate::error::is_workspace_already_exists(&e) {
+            ws_mgr.update_head("default", &snapshot.id).await?;
+        } else {
+            return Err(e);
+        }
+    }
+
     Ok(())
 }
 
+#[must_use]
 pub fn is_lfs_pointer(content: &[u8]) -> bool {
     if content.len() > 500 {
         return false;
     }
-    let s = match std::str::from_utf8(content) {
-        Ok(s) => s,
-        Err(_) => return false,
+    let Ok(s) = std::str::from_utf8(content) else {
+        return false;
     };
     s.starts_with("version https://git-lfs.github.com/spec/")
 }
 
-fn import_tree_recursive(
+fn walk_tree(
+    repo: &gix::Repository,
+    tree_id: gix::hash::ObjectId,
+) -> Result<Vec<(String, Vec<u8>)>> {
+    let mut stack = vec![(tree_id, String::new())];
+    let mut results = Vec::new();
+
+    while let Some((current_id, prefix)) = stack.pop() {
+        let obj = repo.find_object(current_id)?;
+        let tree = obj.try_into_tree().with_context(|| "not a tree")?;
+
+        for entry_result in tree.iter() {
+            let entry = entry_result?;
+            let mode = entry.mode();
+            let entry_id = entry.oid();
+            let name = entry.filename().to_string();
+            let full_name = if prefix.is_empty() {
+                name
+            } else {
+                format!("{prefix}/{name}")
+            };
+
+            if mode.is_tree() {
+                stack.push((entry_id.to_owned(), full_name));
+            } else {
+                let blob_obj = repo.find_object(entry_id)?;
+                let blob = blob_obj.try_into_blob().with_context(|| "not a blob")?;
+                results.push((full_name, blob.data.clone()));
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+async fn import_tree_recursive(
     repo: &gix::Repository,
     tree_id: gix::hash::ObjectId,
     obj_store: &crate::object::RedbObjectStore,
 ) -> Result<Vec<TreeEntry>> {
-    let obj = repo
-        .find_object(tree_id)
-        .map_err(|e| NoaError::Remote(e.to_string()))?;
+    let git_dir = repo.git_dir().to_path_buf();
 
-    let tree = obj
-        .try_into_tree()
-        .map_err(|e| NoaError::Remote(format!("not a tree: {}", e)))?;
+    let file_contents = tokio::task::spawn_blocking(move || {
+        let opened = gix::open(&git_dir).map_err(|e| anyhow::anyhow!("failed to open git repo: {e}"))?;
+        walk_tree(&opened, tree_id)
+    })
+    .await??;
 
-    let mut entries = Vec::new();
-
-    for entry_result in tree.iter() {
-        let entry = entry_result.map_err(|e| NoaError::Remote(e.to_string()))?;
-        let mode = entry.mode();
-        let entry_id = entry.oid();
-        let filename = entry.filename().to_string();
-
-        if mode.is_tree() {
-            let sub_entries = import_tree_recursive(repo, entry_id.to_owned(), obj_store)?;
-            for mut sub in sub_entries {
-                sub.name = format!("{}/{}", filename, sub.name);
-                entries.push(sub);
-            }
-        } else {
-            let blob_obj = repo
-                .find_object(entry_id)
-                .map_err(|e| NoaError::Remote(e.to_string()))?;
-            let blob = blob_obj
-                .try_into_blob()
-                .map_err(|e| NoaError::Remote(format!("not a blob: {}", e)))?;
-            let content = blob.data.clone();
-            let blob_id = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(obj_store.put_blob(&content))
-            })?;
-            entries.push(TreeEntry {
-                name: filename,
-                kind: EntryKind::Blob,
-                id: blob_id.0,
-            });
-        }
+    let mut entries = Vec::with_capacity(file_contents.len());
+    for (name, content) in file_contents {
+        let blob_id = obj_store.put_blob(&content).await?;
+        entries.push(TreeEntry {
+            name,
+            kind: EntryKind::Blob,
+            id: blob_id.0,
+        });
     }
-
     Ok(entries)
 }

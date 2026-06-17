@@ -3,25 +3,31 @@ use std::{
     sync::Arc,
 };
 
+use anyhow::Context;
 use redb::Database;
 
 use crate::{
-    config::RepoConfig,
-    error::{NoaError, Result},
-    log::FileAgentLog,
-    object::RedbObjectStore,
-    refs::RedbRefStore,
-    snapshot::{RedbSnapshotStore, SnapshotId},
-    workspace::WorkspaceManager,
+    config::RepoConfig, error::{NoaError, Result}, log::FileAgentLog, object::RedbObjectStore,
+    refs::RedbRefStore, snapshot::RedbSnapshotStore, workspace::WorkspaceManager,
 };
 
+/// Name of the `.noa` directory when standalone.
 pub const NOA_DIR_NAME: &str = ".noa";
+/// Sub-path inside `.git/` for parasitic mode.
+pub const NOA_PARASITIC_PATH: &str = ".git/noa";
+/// Filename of the embedded redb database inside `.noa/`.
 pub const DB_NAME: &str = "noa.redb";
+/// Subdirectory holding per-workspace JSONL agent logs.
 pub const AGENT_LOGS_DIR: &str = "agent-logs";
-pub const SNAPSHOTS_DIR: &str = "snapshots";
+/// Filename of the HEAD pointer (contains the active workspace name).
 pub const HEAD_FILE: &str = "HEAD";
+/// Filename of the ORIG_HEAD pointer (saved before merge operations).
 pub const ORIG_HEAD_FILE: &str = "ORIG_HEAD";
 
+/// Handle to an opened noa repository (the `.noa/` directory alongside `.git`).
+///
+/// Provides access to the object store, snapshot store, ref store, workspace
+/// manager, and agent logs for a single repository.
 pub struct Repository {
     pub root: PathBuf,
     pub noa_dir: PathBuf,
@@ -30,24 +36,71 @@ pub struct Repository {
 }
 
 impl Repository {
+    /// Resolves the noa directory path for a given workspace root.
+    ///
+    /// In parasitic mode (`.git/` exists), returns `<root>/.git/noa`.
+    /// Otherwise returns `<root>/.noa`.
+    pub fn resolve_noa_dir(root: &Path) -> PathBuf {
+        if root.join(".git").is_dir() {
+            root.join(NOA_PARASITIC_PATH)
+        } else {
+            root.join(NOA_DIR_NAME)
+        }
+    }
+
+    /// Returns true if the noa directory is parasitic (inside `.git/`).
+    #[must_use]
+    pub fn is_parasitic(&self) -> bool {
+        self.noa_dir.starts_with(self.root.join(".git"))
+    }
+    /// Initializes a new `.noa/` repository at the given path.
+    ///
+    /// # Errors
+    /// Returns an error if `.noa/` already exists or if filesystem operations fail.
     pub fn init(path: &Path) -> Result<Self> {
         Self::init_with_noa_remote(path, None)
     }
 
+    /// Initializes with an optional noa remote URL (also configures `.gitattributes`).
     pub fn init_with_noa_remote(path: &Path, noa_remote: Option<&str>) -> Result<Self> {
-        let noa_dir = path.join(NOA_DIR_NAME);
+        let config = RepoConfig {
+            noa_remote: noa_remote.map(std::string::ToString::to_string),
+            ..RepoConfig::default()
+        };
+        Self::init_inner(path, config, |path, cfg| {
+            if let Some(url) = &cfg.noa_remote {
+                manage_gitattributes(path, url)?;
+            }
+            Ok(())
+        })
+    }
+
+    pub fn init_with_remotes(
+        path: &Path,
+        remotes: Vec<crate::config::RemoteConfig>,
+    ) -> Result<Self> {
+        let config = RepoConfig {
+            name: "default".to_string(),
+            remotes,
+            noa_remote: None,
+            sync: None,
+        };
+        Self::init_inner(path, config, |_path, _cfg| Ok(()))
+    }
+
+    fn init_inner<F>(path: &Path, config: RepoConfig, extra: F) -> Result<Self>
+    where
+        F: FnOnce(&Path, &RepoConfig) -> Result<()>,
+    {
+        let noa_dir = Self::resolve_noa_dir(path);
 
         if noa_dir.exists() {
-            return Err(NoaError::RepoAlreadyExists(noa_dir.display().to_string()));
+            return Err(NoaError::RepositoryAlreadyExists { path: noa_dir.display().to_string() }.into());
         }
 
         std::fs::create_dir_all(&noa_dir)?;
         std::fs::create_dir_all(noa_dir.join(AGENT_LOGS_DIR))?;
 
-        let mut config = RepoConfig::default();
-        if let Some(url) = noa_remote {
-            config.noa_remote = Some(url.to_string());
-        }
         config.save_to_dir(&noa_dir)?;
 
         std::fs::write(noa_dir.join(HEAD_FILE), "default\n")?;
@@ -58,25 +111,31 @@ impl Repository {
         let db = Arc::new(db);
         Self::create_default_workspace(&db)?;
 
-        manage_gitignore(path);
-
-        if let Some(url) = noa_remote {
-            manage_gitattributes(path, url);
-        }
-
-        Ok(Repository {
+        let repo = Repository {
             root: path.to_path_buf(),
             noa_dir,
             db,
             config,
-        })
+        };
+
+        if !repo.is_parasitic() {
+            manage_gitignore(path)?;
+        }
+
+        extra(path, &repo.config)?;
+
+        Ok(repo)
     }
 
+    /// Opens an existing `.noa/` repository at the given path.
+    ///
+    /// # Errors
+    /// Returns an error if `.noa/` does not exist or is invalid.
     pub fn open(path: &Path) -> Result<Self> {
-        let noa_dir = path.join(NOA_DIR_NAME);
+        let noa_dir = Self::resolve_noa_dir(path);
 
         if !noa_dir.exists() {
-            return Err(NoaError::RepoNotFound(noa_dir.display().to_string()));
+            return Err(NoaError::RepositoryNotFound { path: noa_dir.display().to_string() }.into());
         }
 
         Self::validate(&noa_dir)?;
@@ -93,90 +152,82 @@ impl Repository {
         })
     }
 
+    /// Walks up from `from` to find the nearest `.noa/` repository root.
+    ///
+    /// # Errors
+    /// Returns an error if no `.noa/` is found in any ancestor directory.
     pub fn find(from: &Path) -> Result<PathBuf> {
         let mut current = from.to_path_buf();
         loop {
-            if current.join(NOA_DIR_NAME).exists() {
+            let standalone = current.join(NOA_DIR_NAME);
+            let parasitic = current.join(NOA_PARASITIC_PATH);
+            if standalone.exists() || parasitic.exists() {
                 return Ok(current);
             }
             match current.parent() {
                 Some(parent) => current = parent.to_path_buf(),
-                None => {
-                    return Err(NoaError::RepoNotFound(
-                        "reached filesystem root".to_string(),
-                    ))
-                }
+                None => return Err(NoaError::RepositoryNotFound { path: from.display().to_string() }.into()),
             }
         }
     }
 
+    #[must_use]
     pub fn exists(path: &Path) -> bool {
-        path.join(NOA_DIR_NAME).exists()
+        path.join(NOA_DIR_NAME).exists() || path.join(NOA_PARASITIC_PATH).exists()
     }
 
     fn validate(noa_dir: &Path) -> Result<()> {
         if !noa_dir.join(DB_NAME).exists() {
-            return Err(NoaError::InvalidRepo("missing noa.redb".to_string()));
+            anyhow::bail!("invalid repository: missing noa.redb");
         }
         if !noa_dir.join(AGENT_LOGS_DIR).exists() {
-            return Err(NoaError::InvalidRepo(
-                "missing agent-logs/ directory".to_string(),
-            ));
+            anyhow::bail!("invalid repository: missing agent-logs/ directory");
         }
         if !noa_dir.join("config").exists() {
-            return Err(NoaError::InvalidRepo("missing config file".to_string()));
+            anyhow::bail!("invalid repository: missing config file");
         }
         Ok(())
     }
 
     fn open_db(noa_dir: &Path) -> Result<Database> {
         let db_path = noa_dir.join(DB_NAME);
-        Database::builder()
-            .create(&db_path)
-            .map_err(|e| NoaError::Redb(e.to_string()))
+        let db = Database::builder().create(&db_path)?;
+        Ok(db)
     }
 
     fn init_tables(db: &Database) -> Result<()> {
-        let write_txn = db
-            .begin_write()
-            .map_err(|e| NoaError::Redb(e.to_string()))?;
+        let write_txn = db.begin_write()?;
 
-        {
-            let _ = write_txn.open_table(redb::TableDefinition::<&[u8], &[u8]>::new("blobs"));
-            let _ = write_txn.open_table(redb::TableDefinition::<&[u8], &[u8]>::new("trees"));
-            let _ = write_txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("snapshots"));
-            let _ = write_txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("workspaces"));
-            let _ = write_txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("refs"));
-        }
+        // Ensure all required tables exist (redb creates them lazily on open_table)
+        write_txn.open_table::<&[u8], &[u8]>(redb::TableDefinition::new("blobs"))?;
+        write_txn.open_table::<&[u8], &[u8]>(redb::TableDefinition::new("trees"))?;
+        write_txn.open_table::<&str, &[u8]>(redb::TableDefinition::new("snapshots"))?;
+        write_txn.open_table::<&str, &[u8]>(redb::TableDefinition::new("workspaces"))?;
+        write_txn.open_table::<&str, &[u8]>(redb::TableDefinition::new("refs"))?;
 
-        write_txn
-            .commit()
-            .map_err(|e| NoaError::Redb(e.to_string()))
+        write_txn.commit()?;
+        Ok(())
     }
 
     fn create_default_workspace(db: &Arc<Database>) -> Result<()> {
         let ws = crate::workspace::Workspace {
             name: "default".to_string(),
-            head: SnapshotId("noa_empty".to_string()),
-            base: SnapshotId("noa_empty".to_string()),
+            head: crate::snapshot::empty_snapshot_id(),
+            base: crate::snapshot::empty_snapshot_id(),
             agent_id: None,
             last_seq: 0,
             created_at: 0,
             updated_at: 0,
         };
-        let data = rmp_serde::to_vec(&ws).map_err(|e| NoaError::Serialization(e.to_string()))?;
-        let txn = db
-            .begin_write()
-            .map_err(|e| NoaError::Redb(e.to_string()))?;
+        let data = rmp_serde::to_vec(&ws)?;
+        let txn = db.begin_write()?;
         {
-            let mut table = txn
-                .open_table(redb::TableDefinition::<&str, &[u8]>::new("workspaces"))
-                .map_err(|e| NoaError::Redb(e.to_string()))?;
-            table
-                .insert("default", data.as_slice())
-                .map_err(|e| NoaError::Redb(e.to_string()))?;
+            let mut table =
+                txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("workspaces"))?;
+            table.insert("default", data.as_slice())?;
         }
-        txn.commit().map_err(|e| NoaError::Redb(e.to_string()))
+        txn.commit()?;
+        Ok(())
     }
 
     pub fn read_head(&self) -> Result<String> {
@@ -187,7 +238,7 @@ impl Repository {
 
     pub fn write_head(&self, name: &str) -> Result<()> {
         let head_path = self.noa_dir.join(HEAD_FILE);
-        std::fs::write(&head_path, format!("{}\n", name))?;
+        std::fs::write(&head_path, format!("{name}\n"))?;
         Ok(())
     }
 
@@ -203,16 +254,18 @@ impl Repository {
 
     pub fn write_orig_head(&self, name: &str) -> Result<()> {
         let path = self.noa_dir.join(ORIG_HEAD_FILE);
-        std::fs::write(&path, format!("{}\n", name))?;
+        std::fs::write(&path, format!("{name}\n"))?;
         Ok(())
     }
 
+    #[must_use]
     pub fn agent_logs_dir(&self) -> PathBuf {
         self.noa_dir.join(AGENT_LOGS_DIR)
     }
 
+    #[must_use]
     pub fn agent_log_path(&self, workspace: &str) -> PathBuf {
-        self.agent_logs_dir().join(format!("{}.log", workspace))
+        self.agent_logs_dir().join(format!("{workspace}.log"))
     }
 
     pub fn save_config(&mut self) -> Result<()> {
@@ -241,52 +294,22 @@ impl Repository {
     }
 
     pub fn init_for_sync(path: &Path) -> Result<SyncInitResult> {
-        let noa_dir = path.join(NOA_DIR_NAME);
-        let mut noa_initialized = false;
-        let mut gitignore_updated = false;
+        let noa_dir = Self::resolve_noa_dir(path);
 
-        if !noa_dir.exists() {
-            std::fs::create_dir_all(&noa_dir)?;
-            std::fs::create_dir_all(noa_dir.join(AGENT_LOGS_DIR))?;
-            std::fs::create_dir_all(noa_dir.join(SNAPSHOTS_DIR))?;
-
-            let config = RepoConfig::default();
-            config.save_to_dir(&noa_dir)?;
-
-            std::fs::write(noa_dir.join(HEAD_FILE), "default\n")?;
-
-            let db = Self::open_db(&noa_dir)?;
-            Self::init_tables(&db)?;
-
-            let db = Arc::new(db);
-            Self::create_default_workspace(&db)?;
-
-            noa_initialized = true;
-        }
-
-        let gitignore_path = path.join(".gitignore");
-        if gitignore_path.exists() {
-            let content = std::fs::read_to_string(&gitignore_path)?;
-            let has_noa = content
-                .lines()
-                .any(|l| l.trim() == ".noa/" || l.trim() == ".noa");
-            if !has_noa {
-                manage_gitignore(path);
-                gitignore_updated = true;
-            }
+        let noa_initialized = if !noa_dir.exists() {
+            Self::init_inner(path, RepoConfig::default(), |_p, _c| Ok(()))?;
+            true
         } else {
-            manage_gitignore(path);
-            gitignore_updated = true;
-        }
+            false
+        };
 
-        let _repo = Repository::open(path)?;
         let current_branch = get_current_git_branch(path)?;
 
         Ok(SyncInitResult {
-            repo_id: format!("noa:{}", path.display()),
+            repo_id: format!("{}:{}", "sync", path.display()),
             current_branch,
             noa_initialized,
-            gitignore_updated,
+            gitignore_updated: false,
         })
     }
 }
@@ -298,77 +321,81 @@ pub struct SyncInitResult {
     pub gitignore_updated: bool,
 }
 
-fn get_current_git_branch(workspace_root: &Path) -> Result<String> {
+pub fn get_current_git_branch(workspace_root: &Path) -> Result<String> {
     let output = std::process::Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(workspace_root)
         .output()
-        .map_err(|e| NoaError::Sync(format!("git rev-parse failed: {}", e)))?;
+        .with_context(|| "git rev-parse failed")?;
 
     if !output.status.success() {
-        return Err(NoaError::Sync(
-            "failed to determine current git branch".to_string(),
-        ));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "failed to determine current git branch: {}",
+            stderr.trim()
+        );
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-pub fn manage_gitignore(root: &Path) {
+pub fn manage_gitignore(root: &Path) -> Result<()> {
     let gitignore_path = root.join(".gitignore");
 
     if !gitignore_path.exists() {
-        let content = "# Added by noa \u{2014} keep agent iteration data out of git\n.noa/\n";
-        let _ = std::fs::write(&gitignore_path, content);
-        return;
+        std::fs::write(
+            &gitignore_path,
+            "# Added by noa \u{2014} keep agent iteration data out of git\n.noa/\n",
+        )?;
+        return Ok(());
     }
 
-    let content = match std::fs::read_to_string(&gitignore_path) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
+    let content = std::fs::read_to_string(&gitignore_path)?;
 
     for line in content.lines() {
         if line.trim() == ".noa" || line.trim() == ".noa/" {
-            return;
+            return Ok(());
         }
     }
 
-    let _ = std::fs::write(&gitignore_path, format!("{}\n.noa/\n", content.trim_end()));
+    let trimmed = content.trim_end_matches('\n');
+    std::fs::write(&gitignore_path, format!("{trimmed}\n.noa/\n"))?;
+
+    Ok(())
 }
 
-pub fn manage_gitattributes(root: &Path, noa_remote_url: &str) {
+pub fn manage_gitattributes(root: &Path, noa_remote_url: &str) -> Result<()> {
+    let noa_dir = Repository::resolve_noa_dir(root);
+    let noa_rel = noa_dir.strip_prefix(root).unwrap_or_else(|_| Path::new(".noa"));
     let gitattributes_path = root.join(".gitattributes");
-    let attr_line = format!("{}/**   noa-remote={}", ".noa", noa_remote_url);
+    let attr_line = format!("{}/**   noa-remote={}", noa_rel.display(), noa_remote_url);
 
     if !gitattributes_path.exists() {
         let content = format!(
-            "# Added by noa \u{2014} specifies where agent iteration data is hosted\n{}\n",
-            attr_line
+            "# Added by noa \u{2014} specifies where agent iteration data is hosted\n{attr_line}\n"
         );
-        let _ = std::fs::write(&gitattributes_path, content);
-        return;
+        std::fs::write(&gitattributes_path, content)?;
+        return Ok(());
     }
 
-    let content = match std::fs::read_to_string(&gitattributes_path) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
+    let content = std::fs::read_to_string(&gitattributes_path)?;
 
     for line in content.lines() {
         if line.contains("noa-remote=") {
-            return;
+            return Ok(());
         }
     }
 
-    let _ = std::fs::write(
+    std::fs::write(
         &gitattributes_path,
         format!(
             "{}\n# Added by noa \u{2014} specifies where agent iteration data is hosted\n{}\n",
             content.trim_end(),
             attr_line
         ),
-    );
+    )?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -507,5 +534,117 @@ mod tests {
         let content = std::fs::read_to_string(tmp.path().join(".gitattributes")).unwrap();
         assert!(content.contains("*.bin binary"));
         assert!(content.contains("noa-remote="));
+    }
+
+    #[test]
+    fn test_parasitic_mode_functional() {
+        let tmp = TempDir::new().unwrap();
+        let output = std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(tmp.path())
+            .output()
+            .expect("git init failed");
+        assert!(output.status.success(), "git init must succeed");
+        assert!(tmp.path().join(".git").is_dir(), ".git/ must exist");
+
+        {
+            let repo = Repository::init(tmp.path()).unwrap();
+            let expected = tmp.path().join(".git").join("noa");
+            assert_eq!(
+                repo.noa_dir, expected,
+                "parasitic noa dir must be .git/noa/"
+            );
+            assert!(repo.is_parasitic(), "is_parasitic() must return true");
+            assert!(
+                tmp.path().join(".git/noa").exists(),
+                ".git/noa/ must exist on disk"
+            );
+        }
+        assert!(Repository::exists(tmp.path()), "exists() must return true");
+
+        let opened = Repository::open(tmp.path());
+        assert!(
+            opened.is_ok(),
+            "open() must succeed in parasitic mode, got: {:?}",
+            opened.err()
+        );
+        assert!(opened.unwrap().is_parasitic());
+
+        let subdir = tmp.path().join("src").join("deep");
+        std::fs::create_dir_all(&subdir).unwrap();
+        let found = Repository::find(&subdir);
+        assert!(found.is_ok(), "find() from subdir must succeed");
+        assert_eq!(found.unwrap(), tmp.path());
+
+        let gitignore_path = tmp.path().join(".gitignore");
+        if gitignore_path.exists() {
+            let content = std::fs::read_to_string(&gitignore_path).unwrap();
+            assert!(
+                !content.contains(".noa/"),
+                "parasitic mode must NOT add .noa/ to .gitignore, got: {content}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_standalone_mode_functional() {
+        let tmp = TempDir::new().unwrap();
+        assert!(
+            !tmp.path().join(".git").exists(),
+            "must start without .git/"
+        );
+
+        let repo = Repository::init(tmp.path()).unwrap();
+
+        let expected = tmp.path().join(".noa");
+        assert_eq!(
+            repo.noa_dir, expected,
+            "standalone noa dir must be .noa/"
+        );
+        assert!(
+            !repo.is_parasitic(),
+            "is_parasitic() must return false"
+        );
+        assert!(
+            tmp.path().join(".noa").exists(),
+            ".noa/ must exist on disk"
+        );
+
+        let gitignore_path = tmp.path().join(".gitignore");
+        assert!(gitignore_path.exists(), ".gitignore must be created");
+        let content = std::fs::read_to_string(&gitignore_path).unwrap();
+        assert!(
+            content.contains(".noa/"),
+            "standalone mode must add .noa/ to .gitignore"
+        );
+    }
+
+    #[test]
+    fn test_backward_compat_existing_standalone() {
+        let tmp = TempDir::new().unwrap();
+        {
+            Repository::init(tmp.path()).unwrap();
+        }
+        let original_dir = tmp.path().join(".noa");
+        assert!(original_dir.exists(), "pre-existing .noa/ must exist");
+
+        let opened = Repository::open(tmp.path());
+        assert!(
+            opened.is_ok(),
+            "open() must succeed on existing standalone repo"
+        );
+        let opened = opened.unwrap();
+        assert!(!opened.is_parasitic());
+
+        assert!(
+            Repository::exists(tmp.path()),
+            "exists() must return true"
+        );
+
+        let subdir = tmp.path().join("sub");
+        std::fs::create_dir_all(&subdir).unwrap();
+        let found = Repository::find(&subdir);
+        assert!(found.is_ok(), "find() must find existing standalone repo");
+        assert_eq!(found.unwrap(), tmp.path());
     }
 }

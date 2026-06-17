@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use crate::error::{NoaError, Result};
+use crate::error::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoConfig {
@@ -56,7 +56,7 @@ fn default_sync_socket() -> String {
             std::env::var("USER").unwrap_or_else(|_| "unknown".to_string())
         )
     });
-    format!("{}/noa-sync.sock", runtime_dir)
+    format!("{runtime_dir}/noa-sync.sock")
 }
 
 fn default_sync_interval() -> u64 {
@@ -64,7 +64,7 @@ fn default_sync_interval() -> u64 {
 }
 
 fn default_branch_prefix() -> String {
-    "entelecheia/agent-".to_string()
+    "agent/".to_string()
 }
 
 impl Default for RepoConfig {
@@ -80,23 +80,26 @@ impl Default for RepoConfig {
 
 impl RepoConfig {
     pub fn to_toml(&self) -> Result<String> {
-        toml::to_string_pretty(self).map_err(NoaError::from)
+        Ok(toml::to_string_pretty(self)?)
     }
 
     pub fn from_toml(s: &str) -> Result<Self> {
-        toml::from_str(s).map_err(NoaError::from)
+        Ok(toml::from_str::<RepoConfig>(s)?)
     }
 
     pub fn load_from_dir(dir: &Path) -> Result<Self> {
         let config_path = dir.join("config");
-        let content = std::fs::read_to_string(&config_path).map_err(NoaError::Io)?;
+        let content = std::fs::read_to_string(&config_path)?;
         Self::from_toml(&content)
     }
 
     pub fn save_to_dir(&self, dir: &Path) -> Result<()> {
         let config_path = dir.join("config");
+        let tmp_path = dir.join("config.tmp");
         let content = self.to_toml()?;
-        std::fs::write(&config_path, content).map_err(NoaError::Io)
+        std::fs::write(&tmp_path, &content)?;
+        std::fs::rename(&tmp_path, &config_path)?;
+        Ok(())
     }
 
     pub fn add_remote(&mut self, remote: RemoteConfig) {
@@ -108,6 +111,7 @@ impl RepoConfig {
         self.remotes.retain(|r| r.name != name);
     }
 
+    #[must_use]
     pub fn get_remote(&self, name: &str) -> Option<&RemoteConfig> {
         self.remotes.iter().find(|r| r.name == name)
     }
@@ -255,5 +259,83 @@ mod tests {
     fn test_sync_config_none_by_default() {
         let config = RepoConfig::default();
         assert!(config.sync.is_none());
+    }
+
+    #[test]
+    fn test_default_sync_socket_path() {
+        let socket = default_sync_socket();
+        assert!(socket.contains("noa-sync.sock"));
+    }
+
+    #[test]
+    fn test_default_sync_interval() {
+        assert_eq!(default_sync_interval(), 30);
+    }
+
+    #[test]
+    fn test_default_branch_prefix() {
+        assert_eq!(default_branch_prefix(), "agent/");
+    }
+
+    #[test]
+    fn test_sync_config_partial_defaults() {
+        let toml_str = r#"
+name = "myrepo"
+[sync]
+socket_path = "/custom/path.sock"
+"#;
+        let config = RepoConfig::from_toml(toml_str).unwrap();
+        let sync = config.sync.unwrap();
+        assert_eq!(sync.socket_path, "/custom/path.sock");
+        assert_eq!(sync.sync_interval_secs, 30);
+        assert_eq!(sync.default_branch_prefix, "agent/");
+        assert!(!sync.auto_gitignore);
+    }
+
+    #[test]
+    fn test_config_with_noa_remote_url() {
+        let toml_str = r#"
+name = "test"
+noa_remote = "https://noa.cloud/repo"
+"#;
+        let config = RepoConfig::from_toml(toml_str).unwrap();
+        assert_eq!(
+            config.noa_remote,
+            Some("https://noa.cloud/repo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_remove_nonexistent_remote_is_noop() {
+        let mut config = RepoConfig::default();
+        config.add_remote(RemoteConfig {
+            name: "origin".to_string(),
+            url: "https://example.com".to_string(),
+            protocol: "git".to_string(),
+        });
+        config.remove_remote("nonexistent");
+        assert_eq!(config.remotes.len(), 1);
+    }
+
+    #[test]
+    fn test_get_nonexistent_remote() {
+        let config = RepoConfig::default();
+        assert!(config.get_remote("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_invalid_toml_fails() {
+        let result = RepoConfig::from_toml("this is not valid toml [[[[");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_corrupted_config_fails() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join(".noa");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config"), "not valid toml {{{{").unwrap();
+        let result = RepoConfig::load_from_dir(&dir);
+        assert!(result.is_err());
     }
 }
