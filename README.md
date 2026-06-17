@@ -19,10 +19,7 @@
   <a href="https://docs.rs/libnoa">
     <img src="https://img.shields.io/docsrs/libnoa" alt="Docs.rs" />
   </a>
-  <a href="LICENSE">
-    <img src="https://img.shields.io/badge/License-Apache--2.0-blue.svg" alt="License" />
-  </a>
-  <a href="https://github.com/celestia-island/noa/releases">
+  [[![License: SySL](https://img.shields.io/badge/license-SySL%201.0-blue)](./LICENSE.txt)](./LICENSE.txt)<a href="https://github.com/celestia-island/noa/releases">
     <img src="https://img.shields.io/github/v/release/celestia-island/noa?label=release" alt="GitHub Release" />
   </a>
 </div>
@@ -360,4 +357,4 @@ NOA_PORT=3000 NOA_DB_PATH=/data/noa/server.redb target/release/noa-server
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Licensed under the [Synthetic Source License (SySL), Version 1.0](./LICENSE.txt).
