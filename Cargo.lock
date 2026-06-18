@@ -4964,24 +4964,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[patch.unused]]
-name = "aoba"
-version = "0.1.2"
-
-[[patch.unused]]
-name = "kirino"
-version = "0.5.0"
-
-[[patch.unused]]
 name = "arona"
 version = "0.1.0"
-
-[[patch.unused]]
-name = "evernight"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "hifumi"
-version = "0.1.1"
 
 [[patch.unused]]
 name = "hikari-animation"
@@ -5002,3 +4986,19 @@ version = "0.2.7"
 [[patch.unused]]
 name = "hikari-theme"
 version = "0.2.7"
+
+[[patch.unused]]
+name = "hifumi"
+version = "0.1.1"
+
+[[patch.unused]]
+name = "aoba"
+version = "0.1.2"
+
+[[patch.unused]]
+name = "kirino"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "evernight"
+version = "0.1.0"

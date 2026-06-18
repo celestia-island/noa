@@ -149,3 +149,105 @@ pub fn build_report(
         usage,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_k_values() {
+        assert_eq!(format_k(0), "0");
+        assert_eq!(format_k(500), "0.5k");
+        assert_eq!(format_k(1503), "1.5k");
+        assert_eq!(format_k(36429), "36.4k");
+        assert_eq!(format_k(1000), "1k");
+        assert_eq!(format_k(100000), "100k");
+    }
+
+    #[test]
+    fn test_coauthor_trailer_format() {
+        let a = CoAuthor {
+            display_name: "Claude Opus 4.8".to_string(),
+            provider_id: "anthropic.com".to_string(),
+        };
+        assert_eq!(
+            a.to_trailer(),
+            "Co-authored-by: Claude Opus 4.8 <anthropic.com@celestia.world>"
+        );
+    }
+
+    #[test]
+    fn test_yolo_authority() {
+        let a = CoAuthor::yolo_authority();
+        assert_eq!(a.display_name, "Entelecheia");
+        assert_eq!(a.provider_id, "demiurge");
+        assert_eq!(
+            a.to_trailer(),
+            "Co-authored-by: Entelecheia <demiurge@celestia.world>"
+        );
+    }
+
+    #[test]
+    fn test_usage_line_without_cache() {
+        let u = ModelUsage {
+            display_name: "GLM 5".to_string(),
+            provider_id: "zhipu.ai".to_string(),
+            model_id: "glm-5".to_string(),
+            upload: 36429,
+            download: 1503,
+            cache: None,
+        };
+        assert_eq!(u.to_usage_line(), "[GLM 5] Upload 36.4k, Download 1.5k");
+    }
+
+    #[test]
+    fn test_usage_line_with_cache() {
+        let u = ModelUsage {
+            display_name: "Claude Opus 4.8".to_string(),
+            provider_id: "anthropic.com".to_string(),
+            model_id: "claude-opus-4-8".to_string(),
+            upload: 12500,
+            download: 8300,
+            cache: Some(45200),
+        };
+        assert_eq!(
+            u.to_usage_line(),
+            "[Claude Opus 4.8] Upload 12.5k, Download 8.3k, Cache 45.2k"
+        );
+    }
+
+    #[test]
+    fn test_render_block_with_yolo() {
+        let report = CoAuthorReport {
+            yolo: true,
+            authors: vec![
+                CoAuthor::yolo_authority(),
+                CoAuthor {
+                    display_name: "GLM 5".to_string(),
+                    provider_id: "zhipu.ai".to_string(),
+                },
+            ],
+            usage: vec![ModelUsage {
+                display_name: "GLM 5".to_string(),
+                provider_id: "zhipu.ai".to_string(),
+                model_id: "glm-5".to_string(),
+                upload: 36429,
+                download: 1503,
+                cache: None,
+            }],
+        };
+        let block = report.render_trailer_block();
+        assert!(block.contains("Co-authored-by: Entelecheia <demiurge@celestia.world>"));
+        assert!(block.contains("Co-authored-by: GLM 5 <zhipu.ai@celestia.world>"));
+        assert!(block.contains("Token usage:"));
+        assert!(block.contains("[GLM 5] Upload 36.4k, Download 1.5k"));
+    }
+
+    #[test]
+    fn test_render_empty_report() {
+        let report = CoAuthorReport::default();
+        assert!(report.is_empty());
+        assert_eq!(report.render_trailer_block(), "");
+    }
+}
+
