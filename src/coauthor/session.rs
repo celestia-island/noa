@@ -72,7 +72,8 @@ pub fn summarize_chat_log_dir(dir: &Path, lookback_secs: u64) -> SessionSummary 
         std::collections::HashMap::new();
     let mut yolo = false;
 
-    let max_files = if lookback_secs == 0 { 1 } else { 6 };
+    let max_files = if lookback_secs == 0 { 4 } else { 6 };
+    let mut found_model_data = false;
     for (_mtime, path) in logs.iter().take(max_files) {
         if let Some(window) = cutoff {
             if let Ok(file_time) = std::fs::metadata(path).and_then(|m| m.modified()) {
@@ -90,7 +91,9 @@ pub fn summarize_chat_log_dir(dir: &Path, lookback_secs: u64) -> SessionSummary 
         if content.contains("YOLO cruise control") || content.contains("YOLO auto") {
             yolo = true;
         }
-        for entry in parse_chat_log_entries(&content) {
+        let entries = parse_chat_log_entries(&content);
+        let has_models = entries.iter().any(|e| !e.model.is_empty());
+        for entry in &entries {
             if entry.model.is_empty() {
                 continue;
             }
@@ -104,6 +107,15 @@ pub fn summarize_chat_log_dir(dir: &Path, lookback_secs: u64) -> SessionSummary 
                 rec.cache = Some(rec.cache.unwrap_or(0).saturating_add(c));
             }
         }
+        if has_models {
+            found_model_data = true;
+            if lookback_secs == 0 {
+                break;
+            }
+        }
+    }
+    if !found_model_data {
+        models_map.clear();
     }
 
     let mut models: Vec<ModelRecord> = models_map.into_values().collect();
