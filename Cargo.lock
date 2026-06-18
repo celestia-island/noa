@@ -4976,6 +4976,14 @@ name = "arona"
 version = "0.1.0"
 
 [[patch.unused]]
+name = "evernight"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "hifumi"
+version = "0.1.1"
+
+[[patch.unused]]
 name = "hikari-animation"
 version = "0.2.7"
 

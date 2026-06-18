@@ -87,6 +87,14 @@ enum Commands {
         #[arg(short, long)]
         path: Option<String>,
     },
+    CoAuthor {
+        #[command(subcommand)]
+        cmd: CoauthorSub,
+    },
+    Hook {
+        #[command(subcommand)]
+        cmd: HookSub,
+    },
     Sync {
         #[arg(short, long, default_value = "/tmp/noa-sync.sock")]
         socket: String,
@@ -140,6 +148,34 @@ enum RemoteSub {
     Add { name: String, url: String },
     Remove { name: String },
     List,
+}
+
+#[derive(Subcommand)]
+enum CoauthorSub {
+    /// Resolve and print the co-author trailer block for the current agent session.
+    Resolve {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        #[arg(long)]
+        chat_log_dir: Option<PathBuf>,
+        #[arg(long)]
+        aporia_config: Option<PathBuf>,
+        #[arg(long, default_value_t = 0)]
+        lookback_secs: u64,
+    },
+}
+
+#[derive(Subcommand)]
+enum HookSub {
+    /// Install the commit-msg git hook into a repository.
+    Install {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        #[arg(long, default_value_t = false)]
+        force: bool,
+        #[arg(long)]
+        noa_bin: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -279,6 +315,34 @@ async fn main() -> anyhow::Result<()> {
             let repo = libnoa::repo::Repository::open(&root)?;
             cli::resolve_cmd::run_resolve(&repo, &strategy, path.as_deref()).await?;
         }
+        Some(Commands::CoAuthor { cmd }) => match cmd {
+            CoauthorSub::Resolve {
+                repo,
+                chat_log_dir,
+                aporia_config,
+                lookback_secs,
+            } => {
+                cli::coauthor_cmd::run(cli::coauthor_cmd::ResolveArgs {
+                    repo,
+                    chat_log_dir,
+                    aporia_config,
+                    lookback_secs,
+                })?;
+            }
+        },
+        Some(Commands::Hook { cmd }) => match cmd {
+            HookSub::Install {
+                repo,
+                force,
+                noa_bin,
+            } => {
+                cli::hook_cmd::run(cli::hook_cmd::InstallArgs {
+                    repo,
+                    force,
+                    noa_bin,
+                })?;
+            }
+        },
         Some(Commands::Sync { socket, path }) => {
             let root = std::path::Path::new(&path)
                 .canonicalize()

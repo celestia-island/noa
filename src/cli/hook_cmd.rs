@@ -1,11 +1,8 @@
-use anyhow::{bail, Context, Result};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+
+use anyhow::{Context, Result, bail};
 
 const COMMIT_MSG_HOOK: &str = include_str!("../../assets/commit-msg.sh");
-
-/// Sentinel string present in every noa-managed hook script.
-/// Used to detect whether an existing hook file is safe to overwrite.
-const NOA_MANAGED_SENTINEL: &str = "noa-managed";
 
 pub struct InstallArgs {
     pub repo: PathBuf,
@@ -13,13 +10,6 @@ pub struct InstallArgs {
     pub noa_bin: Option<String>,
 }
 
-/// Install noa-managed git hooks into the target repository's `.git/hooks/`
-/// directory. Currently this is just `commit-msg` (AI co-author trailers).
-///
-/// Pre-commit build/secret validation used to live here but has moved to
-/// entelecheia's review agent — it is not noa's responsibility. The
-/// `noa hook pre-commit` subcommand is retained as a no-op so hooks installed
-/// by older noa versions don't break (they just do nothing).
 pub fn run(args: InstallArgs) -> Result<()> {
     let repo = if args.repo.is_absolute() {
         args.repo.clone()
@@ -38,6 +28,18 @@ pub fn run(args: InstallArgs) -> Result<()> {
     std::fs::create_dir_all(&hooks_dir)
         .with_context(|| format!("creating hooks dir {}", hooks_dir.display()))?;
 
+    let hook_path = hooks_dir.join("commit-msg");
+    if hook_path.exists() && !args.force {
+        let existing = std::fs::read_to_string(&hook_path).unwrap_or_default();
+        if !existing.contains("noa co-author resolve") {
+            bail!(
+                "commit-msg hook already exists at {} and is not managed by noa. \
+                 Re-run with --force to overwrite.",
+                hook_path.display()
+            );
+        }
+    }
+
     let noa_bin = args
         .noa_bin
         .clone()
@@ -49,42 +51,7 @@ pub fn run(args: InstallArgs) -> Result<()> {
         which_noa(&noa_bin).unwrap_or(noa_bin)
     };
 
-    install_hook(
-        &hooks_dir,
-        "commit-msg",
-        COMMIT_MSG_HOOK,
-        &resolved,
-        args.force,
-    )?;
-
-    println!("Installed noa hooks into {}", hooks_dir.display());
-    println!("Resolver: {resolved} co-author resolve");
-    Ok(())
-}
-
-/// Write a single hook script into `hooks_dir/<name>`, substituting `@NOA_BIN@`
-/// with the resolved noa binary path. Refuses to overwrite a non-noa-managed
-/// hook unless `force` is set. Marks the file executable on Unix.
-fn install_hook(
-    hooks_dir: &Path,
-    name: &str,
-    template: &str,
-    noa_bin: &str,
-    force: bool,
-) -> Result<()> {
-    let hook_path = hooks_dir.join(name);
-    if hook_path.exists() && !force {
-        let existing = std::fs::read_to_string(&hook_path).unwrap_or_default();
-        if !existing.contains(NOA_MANAGED_SENTINEL) {
-            bail!(
-                "{name} hook already exists at {} and is not managed by noa. \
-                 Re-run with --force to overwrite.",
-                hook_path.display()
-            );
-        }
-    }
-
-    let content = template.replace("@NOA_BIN@", noa_bin);
+    let content = COMMIT_MSG_HOOK.replace("@NOA_BIN@", &resolved);
     std::fs::write(&hook_path, content)
         .with_context(|| format!("writing hook {}", hook_path.display()))?;
 
@@ -96,23 +63,8 @@ fn install_hook(
         std::fs::set_permissions(&hook_path, perms)?;
     }
 
-    println!("Installed {name} hook at {}", hook_path.display());
-    Ok(())
-}
-
-/// Entry point for `noa hook pre-commit`.
-///
-/// Pre-commit build/secret validation has moved to entelecheia's review agent
-/// and is no longer noa's responsibility. This subcommand is retained as a
-/// **no-op** so `.git/hooks/pre-commit` scripts installed by older noa versions
-/// keep working (they call into here, do nothing, and exit 0) instead of
-/// breaking commits with an unknown-subcommand error. It is no longer
-/// installed by `noa hook install`.
-pub fn run_pre_commit() -> Result<()> {
-    eprintln!(
-        "[noa pre-commit] pre-commit checks have moved to the entelecheia review \
-         agent; this hook is now a no-op and can be removed from .git/hooks."
-    );
+    println!("Installed commit-msg hook at {}", hook_path.display());
+    println!("Resolver: {resolved} co-author resolve");
     Ok(())
 }
 
