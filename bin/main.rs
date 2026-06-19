@@ -167,7 +167,7 @@ enum CoauthorSub {
 
 #[derive(Subcommand)]
 enum HookSub {
-    /// Install the commit-msg git hook into a repository.
+    /// Install noa-managed git hooks (commit-msg + pre-commit) into a repository.
     Install {
         #[arg(long, default_value = ".")]
         repo: PathBuf,
@@ -176,6 +176,11 @@ enum HookSub {
         #[arg(long)]
         noa_bin: Option<String>,
     },
+    /// Run the pre-commit gate (secret scan + cargo check).
+    ///
+    /// Invoked by the installed `.git/hooks/pre-commit` wrapper. Not normally
+    /// called by humans directly.
+    PreCommit,
 }
 
 #[tokio::main]
@@ -341,6 +346,9 @@ async fn main() -> anyhow::Result<()> {
                     force,
                     noa_bin,
                 })?;
+            }
+            HookSub::PreCommit => {
+                cli::hook_cmd::run_pre_commit()?;
             }
         },
         Some(Commands::Sync { socket, path }) => {
