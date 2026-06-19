@@ -50,7 +50,7 @@ Co-authored-by: Entelecheia <demiurge@celestia.world>
 追加在共同作者 trailer 之后（空行分隔）：
 
 ```
-Co-authored-by: Claude Opus 4.8 (↑ 12.5k ↓ 8.3k ⚡45.2k) <anthropic.com@celestia.world>
+Co-authored-by: Claude Opus 4.8 (↑ 12.5k ↓ 8.3k ●45.2k) <anthropic.com@celestia.world>
 Co-authored-by: Deepseek V4 Pro (↑ 5.1k ↓ 3.2k) <deepseek.com@celestia.world>
 ```
 

@@ -12,7 +12,7 @@ pub const YOLO_AUTHORITY_PROVIDER: &str = "demiurge";
 
 pub const UPLOAD_GLYPH: &str = "↑";
 pub const DOWNLOAD_GLYPH: &str = "↓";
-pub const CACHE_GLYPH: &str = "⚡";
+pub const CACHE_GLYPH: &str = "●";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoAuthor {
@@ -224,7 +224,7 @@ mod tests {
             download: 8300,
             cache: Some(45200),
         };
-        assert_eq!(u.usage_inline(), "(↑ 12.5k ↓ 8.3k ⚡45.2k)");
+        assert_eq!(u.usage_inline(), "(↑ 12.5k ↓ 8.3k ●45.2k)");
     }
 
     #[test]

@@ -57,12 +57,12 @@ that GitHub parses correctly (a trailing free-form block would break trailer
 parsing):
 
 ```
-Co-authored-by: Claude Opus 4.8 (↑ 12.5k ↓ 8.3k ⚡45.2k) <anthropic.com@celestia.world>
+Co-authored-by: Claude Opus 4.8 (↑ 12.5k ↓ 8.3k ●45.2k) <anthropic.com@celestia.world>
 Co-authored-by: Deepseek V4 Pro (↑ 5.1k ↓ 3.2k) <deepseek.com@celestia.world>
 ```
 
 - `↑` = input/upload tokens; `↓` = output/download tokens.
-- `⚡` (cache) appears **only** when cached-input tokens were reported and are > 0.
+- `●` (cache) appears **only** when cached-input tokens were reported and are > 0.
 - Counts in thousands (`k`), one decimal place, trailing-zero trimmed.
 
 ## Implementation in noa
