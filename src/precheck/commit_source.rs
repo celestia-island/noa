@@ -8,10 +8,24 @@
 //! expose host command execution through that same unix socket, so the two
 //! "trigger via entelecheia/evernight" paths collapse to one transport here.
 //!
-//! Acquisition order with [`Mode::Auto`] (the default):
-//!   1. evernight IPC (`Command.Exec` running host `git diff --cached`) —
-//!      preferred when the daemon is present.
-//!   2. local `git diff --cached` — noa is always available locally.
+//! Acquisition order with [`Mode::Auto`] (the default, **local-first**):
+//!   1. local `git diff --cached` — the pre-commit hook runs *inside* the
+//!      repository being committed (it is spawned by `git commit`), so the
+//!      local git binary and `.git` are always authoritative and available.
+//!      When this succeeds — even with an empty staged list — it is used.
+//!   2. evernight IPC (`Command.Exec` running host `git diff --cached`) — used
+//!      only as a fallback when local git is unavailable (non-git cwd, missing
+//!      `git` binary, or a failing command).
+//!
+//! Why local-first: evernight, when reachable, runs `git` in the **daemon's**
+//! own cwd, not the committing repository's cwd. Preferring evernight
+//! therefore made the default `auto` mode query the wrong tree on any machine
+//! where the socket happens to be up, silently passing real leaks. Since the
+//! hook itself is invoked from within the target repository, local git is the
+//! correct and authoritative source; evernight only matters when noa runs in a
+//! context that cannot see the target `.git` (e.g. some agent/container
+//! setups), and even then `NOA_HOST_REPO` should be set to the host repo's
+//! absolute path so evernight queries the right tree.
 //!
 //! If every source is unreachable, [`acquire_with`] returns
 //! [`Acquisition::NoSource`] and the caller silently passes the commit: a
@@ -50,7 +64,7 @@ const EVERNIGHT_GIT_TIMEOUT_SECS: u64 = 10;
 /// Which data source(s) to consult.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
-    /// Try evernight first, then local git (the default).
+    /// Try local git first, then evernight (the default, **local-first**).
     Auto,
     /// Only evernight; if unreachable → [`Acquisition::NoSource`].
     Evernight,
@@ -146,20 +160,25 @@ pub fn acquire_staged() -> Acquisition {
 /// Acquire staged file data using the given configuration. Any error from an
 /// individual source is logged at `debug` level and the next source is tried;
 /// only total failure yields [`Acquisition::NoSource`].
+///
+/// Order in `Mode::Auto` is **local-first**: local git is authoritative for a
+/// pre-commit hook (which runs inside the committing repo), so it is tried
+/// before evernight. Explicit `Mode::Local` / `Mode::Evernight` force a single
+/// path.
 pub fn acquire_with(cfg: &AcquireConfig) -> Acquisition {
-    let try_evernight = matches!(cfg.mode, Mode::Auto | Mode::Evernight);
     let try_local = matches!(cfg.mode, Mode::Auto | Mode::Local);
+    let try_evernight = matches!(cfg.mode, Mode::Auto | Mode::Evernight);
 
-    if try_evernight {
-        match via_evernight(cfg) {
-            Ok(files) => return Acquisition::Ok(files),
-            Err(e) => debug!(error = %e, "evernight commit-data source unavailable"),
-        }
-    }
     if try_local {
         match via_local_git(cfg) {
             Ok(files) => return Acquisition::Ok(files),
             Err(e) => debug!(error = %e, "local git commit-data source unavailable"),
+        }
+    }
+    if try_evernight {
+        match via_evernight(cfg) {
+            Ok(files) => return Acquisition::Ok(files),
+            Err(e) => debug!(error = %e, "evernight commit-data source unavailable"),
         }
     }
     debug!("no commit-data source available; pre-commit gate will silently pass");
@@ -199,9 +218,15 @@ fn via_local_git(cfg: &AcquireConfig) -> io::Result<Vec<StagedFile>> {
     Ok(files)
 }
 
-/// evernight path: ask the host daemon to run `git diff --cached --name-only`
-/// (the authoritative host view, used when `.git` isn't visible to noa), then
-/// read each file's contents — locally first, via evernight as a fallback.
+/// evernight fallback: ask the host daemon to run `git diff --cached
+/// --name-only` (the authoritative host view), then read each file's contents
+/// — locally first, via evernight as a fallback.
+///
+/// Only reached in `Mode::Auto` when local git was unavailable (e.g. noa
+/// running where it cannot see the target `.git`). Note that evernight runs
+/// `git` in its own cwd unless `NOA_HOST_REPO` is set, so callers in
+/// agent/container contexts must point `NOA_HOST_REPO` at the committing
+/// repo's absolute path to avoid scanning the wrong tree.
 #[cfg(unix)]
 fn via_evernight(cfg: &AcquireConfig) -> io::Result<Vec<StagedFile>> {
     let names_raw = exec_via_evernight(cfg, "diff --cached --name-only --diff-filter=ACMRTUXB")?;
@@ -506,5 +531,166 @@ mod tests {
             args.join(" "),
             repo.display()
         );
+    }
+
+    #[test]
+    fn auto_prefers_local_git_when_available() {
+        // The core regression guard: in Mode::Auto, local git must win even
+        // though the (mocked) evernight socket is reachable. We prove this by
+        // (a) making local git succeed (a real staged file in a real tmp repo)
+        // and (b) pointing the socket at a mock server whose response would
+        // return a *different* file name. A shared flag records whether
+        // evernight was ever contacted — it must stay false.
+        if std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("skipping auto_prefers_local_git_when_available: git not on PATH");
+            return;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::net::UnixListener;
+            use std::sync::atomic::{AtomicBool, Ordering};
+            use std::sync::Arc;
+            use std::thread;
+
+            let tmp = tempfile::TempDir::new().unwrap();
+            let repo = tmp.path();
+            let sock = tmp.path().join("would-be-consulted.sock");
+            // Real staged file locally.
+            git_in(repo, &["init", "-q"]);
+            git_in(repo, &["config", "user.name", "noa-test"]);
+            git_in(repo, &["config", "user.email", "noa-test@example.com"]);
+            std::fs::write(repo.join("local_leak.txt"), "AKIA0123456789ABCDEF\n").unwrap();
+            git_in(repo, &["add", "local_leak.txt"]);
+
+            // Mock evernight: non-blocking accept loop that polls briefly, so
+            // the thread exits cleanly whether or not a client connects. The
+            // shared flag records any connection — if evernight is consulted
+            // at all, the test fails.
+            let contacted = Arc::new(AtomicBool::new(false));
+            let listener = UnixListener::bind(&sock).unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let contacted_srv = contacted.clone();
+            let handle = thread::spawn(move || {
+                use std::io::{Read, Write};
+                let deadline = std::time::Instant::now() + Duration::from_secs(2);
+                loop {
+                    match listener.accept() {
+                        Ok((mut conn, _)) => {
+                            contacted_srv.store(true, Ordering::SeqCst);
+                            let mut buf = [0u8; 8192];
+                            let _ = conn.read(&mut buf);
+                            let resp = serde_json::json!({
+                                "jsonrpc": "2.0",
+                                "result": {
+                                    "exit_code": 0,
+                                    "stdout": "evernight_only_file.txt\n",
+                                    "stderr": ""
+                                },
+                                "id": 1,
+                            });
+                            let mut line = serde_json::to_string(&resp).unwrap();
+                            line.push('\n');
+                            let _ = conn.write_all(line.as_bytes());
+                            let _ = conn.flush();
+                            return;
+                        }
+                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            if std::time::Instant::now() >= deadline {
+                                return;
+                            }
+                            thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(_) => return,
+                    }
+                }
+            });
+
+            let cfg = AcquireConfig {
+                socket: sock.to_string_lossy().to_string(),
+                local_repo: repo.to_string_lossy().to_string(),
+                host_repo: repo.to_string_lossy().to_string(),
+                mode: Mode::Auto,
+                ..AcquireConfig::default()
+            };
+            let files = match acquire_with(&cfg) {
+                Acquisition::Ok(f) => f,
+                Acquisition::NoSource => panic!("expected local git to provide data in auto mode"),
+            };
+            handle.join().expect("server thread panicked");
+
+            assert!(
+                !contacted.load(Ordering::SeqCst),
+                "auto mode must NOT consult evernight when local git is available"
+            );
+            assert_eq!(files.len(), 1, "got {files:?}");
+            assert_eq!(
+                files[0].path, "local_leak.txt",
+                "auto mode must source from local git, not evernight"
+            );
+            assert!(files[0].content.contains("AKIA0123456789ABCDEF"));
+            return;
+        }
+        #[cfg(not(unix))]
+        {
+            eprintln!("skipping auto_prefers_local_git_when_available: requires unix socket mock");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn auto_falls_back_to_evernight_when_local_git_unavailable() {
+        use std::os::unix::net::UnixListener;
+        use std::thread;
+
+        // local_repo points at a directory with no `.git`, so via_local_git
+        // fails and auto must fall through to evernight.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let sock = tmp.path().join("fallback.sock");
+        // Separate dir that has the working-tree file but NO `.git`, so local
+        // git fails while evernight's local read still resolves the file.
+        let no_git_dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            no_git_dir.path().join("leak.txt"),
+            "key = AKIA0123456789ABCDEF\n",
+        )
+        .unwrap();
+
+        let listener = UnixListener::bind(&sock).unwrap();
+        let handle = thread::spawn(move || {
+            use std::io::{Read, Write};
+            let (mut conn, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 8192];
+            let _ = conn.read(&mut buf);
+            let resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "result": { "exit_code": 0, "stdout": "leak.txt\n", "stderr": "" },
+                "id": 1,
+            });
+            let mut line = serde_json::to_string(&resp).unwrap();
+            line.push('\n');
+            let _ = conn.write_all(line.as_bytes());
+            let _ = conn.flush();
+            thread::sleep(Duration::from_millis(200));
+        });
+
+        let cfg = AcquireConfig {
+            socket: sock.to_string_lossy().to_string(),
+            local_repo: no_git_dir.path().to_string_lossy().to_string(),
+            host_repo: tmp.path().to_string_lossy().to_string(),
+            mode: Mode::Auto,
+            ..AcquireConfig::default()
+        };
+        let files = match acquire_with(&cfg) {
+            Acquisition::Ok(f) => f,
+            Acquisition::NoSource => panic!("auto must fall back to evernight when local fails"),
+        };
+        handle.join().unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "leak.txt");
+        assert!(files[0].content.contains("AKIA0123456789ABCDEF"));
     }
 }
