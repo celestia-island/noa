@@ -19,13 +19,13 @@ part encoding **who served the model**:
 Display Name <provider-or-platform-id@celestia.world>
 ```
 
-- **First-party**: `anthropic.com`, `deepseek.com`, `openai.com`, `zhipu.ai`, ...
+- **First-party**: `anthropic.com`, `deepseek.com`, `openai.com`, `zhipuai.cn`, ...
 - **Third-party / relay**: `opencode.ai`, `jdcloud.com`, `openrouter.ai`, ...
 
 The same model reached through different routes is distinguishable:
 
 ```
-GLM 5 <zhipu.ai@celestia.world>               # direct
+GLM 5 <zhipuai.cn@celestia.world>               # direct
 GLM 5 <jdcloud.com@celestia.world>            # via JD Cloud
 Deepseek V4 Pro <deepseek.com@celestia.world>  # direct
 Deepseek V4 Pro <opencode.ai@celestia.world>   # via opencode
@@ -112,7 +112,7 @@ fix(auto_fix): raise clippy/check timeouts from 180s to 300s
 The previous 180s timeout was too tight; raise it to 300s.
 
 Co-authored-by: Entelecheia <demiurge@celestia.world>
-Co-authored-by: GLM 5 <zhipu.ai@celestia.world>
+Co-authored-by: GLM 5 <zhipuai.cn@celestia.world>
 
 Token usage:
 [GLM 5] Upload 36.4k, Download 1.5k
@@ -122,7 +122,7 @@ Token usage:
 
 | Provider id | Brand | Endpoint hint |
 | --- | --- | --- |
-| `zhipu.ai` | GLM | `open.bigmodel.cn` |
+| `zhipuai.cn` | GLM | `open.bigmodel.cn` |
 | `deepseek.com` | Deepseek | `api.deepseek.com` |
 | `anthropic.com` | Claude | `api.anthropic.com` |
 | `openai.com` | GPT / OpenAI | `api.openai.com` |

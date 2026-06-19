@@ -16,13 +16,13 @@
 显示名 <provider-or-platform-id@celestia.world>
 ```
 
-- **第一方**：`anthropic.com`、`deepseek.com`、`openai.com`、`zhipu.ai`……
+- **第一方**：`anthropic.com`、`deepseek.com`、`openai.com`、`zhipuai.cn`……
 - **第三方 / 中转**：`opencode.ai`、`jdcloud.com`、`openrouter.ai`……
 
 同一模型经由不同路径触达时可区分：
 
 ```
-GLM 5 <zhipu.ai@celestia.world>               # 直连
+GLM 5 <zhipuai.cn@celestia.world>               # 直连
 GLM 5 <jdcloud.com@celestia.world>            # 经京东云
 Deepseek V4 Pro <deepseek.com@celestia.world>  # 直连
 Deepseek V4 Pro <opencode.ai@celestia.world>   # 经 opencode
@@ -107,7 +107,7 @@ fix(auto_fix): raise clippy/check timeouts from 180s to 300s
 The previous 180s timeout was too tight; raise it to 300s.
 
 Co-authored-by: Entelecheia <demiurge@celestia.world>
-Co-authored-by: GLM 5 <zhipu.ai@celestia.world>
+Co-authored-by: GLM 5 <zhipuai.cn@celestia.world>
 
 Token usage:
 [GLM 5] Upload 36.4k, Download 1.5k
@@ -117,7 +117,7 @@ Token usage:
 
 | 提供商 id | 品牌 | 端点提示 |
 | --- | --- | --- |
-| `zhipu.ai` | GLM | `open.bigmodel.cn` |
+| `zhipuai.cn` | GLM | `open.bigmodel.cn` |
 | `deepseek.com` | Deepseek | `api.deepseek.com` |
 | `anthropic.com` | Claude | `api.anthropic.com` |
 | `openai.com` | GPT / OpenAI | `api.openai.com` |

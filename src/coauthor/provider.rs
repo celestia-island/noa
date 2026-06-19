@@ -23,7 +23,7 @@ impl ProviderMap {
                 },
             );
         };
-        add("glm", "GLM", "zhipu.ai");
+        add("glm", "GLM", "zhipuai.cn");
         add("deepseek", "Deepseek", "deepseek.com");
         add("claude", "Claude", "anthropic.com");
         add("gpt", "GPT", "openai.com");
@@ -130,7 +130,7 @@ pub fn endpoint_to_provider_id(endpoint: &str) -> Option<String> {
         "openai.com",
         "google.com",
         "googleapis.com",
-        "zhipu.ai",
+        "zhipuai.cn",
         "mistral.ai",
         "meta.com",
         "moonshot.cn",
@@ -145,7 +145,7 @@ pub fn endpoint_to_provider_id(endpoint: &str) -> Option<String> {
         return Some(normalize_first_party(bare));
     }
     if bare == "bigmodel.cn" {
-        return Some("zhipu.ai".to_string());
+        return Some("zhipuai.cn".to_string());
     }
     None
 }
@@ -161,7 +161,7 @@ fn normalize_first_party(host: &str) -> String {
 pub fn derive_provider_id_from_model(model_id: &str) -> Option<String> {
     let lower = model_id.to_ascii_lowercase();
     let prefixes: &[(&str, &str)] = &[
-        ("glm", "zhipu.ai"),
+        ("glm", "zhipuai.cn"),
         ("deepseek", "deepseek.com"),
         ("claude", "anthropic.com"),
         ("gpt", "openai.com"),
@@ -191,7 +191,7 @@ pub fn derive_provider_id_from_model(model_id: &str) -> Option<String> {
 pub fn derive_display_name(model_id: &str, provider_id: &str) -> String {
     let lower = model_id.to_ascii_lowercase();
     let brand = match provider_id {
-        "zhipu.ai" => "GLM",
+        "zhipuai.cn" => "GLM",
         "deepseek.com" => "Deepseek",
         "anthropic.com" => "Claude",
         "openai.com" => {
