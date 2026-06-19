@@ -6,7 +6,11 @@
 //! the real logic in Rust (rather than inline shell) makes it unit-testable.
 //!
 //! See [`scan_content`] for the pure secret-scanning primitive and
-//! [`run_cargo_check`] for the build gate.
+//! [`run_cargo_check`] for the build gate. [`scan_entries`] is the
+//! source-agnostic scanning entry point fed by [`commit_source`], which tries
+//! evernight IPC and local git to obtain staged data.
+
+pub mod commit_source;
 
 use std::path::Path;
 
@@ -115,22 +119,49 @@ pub fn should_skip(path: &str) -> bool {
     ) || lower.ends_with(".lock")
 }
 
+/// A staged file paired with its already-read textual content.
+///
+/// The acquisition layer ([`commit_source`]) produces these from whichever
+/// data source it could reach (evernight IPC or local git); the scanner then
+/// consumes them uniformly via [`scan_entries`].
+#[derive(Debug, Clone)]
+pub struct StagedFile {
+    /// Path of the file as reported by `git diff --cached --name-only`.
+    pub path: String,
+    /// Decoded textual contents of the file at that path.
+    pub content: String,
+}
+
+/// Scan pre-fetched staged file contents for known secret patterns. This is
+/// the source-agnostic core of the gate: [`scan_staged`] is a thin local-read
+/// wrapper around it, while the evernight path in [`commit_source`] feeds it
+/// directly with host-acquired contents.
+pub fn scan_entries(entries: &[StagedFile]) -> Vec<SecretHit> {
+    let mut hits = Vec::new();
+    for e in entries {
+        if should_skip(&e.path) {
+            continue;
+        }
+        hits.extend(scan_content(&e.path, &e.content));
+    }
+    hits
+}
+
 /// Scan every staged file, skipping lock files / build outputs / binary files.
 /// Returns the combined list of hits across all files. Reads are best-effort:
 /// a file that cannot be decoded as UTF-8 is silently skipped (binary blobs
 /// rarely contain the ASCII secret patterns we look for anyway).
 pub fn scan_staged(files: &[String]) -> Vec<SecretHit> {
-    let mut hits = Vec::new();
-    for f in files {
-        if should_skip(f) {
-            continue;
-        }
-        let Ok(content) = std::fs::read_to_string(f) else {
-            continue;
-        };
-        hits.extend(scan_content(f, &content));
-    }
-    hits
+    let entries: Vec<StagedFile> = files
+        .iter()
+        .filter_map(|p| {
+            std::fs::read_to_string(p).ok().map(|content| StagedFile {
+                path: p.clone(),
+                content,
+            })
+        })
+        .collect();
+    scan_entries(&entries)
 }
 
 /// Whether the caller has requested that the pre-commit gate be skipped.

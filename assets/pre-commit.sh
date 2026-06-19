@@ -4,9 +4,14 @@
 # Checks performed (in Rust, via `noa hook pre-commit`):
 #   1. Secret/credential scan of staged files (AWS/GitHub/npm/Slack/OpenAI keys, PEM private keys).
 #   2. `cargo check --workspace` when the repo root contains a Cargo.toml (Rust projects only).
-# Unlike the commit-msg hook, this hook DOES block the commit on failure.
+# Staged data is acquired from evernight IPC (host-side git) first, then local
+# git; if neither source is reachable the gate silently passes (exit 0) so a
+# data-source outage never blocks a commit. Real findings still abort.
+# Unlike the commit-msg hook, this hook DOES block the commit on a finding.
 #
 # Escape valve: NOA_SKIP_HOOKS=1 git commit ...   bypasses all checks.
+# Data-source tuning: EVERNIGHT_SOCK, NOA_EVERNIGHT_TIMEOUT_SECS,
+#   NOA_HOST_REPO, NOA_LOCAL_REPO, NOA_HOOK_DATA_SOURCE (auto|evernight|local).
 
 set -u
 

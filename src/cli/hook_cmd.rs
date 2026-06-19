@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 
 use crate::precheck;
+use crate::precheck::commit_source::Acquisition;
 
 const COMMIT_MSG_HOOK: &str = include_str!("../../assets/commit-msg.sh");
 const PRE_COMMIT_HOOK: &str = include_str!("../../assets/pre-commit.sh");
@@ -104,14 +105,30 @@ fn install_hook(
 /// secret scan + (optionally) `cargo check`. Invoked by the installed
 /// `.git/hooks/pre-commit` shell wrapper. Exits non-zero (via `Result`) on
 /// any finding, which aborts the commit.
+///
+/// Staged commit data is acquired through [`precheck::commit_source`], which
+/// tries the evernight IPC daemon (host-side git, for agent/container
+/// contexts) and falls back to local git. If **no** source is reachable the
+/// gate silently passes (exit 0): a data-source outage must never block a
+/// commit. Real findings, once data is obtained, still abort.
 pub fn run_pre_commit() -> Result<()> {
     if precheck::skip_requested() {
         eprintln!("[noa pre-commit] NOA_SKIP_HOOKS set; skipping checks.");
         return Ok(());
     }
 
-    let staged = staged_files()?;
-    let hits = precheck::scan_staged(&staged);
+    let entries = match precheck::commit_source::acquire_staged() {
+        Acquisition::Ok(files) => files,
+        Acquisition::NoSource => {
+            tracing::debug!(
+                "no commit-data source reachable (evernight down, no local git); \
+                 silently passing pre-commit gate"
+            );
+            return Ok(());
+        }
+    };
+
+    let hits = precheck::scan_entries(&entries);
     if !hits.is_empty() {
         for hit in &hits {
             eprintln!(
@@ -131,27 +148,6 @@ pub fn run_pre_commit() -> Result<()> {
     precheck::run_cargo_check()?;
 
     Ok(())
-}
-
-/// Return the list of staged (cached) file paths reported by git, relative to
-/// the repository root. Returns an empty list if git is unavailable or reports
-/// nothing staged.
-fn staged_files() -> Result<Vec<String>> {
-    let output = std::process::Command::new("git")
-        .args(["diff", "--cached", "--name-only", "--diff-filter=ACMRTUXB"])
-        .output()
-        .context("spawning git to list staged files")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("git diff --cached failed: {}", stderr.trim());
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .map(str::to_string)
-        .collect())
 }
 
 fn detect_noa_bin() -> Option<String> {
