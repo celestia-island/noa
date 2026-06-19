@@ -10,6 +10,10 @@ pub const CELESTIA_DOMAIN: &str = "celestia.world";
 pub const YOLO_AUTHORITY_DISPLAY: &str = "Entelecheia";
 pub const YOLO_AUTHORITY_PROVIDER: &str = "demiurge";
 
+pub const UPLOAD_GLYPH: &str = "↑";
+pub const DOWNLOAD_GLYPH: &str = "↓";
+pub const CACHE_GLYPH: &str = "⚡";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoAuthor {
     pub display_name: String,
@@ -48,13 +52,13 @@ impl ModelUsage {
     #[must_use]
     pub fn usage_inline(&self) -> String {
         let mut s = format!(
-            "(↑ {} ↓ {}",
+            "({UPLOAD_GLYPH} {} {DOWNLOAD_GLYPH} {}",
             format_k(self.upload),
             format_k(self.download)
         );
         if let Some(c) = self.cache {
             if c > 0 {
-                s.push_str(&format!(" ⚡{}", format_k(c)));
+                s.push_str(&format!(" {CACHE_GLYPH}{}", format_k(c)));
             }
         }
         s.push(')');
