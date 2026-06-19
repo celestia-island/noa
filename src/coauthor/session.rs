@@ -92,7 +92,11 @@ pub fn summarize_chat_log_dir(dir: &Path, lookback_secs: u64) -> SessionSummary 
             yolo = true;
         }
         let entries = parse_chat_log_entries(&content);
-        let has_models = entries.iter().any(|e| !e.model.is_empty());
+        let log_total_tokens: u64 = entries
+            .iter()
+            .map(|e| e.upload.saturating_add(e.download))
+            .sum();
+        let has_models = entries.iter().any(|e| !e.model.is_empty()) && log_total_tokens > 0;
         for entry in &entries {
             if entry.model.is_empty() {
                 continue;
