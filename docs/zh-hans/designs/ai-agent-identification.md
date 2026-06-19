@@ -45,14 +45,13 @@ Co-authored-by: Entelecheia <demiurge@celestia.world>
 检测来源：会话聊天日志（`YOLO cruise control` / `YOLO auto` 标记）或
 `/run/entelecheia/yolo_active` 哨兵文件。
 
-## Token 用量块
+## 内嵌 Token 用量
 
 追加在共同作者 trailer 之后（空行分隔）：
 
 ```
-Token usage:
-[Claude Opus 4.8] Upload 12.5k, Download 8.3k, Cache 45.2k
-[Deepseek V4 Pro] Upload 5.1k, Download 3.2k
+Co-authored-by: Claude Opus 4.8 (↑ 12.5k ↓ 8.3k ⚡45.2k) <anthropic.com@celestia.world>
+Co-authored-by: Deepseek V4 Pro (↑ 5.1k ↓ 3.2k) <deepseek.com@celestia.world>
 ```
 
 - `Upload` = 输入 token；`Download` = 输出 token。
@@ -107,10 +106,7 @@ fix(auto_fix): raise clippy/check timeouts from 180s to 300s
 The previous 180s timeout was too tight; raise it to 300s.
 
 Co-authored-by: Entelecheia <demiurge@celestia.world>
-Co-authored-by: GLM 5 <zhipuai.cn@celestia.world>
-
-Token usage:
-[GLM 5] Upload 36.4k, Download 1.5k
+Co-authored-by: GLM 5 (↑ 36.4k ↓ 1.5k) <zhipuai.cn@celestia.world>
 ```
 
 ## 提供商标识参考（初始注册表）
@@ -138,5 +134,5 @@ Token usage:
 ## 未来工作
 
 - 签名的共同作者证明（密码学）。
-- 由 token 用量块派生的成本估算。
+- 由内嵌 token 用量派生的成本估算。
 - 通过 noa 快照进行跨仓库智能体活动聚合。

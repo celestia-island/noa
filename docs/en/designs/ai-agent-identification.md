@@ -49,18 +49,20 @@ Co-authored-by: Entelecheia <demiurge@celestia.world>
 Detection sources: the session chat log (`YOLO cruise control` / `YOLO auto`
 marker) or the `/run/entelecheia/yolo_active` sentinel file.
 
-## Token Usage Block
+## Embedded Token Usage
 
-Appended after the co-author trailers (blank-line separated):
+Token usage is embedded directly inside each model's display name within the
+`Co-authored-by` trailer, so the entire provenance stays a single trailer block
+that GitHub parses correctly (a trailing free-form block would break trailer
+parsing):
 
 ```
-Token usage:
-[Claude Opus 4.8] Upload 12.5k, Download 8.3k, Cache 45.2k
-[Deepseek V4 Pro] Upload 5.1k, Download 3.2k
+Co-authored-by: Claude Opus 4.8 (↑ 12.5k ↓ 8.3k ⚡45.2k) <anthropic.com@celestia.world>
+Co-authored-by: Deepseek V4 Pro (↑ 5.1k ↓ 3.2k) <deepseek.com@celestia.world>
 ```
 
-- `Upload` = input tokens; `Download` = output tokens.
-- `Cache` appears **only** when cached-input tokens were reported and are > 0.
+- `↑` = input/upload tokens; `↓` = output/download tokens.
+- `⚡` (cache) appears **only** when cached-input tokens were reported and are > 0.
 - Counts in thousands (`k`), one decimal place, trailing-zero trimmed.
 
 ## Implementation in noa
@@ -93,8 +95,8 @@ noa hook install --repo <path> [--force] [--noa-bin <path>]
    (precise model→endpoint→provider mapping).
 2. Parse the most recent chat log(s); aggregate tokens per model.
 3. Detect YOLO mode.
-4. Render: `Entelecheia` authority first (if YOLO), then one co-author per model,
-   then the optional `Token usage` block.
+4. Render: `Entelecheia` authority first (if YOLO), then one co-author per model
+   with token usage embedded in the display name.
 
 ### Hook contract
 
@@ -112,10 +114,7 @@ fix(auto_fix): raise clippy/check timeouts from 180s to 300s
 The previous 180s timeout was too tight; raise it to 300s.
 
 Co-authored-by: Entelecheia <demiurge@celestia.world>
-Co-authored-by: GLM 5 <zhipuai.cn@celestia.world>
-
-Token usage:
-[GLM 5] Upload 36.4k, Download 1.5k
+Co-authored-by: GLM 5 (↑ 36.4k ↓ 1.5k) <zhipuai.cn@celestia.world>
 ```
 
 ## Provider Identifier Reference (initial registry)
