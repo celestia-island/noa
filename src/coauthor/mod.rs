@@ -46,18 +46,19 @@ pub struct ModelUsage {
 
 impl ModelUsage {
     #[must_use]
-    pub fn to_usage_line(&self) -> String {
-        let cache_part = match self.cache {
-            Some(c) if c > 0 => format!(", Cache {}", format_k(c)),
-            _ => String::new(),
-        };
-        format!(
-            "[{}] Upload {}, Download {}{}",
-            self.display_name,
+    pub fn usage_inline(&self) -> String {
+        let mut s = format!(
+            "(↑ {} ↓ {}",
             format_k(self.upload),
-            format_k(self.download),
-            cache_part
-        )
+            format_k(self.download)
+        );
+        if let Some(c) = self.cache {
+            if c > 0 {
+                s.push_str(&format!(" ⚡{}", format_k(c)));
+            }
+        }
+        s.push(')');
+        s
     }
 }
 
@@ -79,13 +80,20 @@ impl CoAuthorReport {
         if self.authors.is_empty() {
             return String::new();
         }
-        let mut lines: Vec<String> = self.authors.iter().map(|a| a.to_trailer()).collect();
-        if !self.usage.is_empty() {
-            lines.push(String::new());
-            lines.push("Token usage:".to_string());
-            for u in &self.usage {
-                lines.push(u.to_usage_line());
-            }
+        let mut lines: Vec<String> = Vec::new();
+        for a in &self.authors {
+            let usage = self
+                .usage
+                .iter()
+                .find(|u| u.display_name == a.display_name && u.provider_id == a.provider_id);
+            let name = match usage {
+                Some(u) => format!("{} {}", a.display_name, u.usage_inline()),
+                None => a.display_name.clone(),
+            };
+            lines.push(format!(
+                "Co-authored-by: {} <{}@{}>",
+                name, a.provider_id, CELESTIA_DOMAIN
+            ));
         }
         lines.join("\n")
     }
@@ -190,20 +198,20 @@ mod tests {
     }
 
     #[test]
-    fn test_usage_line_without_cache() {
+    fn test_usage_inline_without_cache() {
         let u = ModelUsage {
             display_name: "GLM 5".to_string(),
-            provider_id: "zhipu.ai".to_string(),
+            provider_id: "zhipuai.cn".to_string(),
             model_id: "glm-5".to_string(),
             upload: 36429,
             download: 1503,
             cache: None,
         };
-        assert_eq!(u.to_usage_line(), "[GLM 5] Upload 36.4k, Download 1.5k");
+        assert_eq!(u.usage_inline(), "(↑ 36.4k ↓ 1.5k)");
     }
 
     #[test]
-    fn test_usage_line_with_cache() {
+    fn test_usage_inline_with_cache() {
         let u = ModelUsage {
             display_name: "Claude Opus 4.8".to_string(),
             provider_id: "anthropic.com".to_string(),
@@ -212,10 +220,7 @@ mod tests {
             download: 8300,
             cache: Some(45200),
         };
-        assert_eq!(
-            u.to_usage_line(),
-            "[Claude Opus 4.8] Upload 12.5k, Download 8.3k, Cache 45.2k"
-        );
+        assert_eq!(u.usage_inline(), "(↑ 12.5k ↓ 8.3k ⚡45.2k)");
     }
 
     #[test]
@@ -226,12 +231,12 @@ mod tests {
                 CoAuthor::yolo_authority(),
                 CoAuthor {
                     display_name: "GLM 5".to_string(),
-                    provider_id: "zhipu.ai".to_string(),
+                    provider_id: "zhipuai.cn".to_string(),
                 },
             ],
             usage: vec![ModelUsage {
                 display_name: "GLM 5".to_string(),
-                provider_id: "zhipu.ai".to_string(),
+                provider_id: "zhipuai.cn".to_string(),
                 model_id: "glm-5".to_string(),
                 upload: 36429,
                 download: 1503,
@@ -240,9 +245,8 @@ mod tests {
         };
         let block = report.render_trailer_block();
         assert!(block.contains("Co-authored-by: Entelecheia <demiurge@celestia.world>"));
-        assert!(block.contains("Co-authored-by: GLM 5 <zhipu.ai@celestia.world>"));
-        assert!(block.contains("Token usage:"));
-        assert!(block.contains("[GLM 5] Upload 36.4k, Download 1.5k"));
+        assert!(block.contains("Co-authored-by: GLM 5 (↑ 36.4k ↓ 1.5k) <zhipuai.cn@celestia.world>"));
+        assert!(!block.contains("Token usage:"));
     }
 
     #[test]
