@@ -48,9 +48,19 @@ impl ProviderMap {
 
     pub fn merge_aporia(&mut self, providers: &[AporiaProviderEntry]) {
         for p in providers {
-            let provider_id = endpoint_to_provider_id(&p.endpoint).unwrap_or_else(|| {
-                derive_provider_id_from_model(&p.model).unwrap_or_else(|| "unknown".to_string())
-            });
+            if p.model.is_empty() {
+                continue;
+            }
+            let provider_id = if !p.website_domain.is_empty() {
+                p.website_domain.clone()
+            } else {
+                tracing::debug!(
+                    model = %p.model,
+                    provider = %p.name,
+                    "aporia provider has no website_domain; skipping co-author attribution (website_domain is mandatory)"
+                );
+                continue;
+            };
             let display = derive_display_name(&p.model, &provider_id);
             self.by_model.insert(
                 p.model.clone(),
@@ -68,22 +78,20 @@ pub struct AporiaProviderEntry {
     pub name: String,
     pub model: String,
     pub endpoint: String,
+    pub website_domain: String,
 }
 
-pub fn resolve_provider(model_id: &str, map: &ProviderMap) -> ProviderIdentity {
+pub fn resolve_provider(model_id: &str, map: &ProviderMap) -> Option<ProviderIdentity> {
     let lower = model_id.to_ascii_lowercase();
     if let Some(id) = map.by_model.get(model_id).or_else(|| map.by_model.get(&lower)) {
-        return id.clone();
+        return Some(id.clone());
     }
     for (key, id) in &map.by_model {
         if lower.starts_with(key) {
-            return id.clone();
+            return Some(id.clone());
         }
     }
-    ProviderIdentity {
-        display_name: Some(derive_display_name(model_id, "unknown")),
-        provider_id: derive_provider_id_from_model(model_id).unwrap_or_else(|| "unknown".to_string()),
-    }
+    None
 }
 
 pub fn endpoint_to_provider_id(endpoint: &str) -> Option<String> {

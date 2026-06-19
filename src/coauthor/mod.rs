@@ -119,7 +119,9 @@ pub fn build_report(
     }
     let mut usage: Vec<ModelUsage> = Vec::new();
     for m in models {
-        let identity = resolve_provider(&m.model_id, provider_map);
+        let Some(identity) = resolve_provider(&m.model_id, provider_map) else {
+            continue;
+        };
         let display_name = identity
             .display_name
             .clone()

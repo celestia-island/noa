@@ -36,17 +36,18 @@ pub fn run(args: ResolveArgs) -> Result<()> {
 }
 
 fn load_provider_map(aporia_config: &Option<PathBuf>) -> ProviderMap {
-    let mut map = ProviderMap::builtin();
-    if let Some(path) = aporia_config {
-        if let Ok(content) = std::fs::read_to_string(path) {
+    let aporia_path = aporia_config
+        .as_ref()
+        .map(|p| p.clone())
+        .or_else(|| locate_aporia_config());
+    if let Some(path) = aporia_path {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            let mut map = ProviderMap::default();
             merge_aporia_content(&mut map, &content);
-        }
-    } else if let Some(auto) = locate_aporia_config() {
-        if let Ok(content) = std::fs::read_to_string(&auto) {
-            merge_aporia_content(&mut map, &content);
+            return map;
         }
     }
-    map
+    ProviderMap::builtin()
 }
 
 fn locate_aporia_config() -> Option<PathBuf> {
@@ -82,6 +83,8 @@ fn merge_aporia_content(map: &mut ProviderMap, content: &str) {
         model: String,
         #[serde(default)]
         endpoint: String,
+        #[serde(default)]
+        website_domain: String,
     }
     if let Ok(cfg) = toml::from_str::<Config>(content) {
         let entries: Vec<AporiaProviderEntry> = cfg
@@ -91,6 +94,7 @@ fn merge_aporia_content(map: &mut ProviderMap, content: &str) {
                 name: p.name,
                 model: p.model,
                 endpoint: p.endpoint,
+                website_domain: p.website_domain,
             })
             .collect();
         map.merge_aporia(&entries);
