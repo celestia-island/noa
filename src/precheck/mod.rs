@@ -172,6 +172,17 @@ pub fn skip_requested() -> bool {
     matches!(std::env::var("NOA_SKIP_HOOKS"), Ok(v) if !v.is_empty())
 }
 
+/// Whether the caller has requested that only the `cargo check` gate be
+/// skipped while the secret scan still runs.
+///
+/// Lets a deployment opt out of the (potentially slow) compile gate — e.g.
+/// a self-healing loop that intentionally stages non-compiling intermediate
+/// states — without weakening secret protection. Coarser [`skip_requested`]
+/// (NOA_SKIP_HOOKS) always wins: when both are set, everything is skipped.
+pub fn cargo_check_skip_requested() -> bool {
+    matches!(std::env::var("NOA_SKIP_CARGO_CHECK"), Ok(v) if !v.is_empty())
+}
+
 /// Run `cargo check --workspace` against the current working directory if and
 /// only if a `Cargo.toml` is present at the repo root. Non-Rust repos are
 /// silently skipped. Capped at [`CARGO_CHECK_TIMEOUT_SECS`] seconds so a stuck
@@ -391,6 +402,42 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, dirty_str);
         assert_eq!(hits[0].kind, "AWS access key id");
+    }
+
+    #[test]
+    fn cargo_check_skip_requested_returns_true_when_set() {
+        // Snapshot-and-restore so parallel tests are unaffected.
+        let prev = std::env::var("NOA_SKIP_CARGO_CHECK").ok();
+        std::env::set_var("NOA_SKIP_CARGO_CHECK", "1");
+        assert!(cargo_check_skip_requested());
+        if let Some(v) = prev {
+            std::env::set_var("NOA_SKIP_CARGO_CHECK", v);
+        } else {
+            std::env::remove_var("NOA_SKIP_CARGO_CHECK");
+        }
+    }
+
+    #[test]
+    fn cargo_check_skip_requested_returns_false_when_unset() {
+        let prev = std::env::var("NOA_SKIP_CARGO_CHECK").ok();
+        std::env::remove_var("NOA_SKIP_CARGO_CHECK");
+        assert!(!cargo_check_skip_requested());
+        if let Some(v) = prev {
+            std::env::set_var("NOA_SKIP_CARGO_CHECK", v);
+        }
+    }
+
+    #[test]
+    fn cargo_check_skip_requested_returns_false_when_empty() {
+        // An empty value is treated as "not set", consistent with skip_requested.
+        let prev = std::env::var("NOA_SKIP_CARGO_CHECK").ok();
+        std::env::set_var("NOA_SKIP_CARGO_CHECK", "");
+        assert!(!cargo_check_skip_requested());
+        if let Some(v) = prev {
+            std::env::set_var("NOA_SKIP_CARGO_CHECK", v);
+        } else {
+            std::env::remove_var("NOA_SKIP_CARGO_CHECK");
+        }
     }
 
     #[test]

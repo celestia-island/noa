@@ -10,6 +10,9 @@
 # Unlike the commit-msg hook, this hook DOES block the commit on a finding.
 #
 # Escape valve: NOA_SKIP_HOOKS=1 git commit ...   bypasses all checks.
+# Granular valve: NOA_SKIP_CARGO_CHECK=1 git commit ...   skips only the
+#   `cargo check` compile gate but STILL runs the secret scan — useful for
+#   active loops that stage non-compiling intermediate states.
 # Data-source tuning: EVERNIGHT_SOCK, NOA_EVERNIGHT_TIMEOUT_SECS,
 #   NOA_HOST_REPO, NOA_LOCAL_REPO, NOA_HOOK_DATA_SOURCE (auto|evernight|local).
 

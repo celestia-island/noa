@@ -145,7 +145,13 @@ pub fn run_pre_commit() -> Result<()> {
         );
     }
 
-    precheck::run_cargo_check()?;
+    if precheck::cargo_check_skip_requested() {
+        tracing::debug!(
+            "NOA_SKIP_CARGO_CHECK set; skipping cargo check gate (secret scan already ran)"
+        );
+    } else {
+        precheck::run_cargo_check()?;
+    }
 
     Ok(())
 }
