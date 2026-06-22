@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::{
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
@@ -11,7 +12,6 @@ use super::{
     NoaEventSyncMessage, NoaReady, RequestNoaHandshake,
 };
 use crate::error::{is_eof_error, Result};
-use anyhow::Context;
 
 pub struct SyncServer {
     socket_path: PathBuf,

@@ -48,7 +48,14 @@ async fn test_list_refs_empty() {
 async fn test_push_ref() {
     let (_tmp, app) = make_app().await;
     // First create a snapshot to get a valid ID
-    let expected_id = libnoa::snapshot::content_addressed_snapshot_id_with_ts("tree123", &[], "default", "test", "test snapshot", 1000);
+    let expected_id = libnoa::snapshot::content_addressed_snapshot_id_with_ts(
+        "tree123",
+        &[],
+        "default",
+        "test",
+        "test snapshot",
+        1000,
+    );
     let snap_body = format!(
         r#"{{"snapshot": {{"id": "{}", "tree_hash": "tree123", "parents": [], "workspace": "default", "author": "test", "timestamp": 1000, "message": "test snapshot"}}}}"#,
         expected_id
@@ -66,8 +73,14 @@ async fn test_push_ref() {
 #[tokio::test]
 async fn test_push_ref_valid_slash_name() {
     let (_tmp, app) = make_app().await;
-    let expected_id =
-        libnoa::snapshot::content_addressed_snapshot_id_with_ts("tree456", &[], "default", "test", "test", 1000);
+    let expected_id = libnoa::snapshot::content_addressed_snapshot_id_with_ts(
+        "tree456",
+        &[],
+        "default",
+        "test",
+        "test",
+        1000,
+    );
     let snap_body = format!(
         r#"{{"snapshot": {{"id": "{}", "tree_hash": "tree456", "parents": [], "workspace": "default", "author": "test", "timestamp": 1000, "message": "test"}}}}"#,
         expected_id
@@ -104,7 +117,11 @@ async fn test_upload_blob_and_get() {
 #[tokio::test]
 async fn test_get_blob_not_found() {
     let (_tmp, app) = make_app().await;
-    let req = make_request(Method::GET, "/api/v1/blob/deadbeef00000000deadbeef00000000deadbeef00000000deadbeef00000000", None);
+    let req = make_request(
+        Method::GET,
+        "/api/v1/blob/deadbeef00000000deadbeef00000000deadbeef00000000deadbeef00000000",
+        None,
+    );
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
@@ -112,7 +129,11 @@ async fn test_get_blob_not_found() {
 #[tokio::test]
 async fn test_get_tree_not_found() {
     let (_tmp, app) = make_app().await;
-    let req = make_request(Method::GET, "/api/v1/tree/deadbeef00000000deadbeef00000000deadbeef00000000deadbeef00000000", None);
+    let req = make_request(
+        Method::GET,
+        "/api/v1/tree/deadbeef00000000deadbeef00000000deadbeef00000000deadbeef00000000",
+        None,
+    );
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
@@ -157,7 +178,14 @@ async fn test_upload_trees() {
 async fn test_create_snapshot() {
     let (_tmp, app) = make_app().await;
     // Compute the expected content-addressed snapshot ID
-    let expected_id = libnoa::snapshot::content_addressed_snapshot_id_with_ts("tree123", &[], "default", "test", "test snapshot", 1000);
+    let expected_id = libnoa::snapshot::content_addressed_snapshot_id_with_ts(
+        "tree123",
+        &[],
+        "default",
+        "test",
+        "test snapshot",
+        1000,
+    );
     let body = format!(
         r#"{{"snapshot": {{"id": "{}", "tree_hash": "tree123", "parents": [], "workspace": "default", "author": "test", "timestamp": 1000, "message": "test snapshot"}}}}"#,
         expected_id
@@ -320,12 +348,7 @@ async fn test_rate_limit_per_ip_independent_buckets() {
     let addr_b: std::net::SocketAddr = "127.0.0.2:2222".parse().unwrap();
 
     for _ in 0..3 {
-        let req = make_request_with_connect_info(
-            Method::GET,
-            "/api/v1/refs",
-            addr_a,
-            None,
-        );
+        let req = make_request_with_connect_info(Method::GET, "/api/v1/refs", addr_a, None);
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
     }

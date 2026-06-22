@@ -1,10 +1,10 @@
+use anyhow::Result;
 use std::path::PathBuf;
 
-use anyhow::Result;
-
 use crate::coauthor::{
+    build_report,
     provider::{AporiaProviderEntry, ProviderMap},
-    session, build_report,
+    session,
 };
 
 pub struct ResolveArgs {

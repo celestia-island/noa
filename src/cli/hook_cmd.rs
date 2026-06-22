@@ -1,9 +1,7 @@
+use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
-
-use crate::precheck;
-use crate::precheck::commit_source::Acquisition;
+use crate::precheck::{self, commit_source::Acquisition};
 
 const COMMIT_MSG_HOOK: &str = include_str!("../../assets/commit-msg.sh");
 const PRE_COMMIT_HOOK: &str = include_str!("../../assets/pre-commit.sh");
@@ -49,7 +47,13 @@ pub fn run(args: InstallArgs) -> Result<()> {
         which_noa(&noa_bin).unwrap_or(noa_bin)
     };
 
-    install_hook(&hooks_dir, "commit-msg", COMMIT_MSG_HOOK, &resolved, args.force)?;
+    install_hook(
+        &hooks_dir,
+        "commit-msg",
+        COMMIT_MSG_HOOK,
+        &resolved,
+        args.force,
+    )?;
     install_hook(
         &hooks_dir,
         "pre-commit",

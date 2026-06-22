@@ -83,7 +83,11 @@ pub struct AporiaProviderEntry {
 
 pub fn resolve_provider(model_id: &str, map: &ProviderMap) -> Option<ProviderIdentity> {
     let lower = model_id.to_ascii_lowercase();
-    if let Some(id) = map.by_model.get(model_id).or_else(|| map.by_model.get(&lower)) {
+    if let Some(id) = map
+        .by_model
+        .get(model_id)
+        .or_else(|| map.by_model.get(&lower))
+    {
         return Some(id.clone());
     }
     for (key, id) in &map.by_model {
@@ -200,7 +204,7 @@ pub fn derive_display_name(model_id: &str, provider_id: &str) -> String {
             } else {
                 "GPT"
             }
-        },
+        }
         "google.com" => "Gemini",
         "meta.com" => "Llama",
         "mistral.ai" => "Mistral",

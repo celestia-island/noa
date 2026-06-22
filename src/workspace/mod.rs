@@ -3,7 +3,10 @@ use std::sync::Arc;
 
 use redb::ReadableTable;
 
-use crate::{error::{NoaError, Result}, snapshot::SnapshotId};
+use crate::{
+    error::{NoaError, Result},
+    snapshot::SnapshotId,
+};
 
 pub fn validate_workspace_name(name: &str) -> Result<()> {
     if name.is_empty() {

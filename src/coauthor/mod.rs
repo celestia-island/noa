@@ -114,9 +114,9 @@ pub fn format_k(n: u64) -> String {
     } else {
         format!("{:.1}", k)
     }
-        .trim_end_matches('0')
-        .trim_end_matches('.')
-        .to_string()
+    .trim_end_matches('0')
+    .trim_end_matches('.')
+    .to_string()
         + "k"
 }
 
@@ -143,9 +143,10 @@ pub fn build_report(
             display_name: display_name.clone(),
             provider_id: provider_id.clone(),
         };
-        if !authors.iter().any(|a| {
-            a.display_name == author.display_name && a.provider_id == author.provider_id
-        }) {
+        if !authors
+            .iter()
+            .any(|a| a.display_name == author.display_name && a.provider_id == author.provider_id)
+        {
             authors.push(author);
         }
         usage.push(ModelUsage {
@@ -249,7 +250,9 @@ mod tests {
         };
         let block = report.render_trailer_block();
         assert!(block.contains("Co-authored-by: Entelecheia <demiurge@celestia.world>"));
-        assert!(block.contains("Co-authored-by: GLM 5 (↑ 36.4k ↓ 1.5k) <zhipuai.cn@celestia.world>"));
+        assert!(
+            block.contains("Co-authored-by: GLM 5 (↑ 36.4k ↓ 1.5k) <zhipuai.cn@celestia.world>")
+        );
         assert!(!block.contains("Token usage:"));
     }
 
@@ -260,4 +263,3 @@ mod tests {
         assert_eq!(report.render_trailer_block(), "");
     }
 }
-

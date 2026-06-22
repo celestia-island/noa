@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::{
     path::{Component, Path, PathBuf},
     process::Command,
@@ -10,7 +11,6 @@ use crate::{
     refs::{RedbRefStore, RefStore},
     snapshot::{RedbSnapshotStore, SnapshotStore},
 };
-use anyhow::Context;
 
 fn get_git_email(repo_root: &Path) -> String {
     std::process::Command::new("git")

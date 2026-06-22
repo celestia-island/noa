@@ -159,8 +159,7 @@ pub async fn run_pull(remote_name: &str) -> Result<()> {
     if crate::git::export::detect_lfs_available(&root)
         && crate::git::export::has_lfs_tracking(&root)
     {
-        tokio::task::spawn_blocking(move || crate::git::export::lfs_pull(&root_lfs_pull))
-            .await??;
+        tokio::task::spawn_blocking(move || crate::git::export::lfs_pull(&root_lfs_pull)).await??;
     }
 
     let db = Arc::clone(&repo.db);

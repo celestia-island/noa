@@ -1,6 +1,5 @@
-use std::path::{Path, PathBuf};
-
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ModelRecord {
@@ -55,7 +54,10 @@ pub fn summarize_chat_log_dir(dir: &Path, lookback_secs: u64) -> SessionSummary 
             if !(name.starts_with("chat#") && name.ends_with(".log")) {
                 return None;
             }
-            e.metadata().ok().and_then(|m| m.modified().ok()).map(|t| (t, e.path()))
+            e.metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .map(|t| (t, e.path()))
         })
         .collect();
     logs.sort_by(|a, b| b.0.cmp(&a.0));
@@ -66,7 +68,9 @@ pub fn summarize_chat_log_dir(dir: &Path, lookback_secs: u64) -> SessionSummary 
     } else {
         None
     };
-    let now_age = now.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let now_age = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
 
     let mut models_map: std::collections::HashMap<String, ModelRecord> =
         std::collections::HashMap::new();
@@ -101,10 +105,12 @@ pub fn summarize_chat_log_dir(dir: &Path, lookback_secs: u64) -> SessionSummary 
             if entry.model.is_empty() {
                 continue;
             }
-            let rec = models_map.entry(entry.model.clone()).or_insert_with(|| ModelRecord {
-                model_id: entry.model.clone(),
-                ..Default::default()
-            });
+            let rec = models_map
+                .entry(entry.model.clone())
+                .or_insert_with(|| ModelRecord {
+                    model_id: entry.model.clone(),
+                    ..Default::default()
+                });
             rec.upload = rec.upload.saturating_add(entry.upload);
             rec.download = rec.download.saturating_add(entry.download);
             if let Some(c) = entry.cache {
@@ -164,28 +170,33 @@ fn parse_chat_log_entries(content: &str) -> Vec<ParsedEntry> {
 }
 
 fn parse_header(header: &str) -> Option<ParsedEntry> {
-    let map: std::collections::HashMap<String, String> =
-        toml::from_str::<toml::Value>(header)
-            .ok()
-            .and_then(|v| v.as_table().cloned())?
-            .into_iter()
-            .filter_map(|(k, v)| {
-                let s = match &v {
-                    toml::Value::String(s) => s.clone(),
-                    toml::Value::Integer(i) => i.to_string(),
-                    toml::Value::Boolean(b) => b.to_string(),
-                    toml::Value::Float(f) => f.to_string(),
-                    _ => return None,
-                };
-                Some((k, s))
-            })
-            .collect();
+    let map: std::collections::HashMap<String, String> = toml::from_str::<toml::Value>(header)
+        .ok()
+        .and_then(|v| v.as_table().cloned())?
+        .into_iter()
+        .filter_map(|(k, v)| {
+            let s = match &v {
+                toml::Value::String(s) => s.clone(),
+                toml::Value::Integer(i) => i.to_string(),
+                toml::Value::Boolean(b) => b.to_string(),
+                toml::Value::Float(f) => f.to_string(),
+                _ => return None,
+            };
+            Some((k, s))
+        })
+        .collect();
     let model = map.get("model").cloned()?;
     if model.is_empty() || model == "null" {
         return None;
     }
-    let upload = map.get("input_tokens").and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
-    let download = map.get("output_tokens").and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+    let upload = map
+        .get("input_tokens")
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+    let download = map
+        .get("output_tokens")
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
     let cache = map
         .get("cache_read_input_tokens")
         .or_else(|| map.get("cached_tokens"))

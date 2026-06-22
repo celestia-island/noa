@@ -146,7 +146,10 @@ impl EventSyncEngine {
                                     let wr = workspace_root.clone();
                                     tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
                                         if !verify_path_safe(&wr, &fp) {
-                                            anyhow::bail!("path safety check failed after async gap: {}", fp.display());
+                                            anyhow::bail!(
+                                                "path safety check failed after async gap: {}",
+                                                fp.display()
+                                            );
                                         }
                                         if let Some(parent) = fp.parent() {
                                             std::fs::create_dir_all(parent)?;
@@ -169,7 +172,10 @@ impl EventSyncEngine {
                         let wr = workspace_root.clone();
                         tokio::task::spawn_blocking(move || {
                             if !verify_path_safe(&wr, &fp) {
-                                anyhow::bail!("path safety check failed for delete: {}", fp.display());
+                                anyhow::bail!(
+                                    "path safety check failed for delete: {}",
+                                    fp.display()
+                                );
                             }
                             if fp.exists() {
                                 std::fs::remove_file(&fp)?;
@@ -187,10 +193,16 @@ impl EventSyncEngine {
                                 let wr = workspace_root.clone();
                                 tokio::task::spawn_blocking(move || {
                                     if !verify_path_safe(&wr, &fp) {
-                                        anyhow::bail!("path safety check failed for rename dest: {}", fp.display());
+                                        anyhow::bail!(
+                                            "path safety check failed for rename dest: {}",
+                                            fp.display()
+                                        );
                                     }
                                     if !verify_path_safe(&wr, &from_path) {
-                                        anyhow::bail!("path safety check failed for rename src: {}", from_path.display());
+                                        anyhow::bail!(
+                                            "path safety check failed for rename src: {}",
+                                            from_path.display()
+                                        );
                                     }
                                     if from_path.exists() {
                                         if let Err(e) = std::fs::rename(&from_path, &fp) {
