@@ -229,7 +229,7 @@ pub fn derive_display_name(model_id: &str, provider_id: &str) -> String {
     if !brand.is_empty() {
         parts.push(brand.to_string());
     }
-    for chunk in rest.split(|c: char| c == '-' || c == '_' || c == '.') {
+    for chunk in rest.split(['-', '_', '.']) {
         if chunk.is_empty() {
             continue;
         }

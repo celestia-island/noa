@@ -60,7 +60,7 @@ pub fn summarize_chat_log_dir(dir: &Path, lookback_secs: u64) -> SessionSummary 
                 .map(|t| (t, e.path()))
         })
         .collect();
-    logs.sort_by(|a, b| b.0.cmp(&a.0));
+    logs.sort_by_key(|b| std::cmp::Reverse(b.0));
 
     let now = std::time::SystemTime::now();
     let cutoff: Option<std::time::Duration> = if lookback_secs > 0 {
@@ -153,7 +153,7 @@ fn parse_chat_log_entries(content: &str) -> Vec<ParsedEntry> {
             continue;
         }
         let mut header = String::new();
-        while let Some(hline) = lines.next() {
+        for hline in lines.by_ref() {
             if hline.trim() == "+++" {
                 break;
             }

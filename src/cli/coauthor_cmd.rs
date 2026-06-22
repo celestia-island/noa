@@ -36,10 +36,7 @@ pub fn run(args: ResolveArgs) -> Result<()> {
 }
 
 fn load_provider_map(aporia_config: &Option<PathBuf>) -> ProviderMap {
-    let aporia_path = aporia_config
-        .as_ref()
-        .map(|p| p.clone())
-        .or_else(|| locate_aporia_config());
+    let aporia_path = aporia_config.clone().or_else(locate_aporia_config);
     if let Some(path) = aporia_path {
         if let Ok(content) = std::fs::read_to_string(&path) {
             let mut map = ProviderMap::default();
