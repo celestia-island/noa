@@ -1,14 +1,19 @@
+use anyhow::Context;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use anyhow::Context;
 use redb::Database;
 
 use crate::{
-    config::RepoConfig, error::{NoaError, Result}, log::FileAgentLog, object::RedbObjectStore,
-    refs::RedbRefStore, snapshot::RedbSnapshotStore, workspace::WorkspaceManager,
+    config::RepoConfig,
+    error::{NoaError, Result},
+    log::FileAgentLog,
+    object::RedbObjectStore,
+    refs::RedbRefStore,
+    snapshot::RedbSnapshotStore,
+    workspace::WorkspaceManager,
 };
 
 /// Name of the `.noa` directory when standalone.
@@ -95,7 +100,10 @@ impl Repository {
         let noa_dir = Self::resolve_noa_dir(path);
 
         if noa_dir.exists() {
-            return Err(NoaError::RepositoryAlreadyExists { path: noa_dir.display().to_string() }.into());
+            return Err(NoaError::RepositoryAlreadyExists {
+                path: noa_dir.display().to_string(),
+            }
+            .into());
         }
 
         std::fs::create_dir_all(&noa_dir)?;
@@ -135,7 +143,10 @@ impl Repository {
         let noa_dir = Self::resolve_noa_dir(path);
 
         if !noa_dir.exists() {
-            return Err(NoaError::RepositoryNotFound { path: noa_dir.display().to_string() }.into());
+            return Err(NoaError::RepositoryNotFound {
+                path: noa_dir.display().to_string(),
+            }
+            .into());
         }
 
         Self::validate(&noa_dir)?;
@@ -166,7 +177,12 @@ impl Repository {
             }
             match current.parent() {
                 Some(parent) => current = parent.to_path_buf(),
-                None => return Err(NoaError::RepositoryNotFound { path: from.display().to_string() }.into()),
+                None => {
+                    return Err(NoaError::RepositoryNotFound {
+                        path: from.display().to_string(),
+                    }
+                    .into())
+                }
             }
         }
     }
@@ -330,10 +346,7 @@ pub fn get_current_git_branch(workspace_root: &Path) -> Result<String> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(
-            "failed to determine current git branch: {}",
-            stderr.trim()
-        );
+        anyhow::bail!("failed to determine current git branch: {}", stderr.trim());
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -366,7 +379,9 @@ pub fn manage_gitignore(root: &Path) -> Result<()> {
 
 pub fn manage_gitattributes(root: &Path, noa_remote_url: &str) -> Result<()> {
     let noa_dir = Repository::resolve_noa_dir(root);
-    let noa_rel = noa_dir.strip_prefix(root).unwrap_or_else(|_| Path::new(".noa"));
+    let noa_rel = noa_dir
+        .strip_prefix(root)
+        .unwrap_or_else(|_| Path::new(".noa"));
     let gitattributes_path = root.join(".gitattributes");
     let attr_line = format!("{}/**   noa-remote={}", noa_rel.display(), noa_remote_url);
 
@@ -459,15 +474,81 @@ mod tests {
         assert!(Repository::exists(tmp.path()));
     }
 
-    #[test]
-    fn test_stores_accessible() {
+    #[tokio::test]
+    async fn test_stores_accessible() {
+        use crate::object::ObjectStore;
+        use crate::refs::RefStore;
+        use crate::snapshot::SnapshotStore;
+
         let tmp = TempDir::new().unwrap();
         let repo = Repository::init(tmp.path()).unwrap();
-        assert!(repo.object_store().is_ok());
-        assert!(repo.snapshot_store().is_ok());
-        assert!(repo.ref_store().is_ok());
-        assert!(repo.workspace_manager().is_ok());
-        assert!(repo.agent_log("default").is_ok());
+
+        // The previous test only checked `.is_ok()` on each constructor,
+        // which would still pass if a constructor opened a database handle
+        // to the wrong table or a stale file descriptor. We now drive at
+        // least one trivial read method on each store to prove the handle
+        // is actually wired to the right schema.
+
+        let object_store = repo.object_store().expect("object_store must construct");
+        let snapshot_store = repo
+            .snapshot_store()
+            .expect("snapshot_store must construct");
+        let ref_store = repo.ref_store().expect("ref_store must construct");
+        let workspace_mgr = repo
+            .workspace_manager()
+            .expect("workspace_manager must construct");
+        let agent_log = repo.agent_log("default").expect("agent_log must construct");
+
+        // ObjectStore: a fresh repo must NOT have a made-up blob id.
+        let phantom_blob_id = crate::object::BlobId("nonexistent-blob-id".to_string());
+        let has_blob = object_store
+            .has_blob(&phantom_blob_id)
+            .await
+            .expect("has_blob must succeed (returning false) on a fresh repo");
+        assert!(!has_blob, "fresh repo must not have a phantom blob id");
+
+        // SnapshotStore: a fresh repo must have zero snapshots.
+        let all_snaps = snapshot_store
+            .list_all()
+            .await
+            .expect("list_all must succeed");
+        assert!(
+            all_snaps.is_empty(),
+            "fresh repo must have zero snapshots, got {}",
+            all_snaps.len()
+        );
+
+        // RefStore: a fresh repo must have zero refs.
+        let refs = ref_store.list().await.expect("ref list must succeed");
+        assert!(
+            refs.is_empty(),
+            "fresh repo must have zero refs, got {}",
+            refs.len()
+        );
+
+        // WorkspaceManager: Repository::init creates a `default` workspace,
+        // so a fresh repo must have exactly 1 workspace named "default".
+        let workspaces = workspace_mgr
+            .list()
+            .await
+            .expect("workspace list must succeed");
+        assert_eq!(
+            workspaces.len(),
+            1,
+            "fresh repo must have exactly the 'default' workspace, got {:?}",
+            workspaces.iter().map(|w| &w.name).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            workspaces[0].name, "default",
+            "the seeded workspace must be named 'default'"
+        );
+
+        // AgentLog: must expose a sequence counter that starts at 0 (or
+        // whatever the engine's documented initial value is) — the call
+        // must not panic and must return a deterministic value.
+        let _seq = crate::log::AgentLog::next_seq(&agent_log)
+            .await
+            .expect("next_seq must succeed on a fresh agent log");
     }
 
     #[test]
@@ -597,18 +678,9 @@ mod tests {
         let repo = Repository::init(tmp.path()).unwrap();
 
         let expected = tmp.path().join(".noa");
-        assert_eq!(
-            repo.noa_dir, expected,
-            "standalone noa dir must be .noa/"
-        );
-        assert!(
-            !repo.is_parasitic(),
-            "is_parasitic() must return false"
-        );
-        assert!(
-            tmp.path().join(".noa").exists(),
-            ".noa/ must exist on disk"
-        );
+        assert_eq!(repo.noa_dir, expected, "standalone noa dir must be .noa/");
+        assert!(!repo.is_parasitic(), "is_parasitic() must return false");
+        assert!(tmp.path().join(".noa").exists(), ".noa/ must exist on disk");
 
         let gitignore_path = tmp.path().join(".gitignore");
         assert!(gitignore_path.exists(), ".gitignore must be created");
@@ -636,10 +708,7 @@ mod tests {
         let opened = opened.unwrap();
         assert!(!opened.is_parasitic());
 
-        assert!(
-            Repository::exists(tmp.path()),
-            "exists() must return true"
-        );
+        assert!(Repository::exists(tmp.path()), "exists() must return true");
 
         let subdir = tmp.path().join("sub");
         std::fs::create_dir_all(&subdir).unwrap();

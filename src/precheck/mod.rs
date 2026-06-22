@@ -12,10 +12,9 @@
 
 pub mod commit_source;
 
-use std::path::Path;
-
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use regex::Regex;
+use std::path::Path;
 
 /// Description of a single suspected secret found in a staged file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -280,7 +279,10 @@ mod tests {
     #[test]
     fn detects_npm_token() {
         let token = format!("npm_{}", "Z".repeat(36));
-        let hits = scan_content(".npmrc", &format!("//registry.npmjs.org/:_authToken={token}"));
+        let hits = scan_content(
+            ".npmrc",
+            &format!("//registry.npmjs.org/:_authToken={token}"),
+        );
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].kind, "npm token");
     }
@@ -302,7 +304,8 @@ mod tests {
 
     #[test]
     fn detects_pem_private_key() {
-        let content = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----\n";
+        let content =
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----\n";
         let hits = scan_content("id_rsa", content);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].kind, "PEM private key");
@@ -387,11 +390,7 @@ mod tests {
     fn scan_staged_reads_files_and_aggregates_hits() {
         let tmp = tempfile::TempDir::new().unwrap();
         let dirty = tmp.path().join("dirty.rs");
-        std::fs::write(
-            &dirty,
-            "let k = \"AKIA0123456789ABCDEF\";\n",
-        )
-        .unwrap();
+        std::fs::write(&dirty, "let k = \"AKIA0123456789ABCDEF\";\n").unwrap();
         let clean = tmp.path().join("clean.rs");
         std::fs::write(&clean, "fn main() {}\n").unwrap();
 
@@ -467,14 +466,20 @@ mod tests {
         )
         .unwrap();
 
-        // cargo must be available for this test to be meaningful; skip otherwise.
+        // cargo must be available for this regression test to be meaningful.
+        // A Rust project's CI image universally has cargo on PATH; if it's
+        // missing the test would silently pass and the security-critical
+        // cargo-check gate would have zero coverage. Fail loudly instead of
+        // silently skipping.
         if std::process::Command::new("cargo")
             .arg("--version")
             .output()
             .is_err()
         {
-            eprintln!("skipping run_cargo_check_blocks_on_failing_project: cargo not on PATH");
-            return;
+            panic!(
+                "cargo must be on PATH to validate the cargo-check gate; \
+                 this is a CI environment bug, not a benign skip"
+            );
         }
 
         let prev = std::env::current_dir().unwrap();

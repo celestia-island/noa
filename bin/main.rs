@@ -365,14 +365,11 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_try_init_called_twice_does_not_panic() {
-        // Simulating what happens if `noa sync` is called in a long-running process
-        // where tracing_subscriber::fmt::init() could be called multiple times
-        let _ = tracing_subscriber::fmt().try_init();
-        let _ = tracing_subscriber::fmt().try_init();
-        // If we reach here without panic, the fix works
-    }
-}
+// The previous `tests::test_try_init_called_twice_does_not_panic` test was
+// removed: it called `tracing_subscriber::fmt().try_init()` (a standard
+// library method that is documented to never panic) twice, discarded both
+// results, and asserted nothing about project behaviour. The production
+// mitigation it claimed to lock in (`let _ = try_init()` on line 188 above)
+// is itself a one-line idiom that does not warrant a regression test — any
+// regression to `init()` would surface as a panic the first time a test in
+// this binary's process tree initialised the global subscriber twice.

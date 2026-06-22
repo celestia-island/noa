@@ -43,9 +43,10 @@
 //! than reading to EOF. Every phase is bounded by [`AcquireConfig::timeout`]
 //! so a wedged daemon cannot stall an interactive commit.
 
-use std::io::{self, BufRead, BufReader, Write};
-use std::time::Duration;
-
+use std::{
+    io::{self, BufRead, BufReader, Write},
+    time::Duration,
+};
 use tracing::debug;
 
 use super::StagedFile;
@@ -100,8 +101,8 @@ impl AcquireConfig {
     /// - `NOA_HOOK_DATA_SOURCE` — `auto` (default) | `evernight` | `local`.
     #[allow(clippy::needless_pass_by_value)]
     pub fn from_env() -> Self {
-        let socket = std::env::var("EVERNIGHT_SOCK")
-            .unwrap_or_else(|_| DEFAULT_EVERNIGHT_SOCK.to_string());
+        let socket =
+            std::env::var("EVERNIGHT_SOCK").unwrap_or_else(|_| DEFAULT_EVERNIGHT_SOCK.to_string());
         let timeout = std::env::var("NOA_EVERNIGHT_TIMEOUT_SECS")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -189,12 +190,7 @@ pub fn acquire_with(cfg: &AcquireConfig) -> Acquisition {
 /// read each file's working-tree contents from disk.
 fn via_local_git(cfg: &AcquireConfig) -> io::Result<Vec<StagedFile>> {
     let output = std::process::Command::new("git")
-        .args([
-            "diff",
-            "--cached",
-            "--name-only",
-            "--diff-filter=ACMRTUXB",
-        ])
+        .args(["diff", "--cached", "--name-only", "--diff-filter=ACMRTUXB"])
         .current_dir(&cfg.local_repo)
         .output()?;
     if !output.status.success() {
@@ -311,9 +307,9 @@ fn exec_via_evernight(cfg: &AcquireConfig, git_subcommand: &str) -> io::Result<S
             .unwrap_or("unknown error");
         return Err(io::Error::other(format!("evernight: {msg}")));
     }
-    let result = v.get("result").ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidData, "evernight: no result field")
-    })?;
+    let result = v
+        .get("result")
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "evernight: no result field"))?;
     let exit_code = result
         .get("exit_code")
         .and_then(|c| c.as_i64())
@@ -346,7 +342,10 @@ mod tests {
 
         let cfg = AcquireConfig::from_env();
         assert_eq!(cfg.socket, DEFAULT_EVERNIGHT_SOCK);
-        assert_eq!(cfg.timeout, Duration::from_secs(DEFAULT_EVERNIGHT_TIMEOUT_SECS));
+        assert_eq!(
+            cfg.timeout,
+            Duration::from_secs(DEFAULT_EVERNIGHT_TIMEOUT_SECS)
+        );
         assert_eq!(cfg.mode, Mode::Auto);
 
         if let Some(v) = prev_sock {
@@ -368,10 +367,10 @@ mod tests {
             ..AcquireConfig::default()
         };
         match acquire_with(&cfg) {
-            Acquisition::NoSource => {},
+            Acquisition::NoSource => {}
             Acquisition::Ok(files) => {
                 panic!("expected NoSource, acquired {} files", files.len());
-            },
+            }
         }
     }
 
@@ -381,13 +380,17 @@ mod tests {
         // fails, so the gate must signal a silent pass.
         let tmp = tempfile::TempDir::new().unwrap();
         let cfg = AcquireConfig {
-            socket: tmp.path().join("missing.sock").to_string_lossy().to_string(),
+            socket: tmp
+                .path()
+                .join("missing.sock")
+                .to_string_lossy()
+                .to_string(),
             local_repo: tmp.path().to_string_lossy().to_string(),
             mode: Mode::Auto,
             ..AcquireConfig::default()
         };
         match acquire_with(&cfg) {
-            Acquisition::NoSource => {},
+            Acquisition::NoSource => {}
             Acquisition::Ok(files) => panic!("expected NoSource, got {} files", files.len()),
         }
     }
@@ -401,11 +404,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let sock = tmp.path().join("evernight.sock");
         // The "staged" file exists in local_repo; content is read locally.
-        std::fs::write(
-            tmp.path().join("leak.txt"),
-            "key = AKIA0123456789ABCDEF\n",
-        )
-        .unwrap();
+        std::fs::write(tmp.path().join("leak.txt"), "key = AKIA0123456789ABCDEF\n").unwrap();
 
         let listener = UnixListener::bind(&sock).unwrap();
         let handle = thread::spawn(move || {
@@ -477,7 +476,7 @@ mod tests {
             ..AcquireConfig::default()
         };
         match acquire_with(&cfg) {
-            Acquisition::NoSource => {},
+            Acquisition::NoSource => {}
             Acquisition::Ok(files) => panic!("expected NoSource on error response, got {files:?}"),
         }
         handle.join().unwrap();
@@ -486,14 +485,19 @@ mod tests {
     #[test]
     fn local_git_acquires_staged_files() {
         // End-to-end local path: init a throwaway repo, stage a file, confirm
-        // acquisition surfaces it. Skipped when git is not installed.
+        // acquisition surfaces it. Fail loudly when git is missing — this is
+        // the only coverage for the secret-leak prevention in commit-source
+        // acquisition, and silent skip would mask a real regression on
+        // minimal CI images.
         if std::process::Command::new("git")
             .arg("--version")
             .output()
             .is_err()
         {
-            eprintln!("skipping local_git_acquires_staged_files: git not on PATH");
-            return;
+            panic!(
+                "git must be on PATH for the local-git acquisition regression test; \
+                 this is a CI environment bug, not a benign skip"
+            );
         }
         let tmp = tempfile::TempDir::new().unwrap();
         let repo = tmp.path();
@@ -533,23 +537,28 @@ mod tests {
         );
     }
 
+    /// The core regression guard: in Mode::Auto, local git must win even
+    /// though the (mocked) evernight socket is reachable. Unix-only because
+    /// the test mocks the evernight socket via a UnixListener — on Windows
+    /// the test would silently `eprintln!` and report PASS without running
+    /// a single assertion, which masked the contract on non-Unix platforms.
+    /// Gating with `#[cfg(unix)]` makes the test show up as filtered (not
+    /// passing) on Windows.
     #[test]
+    #[cfg(unix)]
     fn auto_prefers_local_git_when_available() {
-        // The core regression guard: in Mode::Auto, local git must win even
-        // though the (mocked) evernight socket is reachable. We prove this by
-        // (a) making local git succeed (a real staged file in a real tmp repo)
-        // and (b) pointing the socket at a mock server whose response would
-        // return a *different* file name. A shared flag records whether
-        // evernight was ever contacted — it must stay false.
+        // git is a hard prerequisite for this test. Fail loudly when it is
+        // missing — silent skip would mask the regression on minimal CI.
         if std::process::Command::new("git")
             .arg("--version")
             .output()
             .is_err()
         {
-            eprintln!("skipping auto_prefers_local_git_when_available: git not on PATH");
-            return;
+            panic!(
+                "git must be on PATH for the auto-mode local-git preference test; \
+                 this is a CI environment bug, not a benign skip"
+            );
         }
-        #[cfg(unix)]
         {
             use std::os::unix::net::UnixListener;
             use std::sync::atomic::{AtomicBool, Ordering};
@@ -594,8 +603,12 @@ mod tests {
                             });
                             let mut line = serde_json::to_string(&resp).unwrap();
                             line.push('\n');
-                            let _ = conn.write_all(line.as_bytes());
-                            let _ = conn.flush();
+                            // Propagate write errors instead of swallowing
+                            // them with `let _ =` — a broken mock must
+                            // surface as a test failure, not a silent skip.
+                            conn.write_all(line.as_bytes())
+                                .expect("mock server write_all");
+                            conn.flush().expect("mock server flush");
                             return;
                         }
                         Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -632,11 +645,6 @@ mod tests {
                 "auto mode must source from local git, not evernight"
             );
             assert!(files[0].content.contains("AKIA0123456789ABCDEF"));
-            return;
-        }
-        #[cfg(not(unix))]
-        {
-            eprintln!("skipping auto_prefers_local_git_when_available: requires unix socket mock");
         }
     }
 
