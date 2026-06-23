@@ -40,12 +40,22 @@ impl FtpObjectStore {
 
     pub fn from_config(config: &crate::config::StorageConfig) -> Result<Self> {
         let endpoint = config.effective_endpoint();
-        let username = config.username.as_deref()
+        let username = config
+            .username
+            .as_deref()
             .ok_or_else(|| anyhow::anyhow!("FTP storage requires 'username'"))?;
-        let password = config.password.as_deref()
+        let password = config
+            .password
+            .as_deref()
             .ok_or_else(|| anyhow::anyhow!("FTP storage requires 'password'"))?;
         let port = if config.port > 0 { config.port } else { 21 };
-        Ok(Self::new(&endpoint, port, username, password, config.use_tls))
+        Ok(Self::new(
+            &endpoint,
+            port,
+            username,
+            password,
+            config.use_tls,
+        ))
     }
 
     fn addr(&self) -> String {

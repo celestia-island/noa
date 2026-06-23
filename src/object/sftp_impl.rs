@@ -33,7 +33,12 @@ impl SftpObjectStore {
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("SFTP transport requires 'username'"))?;
         let port = if config.port > 0 { config.port } else { 22 };
-        Ok(Self::new(&endpoint, port, username, config.password.as_deref()))
+        Ok(Self::new(
+            &endpoint,
+            port,
+            username,
+            config.password.as_deref(),
+        ))
     }
 
     #[must_use]

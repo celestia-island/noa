@@ -111,9 +111,7 @@ impl MinioObjectStore {
                 let endpoint = config.effective_endpoint();
                 Self::from_config(&endpoint, bucket, ak, sk, region).await
             }
-            _ => {
-                Self::from_system_defaults(config.endpoint.as_deref(), bucket, region).await
-            }
+            _ => Self::from_system_defaults(config.endpoint.as_deref(), bucket, region).await,
         }
     }
 
@@ -129,13 +127,15 @@ impl MinioObjectStore {
             Self::validate_endpoint(ep)?;
         }
         let config = builder.load().await;
-        let mut s3_builder = aws_sdk_s3::config::Builder::from(&config)
-            .force_path_style(true);
+        let mut s3_builder = aws_sdk_s3::config::Builder::from(&config).force_path_style(true);
         if endpoint.is_some() {
             s3_builder = s3_builder.force_path_style(true);
         }
         let client = Client::from_conf(s3_builder.build());
-        Ok(MinioObjectStore { client, bucket: bucket.to_string() })
+        Ok(MinioObjectStore {
+            client,
+            bucket: bucket.to_string(),
+        })
     }
 
     pub async fn from_config(

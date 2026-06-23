@@ -1,6 +1,7 @@
 use async_trait::async_trait;
-use reqwest::{Client, StatusCode};
 use serde::Deserialize;
+
+use reqwest::{Client, StatusCode};
 
 use crate::{
     error::{NoaError, Result},

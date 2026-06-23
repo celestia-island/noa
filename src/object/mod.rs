@@ -106,8 +106,10 @@ pub async fn create_remote_store(
     match config.backend_type {
         crate::config::StorageProtocol::Ipfs => {
             let ipfs_env = std::env::var("IPFS_API").ok();
-            let endpoint = config.endpoint.as_deref()
-                .or_else(|| ipfs_env.as_deref())
+            let endpoint = config
+                .endpoint
+                .as_deref()
+                .or(ipfs_env.as_deref())
                 .unwrap_or("http://127.0.0.1:5001");
             Ok(Box::new(IpfsObjectStore::new(
                 endpoint,
