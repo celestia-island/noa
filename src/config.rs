@@ -78,20 +78,21 @@ pub struct StorageConfig {
 
 impl StorageConfig {
     #[must_use]
-    pub fn ipfs(name: &str, endpoint: &str) -> Self {
+    pub fn ipfs(name: &str, endpoint: Option<&str>) -> Self {
         StorageConfig {
             name: name.to_string(), backend_type: StorageProtocol::Ipfs,
-            endpoint: Some(endpoint.to_string()), gateway: Some("https://ipfs.io".to_string()),
+            endpoint: endpoint.map(|s| s.to_string()),
+            gateway: Some("https://ipfs.io".to_string()),
             auth_token: None, auto_pin: false,
             bucket: None, access_key: None, secret_key: None, region: None,
             username: None, password: None, port: 0, use_tls: false,
         }
     }
     #[must_use]
-    pub fn s3(name: &str, endpoint: &str, bucket: &str) -> Self {
+    pub fn s3(name: &str, endpoint: Option<&str>, bucket: &str) -> Self {
         StorageConfig {
             name: name.to_string(), backend_type: StorageProtocol::S3,
-            endpoint: Some(endpoint.to_string()),
+            endpoint: endpoint.map(|s| s.to_string()),
             bucket: Some(bucket.to_string()),
             gateway: None, auth_token: None, auto_pin: false,
             access_key: None, secret_key: None, region: None,
@@ -99,7 +100,7 @@ impl StorageConfig {
         }
     }
     #[must_use]
-    pub fn minio(name: &str, endpoint: &str, bucket: &str) -> Self {
+    pub fn minio(name: &str, endpoint: Option<&str>, bucket: &str) -> Self {
         let mut c = Self::s3(name, endpoint, bucket);
         c.backend_type = StorageProtocol::Minio;
         c
@@ -209,7 +210,7 @@ mod tests {
         std::fs::create_dir_all(&d).unwrap();
         let mut c = RepoConfig::default();
         c.add_remote(RemoteConfig { name: "o".to_string(), url: "https://g.com/r.git".to_string(), protocol: RemoteProtocol::Git });
-        c.add_storage(StorageConfig::ipfs("i", "http://127.0.0.1:5001"));
+        c.add_storage(StorageConfig::ipfs("i", Some("http://127.0.0.1:5001")));
         c.save_to_dir(&d).unwrap();
         let l = RepoConfig::load_from_dir(&d).unwrap();
         assert_eq!(l.remotes.len(), 1);
@@ -217,12 +218,12 @@ mod tests {
     }
     #[test]
     fn test_storage_constructors() {
-        assert_eq!(StorageConfig::ipfs("a","e").backend_type, StorageProtocol::Ipfs);
-        assert_eq!(StorageConfig::s3("a","e","b").backend_type, StorageProtocol::S3);
+        assert_eq!(StorageConfig::ipfs("a",Some("e")).backend_type, StorageProtocol::Ipfs);
+        assert_eq!(StorageConfig::s3("a",Some("e"),"b").backend_type, StorageProtocol::S3);
         assert_eq!(StorageConfig::ftp("a","e").backend_type, StorageProtocol::Ftp);
         assert_eq!(StorageConfig::ftps("a","e").backend_type, StorageProtocol::Ftps);
         assert!(StorageConfig::ftps("a","e").use_tls);
         assert_eq!(StorageConfig::sftp("a","e").backend_type, StorageProtocol::Sftp);
-        assert_eq!(StorageConfig::minio("a","e","b").backend_type, StorageProtocol::Minio);
+        assert_eq!(StorageConfig::minio("a",Some("e"),"b").backend_type, StorageProtocol::Minio);
     }
 }

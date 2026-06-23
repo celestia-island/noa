@@ -441,7 +441,7 @@ mod tests {
 
     #[test]
     fn test_ipfs_config_default() {
-        let config = crate::config::StorageConfig::ipfs("test", "http://127.0.0.1:5001");
+        let config = crate::config::StorageConfig::ipfs("test", Some("http://127.0.0.1:5001"));
         assert_eq!(config.backend_type, crate::config::StorageProtocol::Ipfs);
         assert_eq!(config.effective_endpoint(), "http://127.0.0.1:5001");
         assert!(!config.auto_pin);

@@ -104,10 +104,16 @@ pub async fn create_remote_store(
     config: &crate::config::StorageConfig,
 ) -> Result<Box<dyn ObjectStore>> {
     match config.backend_type {
-        crate::config::StorageProtocol::Ipfs => Ok(Box::new(IpfsObjectStore::new(
-            &config.effective_endpoint(),
-            config.auth_token.clone(),
-        ))),
+        crate::config::StorageProtocol::Ipfs => {
+            let ipfs_env = std::env::var("IPFS_API").ok();
+            let endpoint = config.endpoint.as_deref()
+                .or_else(|| ipfs_env.as_deref())
+                .unwrap_or("http://127.0.0.1:5001");
+            Ok(Box::new(IpfsObjectStore::new(
+                endpoint,
+                config.auth_token.clone(),
+            )))
+        }
         crate::config::StorageProtocol::S3 | crate::config::StorageProtocol::Minio => {
             let store = MinioObjectStore::from_transport_config(config).await?;
             Ok(Box::new(store))

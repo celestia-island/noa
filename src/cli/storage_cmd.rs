@@ -41,17 +41,15 @@ pub fn run_add(
     let mut cfg = match protocol {
         StorageProtocol::Ipfs => {
             let ep = opts.endpoint.unwrap_or_else(|| "http://127.0.0.1:5001".to_string());
-            StorageConfig::ipfs(name, &ep)
+            StorageConfig::ipfs(name, Some(&ep))
         }
         StorageProtocol::S3 => {
-            let ep = opts.endpoint.ok_or_else(|| anyhow::anyhow!("--endpoint is required for s3"))?;
             let bucket = opts.bucket.ok_or_else(|| anyhow::anyhow!("--bucket is required for s3"))?;
-            StorageConfig::s3(name, &ep, &bucket)
+            StorageConfig::s3(name, opts.endpoint.as_deref(), &bucket)
         }
         StorageProtocol::Minio => {
-            let ep = opts.endpoint.ok_or_else(|| anyhow::anyhow!("--endpoint is required for minio"))?;
             let bucket = opts.bucket.ok_or_else(|| anyhow::anyhow!("--bucket is required for minio"))?;
-            StorageConfig::minio(name, &ep, &bucket)
+            StorageConfig::minio(name, opts.endpoint.as_deref(), &bucket)
         }
         StorageProtocol::Ftp => {
             let ep = opts.endpoint.ok_or_else(|| anyhow::anyhow!("--endpoint is required for ftp"))?;
