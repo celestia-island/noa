@@ -16,6 +16,9 @@ pub struct RepoConfig {
 
     #[serde(default)]
     pub sync: Option<SyncConfig>,
+
+    #[serde(default)]
+    pub storage: Vec<StorageConfig>,
 }
 
 fn default_repo_name() -> String {
@@ -67,6 +70,124 @@ fn default_branch_prefix() -> String {
     "agent/".to_string()
 }
 
+fn default_ipfs_endpoint() -> String {
+    "http://127.0.0.1:5001".to_string()
+}
+
+fn default_ipfs_gateway() -> String {
+    "https://ipfs.io".to_string()
+}
+
+fn default_s3_region() -> Option<String> {
+    Some("us-east-1".to_string())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageConfig {
+    pub name: String,
+
+    #[serde(rename = "type")]
+    pub backend_type: String,
+
+    #[serde(default = "default_ipfs_endpoint")]
+    pub endpoint: String,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_token: Option<String>,
+
+    #[serde(default)]
+    pub auto_pin: bool,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bucket: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_key: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_key: Option<String>,
+
+    #[serde(default = "default_s3_region", skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+
+    #[serde(default)]
+    pub port: u16,
+
+    #[serde(default)]
+    pub use_tls: bool,
+}
+
+impl StorageConfig {
+    #[must_use]
+    pub fn ipfs(name: &str, endpoint: &str) -> Self {
+        StorageConfig {
+            name: name.to_string(),
+            backend_type: "ipfs".to_string(),
+            endpoint: endpoint.to_string(),
+            gateway: Some(default_ipfs_gateway()),
+            auth_token: None,
+            auto_pin: false,
+            bucket: None,
+            access_key: None,
+            secret_key: None,
+            region: None,
+            username: None,
+            password: None,
+            port: 0,
+            use_tls: false,
+        }
+    }
+
+    #[must_use]
+    pub fn s3(name: &str, endpoint: &str, bucket: &str) -> Self {
+        StorageConfig {
+            name: name.to_string(),
+            backend_type: "s3".to_string(),
+            endpoint: endpoint.to_string(),
+            gateway: None,
+            auth_token: None,
+            auto_pin: false,
+            bucket: Some(bucket.to_string()),
+            access_key: None,
+            secret_key: None,
+            region: default_s3_region(),
+            username: None,
+            password: None,
+            port: 0,
+            use_tls: false,
+        }
+    }
+
+    #[must_use]
+    pub fn ftp(name: &str, endpoint: &str) -> Self {
+        StorageConfig {
+            name: name.to_string(),
+            backend_type: "ftp".to_string(),
+            endpoint: endpoint.to_string(),
+            gateway: None,
+            auth_token: None,
+            auto_pin: false,
+            bucket: None,
+            access_key: None,
+            secret_key: None,
+            region: None,
+            username: None,
+            password: None,
+            port: 21,
+            use_tls: false,
+        }
+    }
+}
+
 impl Default for RepoConfig {
     fn default() -> Self {
         RepoConfig {
@@ -74,6 +195,7 @@ impl Default for RepoConfig {
             remotes: Vec::new(),
             noa_remote: None,
             sync: None,
+            storage: Vec::new(),
         }
     }
 }
@@ -114,6 +236,24 @@ impl RepoConfig {
     #[must_use]
     pub fn get_remote(&self, name: &str) -> Option<&RemoteConfig> {
         self.remotes.iter().find(|r| r.name == name)
+    }
+
+    pub fn add_storage(&mut self, storage: StorageConfig) {
+        self.storage.retain(|s| s.name != storage.name);
+        self.storage.push(storage);
+    }
+
+    pub fn remove_storage(&mut self, name: &str) {
+        self.storage.retain(|s| s.name != name);
+    }
+
+    #[must_use]
+    pub fn get_storage(&self, name: &str) -> Option<&StorageConfig> {
+        self.storage.iter().find(|s| s.name == name)
+    }
+
+    pub fn get_storage_mut(&mut self, name: &str) -> Option<&mut StorageConfig> {
+        self.storage.iter_mut().find(|s| s.name == name)
     }
 }
 

@@ -1,7 +1,6 @@
 use async_trait::async_trait;
-use serde::Deserialize;
-
 use reqwest::{Client, StatusCode};
+use serde::Deserialize;
 
 use crate::{
     error::{NoaError, Result},
@@ -89,6 +88,10 @@ impl IpfsObjectStore {
             api_url: format!("{}{}", endpoint.trim_end_matches('/'), API_PATH),
             auth_token,
         }
+    }
+
+    pub fn from_config(config: &crate::config::StorageConfig) -> Self {
+        Self::new(&config.endpoint, config.auth_token.clone())
     }
 
     fn request(&self, path: &str) -> reqwest::RequestBuilder {
@@ -442,9 +445,9 @@ mod tests {
 
     #[test]
     fn test_ipfs_config_default() {
-        let config = crate::config::StorageConfig::ipfs("test", Some("http://127.0.0.1:5001"));
-        assert_eq!(config.backend_type, crate::config::StorageProtocol::Ipfs);
-        assert_eq!(config.effective_endpoint(), "http://127.0.0.1:5001");
+        let config = crate::config::StorageConfig::ipfs("test", "http://127.0.0.1:5001");
+        assert_eq!(config.backend_type, "ipfs");
+        assert_eq!(config.endpoint, "http://127.0.0.1:5001");
         assert!(!config.auto_pin);
     }
 }

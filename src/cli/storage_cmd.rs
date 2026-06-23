@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use crate::{
-    config::{StorageConfig, StorageProtocol},
+    config::StorageConfig,
     object::{create_remote_store, BlobId, ObjectStore, TreeId},
     repo::Repository,
     snapshot::SnapshotStore,
@@ -28,55 +28,24 @@ pub fn run_add(
     backend_type: &str,
     opts: StorageAddOptions,
 ) -> Result<()> {
-    let protocol = match backend_type {
-        "ipfs" => StorageProtocol::Ipfs,
-        "s3" => StorageProtocol::S3,
-        "minio" => StorageProtocol::Minio,
-        "ftp" => StorageProtocol::Ftp,
-        "ftps" => StorageProtocol::Ftps,
-        "sftp" => StorageProtocol::Sftp,
-        other => anyhow::bail!(
-            "unknown storage type '{other}': expected ipfs, s3, minio, ftp, ftps, or sftp"
-        ),
+    let endpoint = match opts.endpoint {
+        Some(ep) => ep,
+        None => match backend_type {
+            "ipfs" => "http://127.0.0.1:5001".to_string(),
+            other => anyhow::bail!("--endpoint is required for '{other}' backend"),
+        },
     };
 
-    let mut cfg = match protocol {
-        StorageProtocol::Ipfs => {
-            let ep = opts
-                .endpoint
-                .unwrap_or_else(|| "http://127.0.0.1:5001".to_string());
-            StorageConfig::ipfs(name, Some(&ep))
-        }
-        StorageProtocol::S3 => {
+    let mut cfg = match backend_type {
+        "ipfs" => StorageConfig::ipfs(name, &endpoint),
+        "s3" | "minio" => {
             let bucket = opts
                 .bucket
-                .ok_or_else(|| anyhow::anyhow!("--bucket is required for s3"))?;
-            StorageConfig::s3(name, opts.endpoint.as_deref(), &bucket)
+                .ok_or_else(|| anyhow::anyhow!("--bucket is required for S3 backends"))?;
+            StorageConfig::s3(name, &endpoint, &bucket)
         }
-        StorageProtocol::Minio => {
-            let bucket = opts
-                .bucket
-                .ok_or_else(|| anyhow::anyhow!("--bucket is required for minio"))?;
-            StorageConfig::minio(name, opts.endpoint.as_deref(), &bucket)
-        }
-        StorageProtocol::Ftp => {
-            let ep = opts
-                .endpoint
-                .ok_or_else(|| anyhow::anyhow!("--endpoint is required for ftp"))?;
-            StorageConfig::ftp(name, &ep)
-        }
-        StorageProtocol::Ftps => {
-            let ep = opts
-                .endpoint
-                .ok_or_else(|| anyhow::anyhow!("--endpoint is required for ftps"))?;
-            StorageConfig::ftps(name, &ep)
-        }
-        StorageProtocol::Sftp => {
-            let ep = opts
-                .endpoint
-                .ok_or_else(|| anyhow::anyhow!("--endpoint is required for sftp"))?;
-            StorageConfig::sftp(name, &ep)
-        }
+        "ftp" | "ftps" => StorageConfig::ftp(name, &endpoint),
+        other => anyhow::bail!("unknown backend type '{other}': expected 'ipfs', 's3', or 'ftp'"),
     };
 
     if let Some(gw) = opts.gateway {
@@ -106,11 +75,16 @@ pub fn run_add(
     }
     cfg.use_tls = opts.use_tls;
 
+    let extra = match cfg.backend_type.as_str() {
+        "ftp" | "ftps" => {
+            format!("user={}", cfg.username.as_deref().unwrap_or("?"))
+        }
+        "ipfs" => format!("gateway={}", cfg.gateway.as_deref().unwrap_or("default")),
+        _ => String::new(),
+    };
     println!(
-        "Added storage '{}' (type: {}, endpoint: {})",
-        cfg.name,
-        cfg.backend_type,
-        cfg.effective_endpoint()
+        "Added storage '{}' (type: {}, endpoint: {}, {})",
+        cfg.name, cfg.backend_type, cfg.endpoint, extra
     );
 
     repo.config.add_storage(cfg);
@@ -131,26 +105,23 @@ pub fn run_remove(repo: &mut Repository, name: &str) -> Result<()> {
 pub fn run_list(repo: &Repository) -> Result<()> {
     if repo.config.storage.is_empty() {
         println!("No storage backends configured.");
+        println!("Run 'noa storage add <name> --type ipfs', '--type s3', or '--type ftp'.");
         return Ok(());
     }
+
     for s in &repo.config.storage {
-        let extra = match s.backend_type {
-            StorageProtocol::Ipfs => {
-                format!("gateway={}", s.gateway.as_deref().unwrap_or("default"))
+        let extra = match s.backend_type.as_str() {
+            "ipfs" => format!("gateway={}", s.gateway.as_deref().unwrap_or("default")),
+            "s3" | "minio" => format!("bucket={}", s.bucket.as_deref().unwrap_or("?")),
+            "ftp" | "ftps" => {
+                let tls = if s.use_tls { "+tls" } else { "" };
+                format!("user={}{}", s.username.as_deref().unwrap_or("?"), tls)
             }
-            StorageProtocol::S3 | StorageProtocol::Minio => {
-                format!("bucket={}", s.bucket.as_deref().unwrap_or("?"))
-            }
-            StorageProtocol::Ftp | StorageProtocol::Ftps | StorageProtocol::Sftp => {
-                format!("user={}", s.username.as_deref().unwrap_or("?"))
-            }
+            other => other.to_string(),
         };
         println!(
             "{}\t{} ({}) [{}]",
-            s.name,
-            s.effective_endpoint(),
-            s.backend_type,
-            extra
+            s.name, s.endpoint, s.backend_type, extra
         );
     }
     Ok(())
@@ -175,13 +146,11 @@ pub async fn run_status(repo: &Repository, target: Option<&str>) -> Result<()> {
 
     for cfg in targets {
         println!("── {} ({}) ──", cfg.name, cfg.backend_type);
-        match cfg.backend_type {
-            StorageProtocol::Ipfs => {
-                let store = crate::object::IpfsObjectStore::new(
-                    &cfg.effective_endpoint(),
-                    cfg.auth_token.clone(),
-                );
-                print!("  Connecting to {}... ", cfg.effective_endpoint());
+        match cfg.backend_type.as_str() {
+            "ipfs" => {
+                let store =
+                    crate::object::IpfsObjectStore::new(&cfg.endpoint, cfg.auth_token.clone());
+                print!("  Connecting to {}... ", cfg.endpoint);
                 match store.version().await {
                     Ok(v) => {
                         println!("OK (v{v})");
@@ -196,32 +165,32 @@ pub async fn run_status(repo: &Repository, target: Option<&str>) -> Result<()> {
                     Err(e) => println!("FAILED: {e}"),
                 }
             }
-            StorageProtocol::S3 | StorageProtocol::Minio => {
-                println!("  Endpoint: {}", cfg.effective_endpoint());
+            "s3" | "minio" => {
+                println!("  Endpoint: {}", cfg.endpoint);
                 println!("  Bucket:   {}", cfg.bucket.as_deref().unwrap_or("?"));
+                println!(
+                    "  Region:   {}",
+                    cfg.region.as_deref().unwrap_or("us-east-1")
+                );
                 match create_remote_store(cfg).await {
                     Ok(_) => println!("  Connection: OK"),
                     Err(e) => println!("  Connection: FAILED ({e})"),
                 }
             }
-            #[cfg(feature = "ftp")]
-            StorageProtocol::Ftp | StorageProtocol::Ftps => {
-                println!("  Endpoint: {}", cfg.effective_endpoint());
-                println!("  Port: {}", if cfg.port > 0 { cfg.port } else { 21 });
+            "ftp" | "ftps" => {
+                println!("  Endpoint: {}", cfg.endpoint);
+                println!("  Port:     {}", if cfg.port > 0 { cfg.port } else { 21 });
+                println!("  User:     {}", cfg.username.as_deref().unwrap_or("?"));
+                println!("  TLS:      {}", if cfg.use_tls { "yes" } else { "no" });
+                #[cfg(feature = "ftp")]
                 match create_remote_store(cfg).await {
                     Ok(_) => println!("  Connection: OK"),
                     Err(e) => println!("  Connection: FAILED ({e})"),
                 }
+                #[cfg(not(feature = "ftp"))]
+                println!("  Connection: N/A (FTP feature not compiled)");
             }
-            StorageProtocol::Sftp => {
-                println!("  Endpoint: {}", cfg.effective_endpoint());
-                println!("  Port: {}", if cfg.port > 0 { cfg.port } else { 22 });
-                println!("  User: {}", cfg.username.as_deref().unwrap_or("?"));
-                match create_remote_store(cfg).await {
-                    Ok(_) => println!("  Connection: OK"),
-                    Err(e) => println!("  Connection: FAILED ({e})"),
-                }
-            }
+            other => println!("  Unknown backend type: {other}"),
         }
     }
     Ok(())
@@ -241,18 +210,20 @@ pub async fn run_push(
             .ok_or_else(|| anyhow::anyhow!("storage '{name}' not found"))?
             .clone(),
         None => {
-            let cs: Vec<_> = repo
+            let candidates: Vec<_> = repo
                 .config
                 .storage
                 .iter()
                 .filter(|s| s.auto_pin || do_pin)
                 .collect();
-            match cs.len() {
+            match candidates.len() {
                 0 => anyhow::bail!(
                     "no storage target specified. Use --target <name> or configure auto-pin."
                 ),
-                1 => cs[0].clone(),
-                _ => anyhow::bail!("multiple candidates. Specify --target <name> to disambiguate."),
+                1 => candidates[0].clone(),
+                _ => anyhow::bail!(
+                    "multiple candidates found. Specify --target <name> to disambiguate."
+                ),
             }
         }
     };
@@ -285,9 +256,9 @@ pub async fn run_push(
     let mut pushed = 0u64;
     let mut failed = 0u64;
 
-    let ipfs_store = if do_pin && cfg.backend_type == StorageProtocol::Ipfs {
+    let ipfs_store = if do_pin && cfg.backend_type == "ipfs" {
         Some(crate::object::IpfsObjectStore::new(
-            &cfg.effective_endpoint(),
+            &cfg.endpoint,
             cfg.auth_token.clone(),
         ))
     } else {
@@ -340,25 +311,20 @@ async fn push_tree_recursive(
     local: &crate::object::RedbObjectStore,
     tree_id: &TreeId,
 ) -> Result<()> {
-    match remote.has_tree(tree_id).await {
-        Ok(true) => return Ok(()),
-        Ok(false) => {}
-        Err(e) => tracing::warn!("has_tree check failed for {tree_id}: {e}"),
+    if remote.has_tree(tree_id).await.unwrap_or(false) {
+        return Ok(());
     }
+
     let entries = local.get_tree(tree_id).await?;
-    remote.put_tree(&entries).await?;
+    let _ = remote.put_tree(&entries).await;
+
     for entry in &entries.0 {
         match entry.kind {
             crate::object::EntryKind::Blob => {
                 let blob_id = BlobId(entry.id.clone());
-                match remote.has_blob(&blob_id).await {
-                    Ok(true) => continue,
-                    Ok(false) => {}
-                    Err(e) => tracing::warn!("has_blob check failed for {}: {e}", entry.id),
-                }
-                if let Ok(data) = local.get_blob(&blob_id).await {
-                    if let Err(e) = remote.put_blob(&data).await {
-                        tracing::warn!("put_blob failed for {}: {e}", entry.id);
+                if !remote.has_blob(&blob_id).await.unwrap_or(false) {
+                    if let Ok(data) = local.get_blob(&blob_id).await {
+                        let _ = remote.put_blob(&data).await;
                     }
                 }
             }
@@ -372,6 +338,7 @@ async fn push_tree_recursive(
             }
         }
     }
+
     Ok(())
 }
 
@@ -381,15 +348,16 @@ pub async fn run_fetch(repo: &Repository, target: &str, hash_or_cid: &str) -> Re
         .get_storage(target)
         .ok_or_else(|| anyhow::anyhow!("storage '{target}' not found"))?
         .clone();
+
     let local = repo.object_store()?;
+
     print!("Fetching from '{}'... ", cfg.name);
 
     let data = if hash_or_cid.starts_with("bafk") || hash_or_cid.starts_with("Qm") {
-        if cfg.backend_type != StorageProtocol::Ipfs {
+        if cfg.backend_type != "ipfs" {
             anyhow::bail!("CID-style fetch requires an IPFS backend");
         }
-        let ipfs =
-            crate::object::IpfsObjectStore::new(&cfg.effective_endpoint(), cfg.auth_token.clone());
+        let ipfs = crate::object::IpfsObjectStore::new(&cfg.endpoint, cfg.auth_token.clone());
         ipfs.block_get_raw(hash_or_cid).await?
     } else {
         let remote = create_remote_store(&cfg).await?;
@@ -398,8 +366,12 @@ pub async fn run_fetch(repo: &Repository, target: &str, hash_or_cid: &str) -> Re
     };
 
     println!("OK ({} bytes)", data.len());
-    println!("  SHA-256: {}", crate::object::sha256_hex(&data));
+
+    let hash = crate::object::sha256_hex(&data);
+    println!("  SHA-256: {hash}");
+
     local.put_blob(&data).await?;
     println!("  Stored to local object store.");
+
     Ok(())
 }

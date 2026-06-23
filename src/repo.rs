@@ -89,6 +89,7 @@ impl Repository {
             remotes,
             noa_remote: None,
             sync: None,
+            storage: Vec::new(),
         };
         Self::init_inner(path, config, |_path, _cfg| Ok(()))
     }

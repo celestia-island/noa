@@ -102,6 +102,10 @@ enum Commands {
         #[arg(short, long, default_value = ".")]
         path: String,
     },
+    Storage {
+        #[command(subcommand)]
+        cmd: StorageSub,
+    },
 }
 
 #[derive(Subcommand)]
@@ -181,6 +185,59 @@ enum HookSub {
     /// Invoked by the installed `.git/hooks/pre-commit` wrapper. Not normally
     /// called by humans directly.
     PreCommit,
+}
+
+#[derive(Subcommand)]
+enum StorageSub {
+    /// Add a remote storage backend (ipfs, s3, or ftp).
+    Add {
+        name: String,
+        #[arg(short, long)]
+        r#type: String,
+        #[arg(long)]
+        endpoint: Option<String>,
+        #[arg(long)]
+        gateway: Option<String>,
+        #[arg(long)]
+        auth_token: Option<String>,
+        #[arg(long)]
+        auto_pin: bool,
+        #[arg(long)]
+        bucket: Option<String>,
+        #[arg(long)]
+        access_key: Option<String>,
+        #[arg(long)]
+        secret_key: Option<String>,
+        #[arg(long)]
+        region: Option<String>,
+        #[arg(long)]
+        username: Option<String>,
+        #[arg(long)]
+        password: Option<String>,
+        #[arg(long)]
+        port: u16,
+        #[arg(long)]
+        tls: bool,
+    },
+    /// Remove a configured storage backend.
+    Remove { name: String },
+    /// List all configured storage backends.
+    List,
+    /// Show connection status of storage backends.
+    Status { name: Option<String> },
+    /// Push snapshots to a remote storage backend.
+    Push {
+        #[arg(long)]
+        target: Option<String>,
+        #[arg(long)]
+        snapshot: Option<String>,
+        #[arg(short, long)]
+        workspace: Option<String>,
+        #[arg(long)]
+        pin: bool,
+    },
+    /// Fetch an object from a remote storage backend by hash or CID.
+    Fetch { target: String, hash_or_cid: String },
 }
 
 #[tokio::main]
@@ -359,6 +416,83 @@ async fn main() -> anyhow::Result<()> {
             let server =
                 libnoa::sync::SyncServer::new(std::path::Path::new(&socket), &ws_root, "default")?;
             server.listen().await?;
+        }
+        Some(Commands::Storage { cmd }) => {
+            let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
+            match cmd {
+                StorageSub::Add {
+                    name,
+                    r#type,
+                    endpoint,
+                    gateway,
+                    auth_token,
+                    auto_pin,
+                    bucket,
+                    access_key,
+                    secret_key,
+                    region,
+                    username,
+                    password,
+                    port,
+                    tls,
+                } => {
+                    let mut repo = libnoa::repo::Repository::open(&root)?;
+                    cli::storage_cmd::run_add(
+                        &mut repo,
+                        &name,
+                        &r#type,
+                        cli::storage_cmd::StorageAddOptions {
+                            endpoint,
+                            gateway,
+                            auth_token,
+                            auto_pin,
+                            bucket,
+                            access_key,
+                            secret_key,
+                            region,
+                            username,
+                            password,
+                            port,
+                            use_tls: tls,
+                        },
+                    )?;
+                }
+                StorageSub::Remove { name } => {
+                    let mut repo = libnoa::repo::Repository::open(&root)?;
+                    cli::storage_cmd::run_remove(&mut repo, &name)?;
+                }
+                StorageSub::List => {
+                    let repo = libnoa::repo::Repository::open(&root)?;
+                    cli::storage_cmd::run_list(&repo)?;
+                }
+                StorageSub::Status { name } => {
+                    let repo = libnoa::repo::Repository::open(&root)?;
+                    cli::storage_cmd::run_status(&repo, name.as_deref()).await?;
+                }
+                StorageSub::Push {
+                    target,
+                    snapshot,
+                    workspace,
+                    pin,
+                } => {
+                    let repo = libnoa::repo::Repository::open(&root)?;
+                    cli::storage_cmd::run_push(
+                        &repo,
+                        target.as_deref(),
+                        snapshot.as_deref(),
+                        workspace.as_deref(),
+                        pin,
+                    )
+                    .await?;
+                }
+                StorageSub::Fetch {
+                    target,
+                    hash_or_cid,
+                } => {
+                    let repo = libnoa::repo::Repository::open(&root)?;
+                    cli::storage_cmd::run_fetch(&repo, &target, &hash_or_cid).await?;
+                }
+            }
         }
     }
 

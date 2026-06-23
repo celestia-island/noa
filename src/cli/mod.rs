@@ -7,4 +7,5 @@ pub mod remote_cmd;
 pub mod resolve_cmd;
 pub mod snapshot_cmd;
 pub mod status;
+pub mod storage_cmd;
 pub mod workspace_cmd;

@@ -1,9 +1,15 @@
+#[cfg(feature = "ftp")]
+pub mod ftp_impl;
+pub mod ipfs_impl;
 pub mod minio_impl;
 mod redb_impl;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "ftp")]
+pub use ftp_impl::FtpObjectStore;
+pub use ipfs_impl::IpfsObjectStore;
 pub use minio_impl::MinioObjectStore;
 pub use redb_impl::RedbObjectStore;
 use sha2::{Digest, Sha256};
@@ -90,4 +96,46 @@ pub trait ObjectStore: Send + Sync {
     async fn put_tree(&self, entries: &TreeEntries) -> Result<TreeId>;
     async fn get_tree(&self, id: &TreeId) -> Result<TreeEntries>;
     async fn has_tree(&self, id: &TreeId) -> Result<bool>;
+}
+
+pub async fn create_remote_store(
+    config: &crate::config::StorageConfig,
+) -> Result<Box<dyn ObjectStore>> {
+    match config.backend_type.as_str() {
+        "ipfs" => Ok(Box::new(IpfsObjectStore::new(
+            &config.endpoint,
+            config.auth_token.clone(),
+        ))),
+        "s3" | "minio" => {
+            let bucket = config
+                .bucket
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("storage '{}' is missing 'bucket'", config.name))?;
+            let access_key = config.access_key.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("storage '{}' is missing 'access_key'", config.name)
+            })?;
+            let secret_key = config.secret_key.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("storage '{}' is missing 'secret_key'", config.name)
+            })?;
+            let region = config.region.as_deref().unwrap_or("us-east-1");
+            let store = MinioObjectStore::from_config(
+                &config.endpoint,
+                bucket,
+                access_key,
+                secret_key,
+                region,
+            )
+            .await?;
+            Ok(Box::new(store))
+        }
+        #[cfg(feature = "ftp")]
+        "ftp" | "ftps" => {
+            let store = FtpObjectStore::from_config(config)?;
+            Ok(Box::new(store))
+        }
+        other => Err(anyhow::anyhow!(
+            "unknown storage backend type '{}': expected 'ipfs', 's3', or 'ftp'",
+            other
+        )),
+    }
 }

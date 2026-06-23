@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use std::io::Cursor;
 
 use crate::{
-    error::{remote_err, NoaError, Result},
+    error::{NoaError, Result},
     object::{sha256_hex, BlobId, ObjectStore, TreeEntries, TreeId},
 };
 
@@ -39,7 +39,6 @@ impl FtpObjectStore {
     }
 
     pub fn from_config(config: &crate::config::StorageConfig) -> Result<Self> {
-        let endpoint = config.effective_endpoint();
         let username = config
             .username
             .as_deref()
@@ -50,7 +49,7 @@ impl FtpObjectStore {
             .ok_or_else(|| anyhow::anyhow!("FTP storage requires 'password'"))?;
         let port = if config.port > 0 { config.port } else { 21 };
         Ok(Self::new(
-            &endpoint,
+            &config.endpoint,
             port,
             username,
             password,
@@ -71,7 +70,10 @@ impl FtpObjectStore {
     }
 
     fn ftp_err(context: &str, e: impl std::fmt::Display) -> anyhow::Error {
-        remote_err("ftp", format!("{context}: {e}"))
+        NoaError::IpfsError {
+            message: format!("FTP {context}: {e}"),
+        }
+        .into()
     }
 
     async fn with_ftp<F, T>(&self, f: F) -> Result<T>
@@ -154,7 +156,9 @@ impl ObjectStore for FtpObjectStore {
                 stream
                     .read_to_end(&mut buf)
                     .await
-                    .map_err(|e| remote_err("ftp", format!("read stream: {e}")))?;
+                    .map_err(|e| NoaError::IpfsError {
+                        message: format!("FTP read stream: {e}"),
+                    })?;
                 ftp.finalize_retr_stream(stream)
                     .await
                     .map_err(|e| Self::ftp_err("finalize_retr", e))?;
@@ -215,7 +219,9 @@ impl ObjectStore for FtpObjectStore {
                 stream
                     .read_to_end(&mut buf)
                     .await
-                    .map_err(|e| remote_err("ftp", format!("read stream: {e}")))?;
+                    .map_err(|e| NoaError::IpfsError {
+                        message: format!("FTP read stream: {e}"),
+                    })?;
                 ftp.finalize_retr_stream(stream)
                     .await
                     .map_err(|e| Self::ftp_err("finalize_retr", e))?;
@@ -252,8 +258,8 @@ mod tests {
     #[test]
     fn test_ftp_config_constructor() {
         let cfg = crate::config::StorageConfig::ftp("my-ftp", "ftp.example.com");
-        assert_eq!(cfg.backend_type, crate::config::StorageProtocol::Ftp);
-        assert_eq!(cfg.effective_endpoint(), "ftp.example.com");
+        assert_eq!(cfg.backend_type, "ftp");
+        assert_eq!(cfg.endpoint, "ftp.example.com");
         assert_eq!(cfg.port, 21);
         assert!(!cfg.use_tls);
     }
