@@ -38,18 +38,19 @@ impl FtpObjectStore {
         }
     }
 
-    pub fn from_config(config: &crate::config::StorageConfig) -> Result<Self> {
+    pub fn from_config(config: &crate::config::TransportConfig) -> Result<Self> {
+        let endpoint = config.effective_endpoint();
         let username = config
             .username
             .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("FTP storage requires 'username'"))?;
+            .ok_or_else(|| anyhow::anyhow!("FTP transport requires 'username'"))?;
         let password = config
             .password
             .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("FTP storage requires 'password'"))?;
+            .ok_or_else(|| anyhow::anyhow!("FTP transport requires 'password'"))?;
         let port = if config.port > 0 { config.port } else { 21 };
         Ok(Self::new(
-            &config.endpoint,
+            &endpoint,
             port,
             username,
             password,
@@ -257,9 +258,9 @@ mod tests {
 
     #[test]
     fn test_ftp_config_constructor() {
-        let cfg = crate::config::StorageConfig::ftp("my-ftp", "ftp.example.com");
-        assert_eq!(cfg.backend_type, "ftp");
-        assert_eq!(cfg.endpoint, "ftp.example.com");
+        let cfg = crate::config::TransportConfig::raw_ftp("my-ftp", "ftp.example.com");
+        assert_eq!(cfg.protocol, "ftp");
+        assert_eq!(cfg.effective_endpoint(), "ftp.example.com");
         assert_eq!(cfg.port, 21);
         assert!(!cfg.use_tls);
     }

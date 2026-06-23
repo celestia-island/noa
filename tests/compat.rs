@@ -87,29 +87,22 @@ fn test_bitbucket_url_format_handling() {
     }
     let mut repo = libnoa::repo::Repository::open(path).unwrap();
 
-    repo.config.add_remote(libnoa::config::RemoteConfig {
-        name: "bitbucket-ssh".to_string(),
-        url: "git@bitbucket.org:workspace/repo.git".to_string(),
-        protocol: "git".to_string(),
-    });
-    repo.config.add_remote(libnoa::config::RemoteConfig {
-        name: "bitbucket-https".to_string(),
-        url: "https://user@bitbucket.org/workspace/repo.git".to_string(),
-        protocol: "git".to_string(),
-    });
+    repo.config.add_transport(
+        libnoa::config::TransportConfig::vcs_git("bitbucket-ssh", "git@bitbucket.org:workspace/repo.git"),
+    );
+    repo.config.add_transport(
+        libnoa::config::TransportConfig::vcs_git("bitbucket-https", "https://user@bitbucket.org/workspace/repo.git"),
+    );
     repo.config.save_to_dir(&path.join(".noa")).unwrap();
 
     let loaded = libnoa::config::RepoConfig::load_from_dir(&path.join(".noa")).unwrap();
-    assert_eq!(loaded.remotes.len(), 2);
+    assert_eq!(loaded.transports.len(), 2);
 
-    let ssh_remote = loaded.get_remote("bitbucket-ssh").unwrap();
-    assert_eq!(ssh_remote.url, "git@bitbucket.org:workspace/repo.git");
+    let ssh = loaded.get_transport("bitbucket-ssh").unwrap();
+    assert_eq!(ssh.url.as_deref(), Some("git@bitbucket.org:workspace/repo.git"));
 
-    let https_remote = loaded.get_remote("bitbucket-https").unwrap();
-    assert_eq!(
-        https_remote.url,
-        "https://user@bitbucket.org/workspace/repo.git"
-    );
+    let https = loaded.get_transport("bitbucket-https").unwrap();
+    assert_eq!(https.url.as_deref(), Some("https://user@bitbucket.org/workspace/repo.git"));
 }
 
 #[test]
@@ -122,33 +115,21 @@ fn test_multiple_remote_protocols() {
     }
     let mut repo = libnoa::repo::Repository::open(path).unwrap();
 
-    repo.config.add_remote(libnoa::config::RemoteConfig {
-        name: "github".to_string(),
-        url: "https://github.com/user/repo.git".to_string(),
-        protocol: "git".to_string(),
-    });
-    repo.config.add_remote(libnoa::config::RemoteConfig {
-        name: "gitlab".to_string(),
-        url: "git@gitlab.com:user/repo.git".to_string(),
-        protocol: "git".to_string(),
-    });
-    repo.config.add_remote(libnoa::config::RemoteConfig {
-        name: "svn-origin".to_string(),
-        url: "https://svn.example.com/repo/trunk".to_string(),
-        protocol: "svn".to_string(),
-    });
-    repo.config.add_remote(libnoa::config::RemoteConfig {
-        name: "noa-server".to_string(),
-        url: "https://noa.example.com/repo".to_string(),
-        protocol: "noa".to_string(),
-    });
+    repo.config.add_transport(
+        libnoa::config::TransportConfig::vcs_git("github", "https://github.com/user/repo.git"),
+    );
+    repo.config.add_transport(
+        libnoa::config::TransportConfig::vcs_git("gitlab", "git@gitlab.com:user/repo.git"),
+    );
+    repo.config.add_transport(
+        libnoa::config::TransportConfig::vcs_svn("svn-origin", "https://svn.example.com/repo/trunk"),
+    );
     repo.config.save_to_dir(&path.join(".noa")).unwrap();
 
     let loaded = libnoa::config::RepoConfig::load_from_dir(&path.join(".noa")).unwrap();
-    assert_eq!(loaded.remotes.len(), 4);
-    assert_eq!(loaded.get_remote("github").unwrap().protocol, "git");
-    assert_eq!(loaded.get_remote("svn-origin").unwrap().protocol, "svn");
-    assert_eq!(loaded.get_remote("noa-server").unwrap().protocol, "noa");
+    assert_eq!(loaded.transports.len(), 3);
+    assert_eq!(loaded.get_transport("github").unwrap().protocol, "git");
+    assert_eq!(loaded.get_transport("svn-origin").unwrap().protocol, "svn");
 }
 
 #[tokio::test(flavor = "multi_thread")]

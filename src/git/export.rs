@@ -274,11 +274,7 @@ pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
         anyhow::bail!("git clone exited with non-zero status");
     }
 
-    let config = crate::config::RemoteConfig {
-        name: "origin".to_string(),
-        url: url_owned,
-        protocol: "git".to_string(),
-    };
+    let config = crate::config::TransportConfig::vcs_git("origin", &url_owned);
     let repo = crate::repo::Repository::init_with_remotes(&target, vec![config])?;
 
     let db = Arc::clone(&repo.db);

@@ -82,14 +82,13 @@ impl Repository {
 
     pub fn init_with_remotes(
         path: &Path,
-        remotes: Vec<crate::config::RemoteConfig>,
+        transports: Vec<crate::config::TransportConfig>,
     ) -> Result<Self> {
         let config = RepoConfig {
             name: "default".to_string(),
-            remotes,
+            transports,
             noa_remote: None,
             sync: None,
-            storage: Vec::new(),
         };
         Self::init_inner(path, config, |_path, _cfg| Ok(()))
     }

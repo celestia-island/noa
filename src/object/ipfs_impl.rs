@@ -90,8 +90,9 @@ impl IpfsObjectStore {
         }
     }
 
-    pub fn from_config(config: &crate::config::StorageConfig) -> Self {
-        Self::new(&config.endpoint, config.auth_token.clone())
+    pub fn from_config(config: &crate::config::TransportConfig) -> Self {
+        let endpoint = config.effective_endpoint();
+        Self::new(&endpoint, config.auth_token.clone())
     }
 
     fn request(&self, path: &str) -> reqwest::RequestBuilder {
@@ -445,9 +446,9 @@ mod tests {
 
     #[test]
     fn test_ipfs_config_default() {
-        let config = crate::config::StorageConfig::ipfs("test", "http://127.0.0.1:5001");
-        assert_eq!(config.backend_type, "ipfs");
-        assert_eq!(config.endpoint, "http://127.0.0.1:5001");
+        let config = crate::config::TransportConfig::raw_ipfs("test", "http://127.0.0.1:5001");
+        assert_eq!(config.protocol, "ipfs");
+        assert_eq!(config.effective_endpoint(), "http://127.0.0.1:5001");
         assert!(!config.auto_pin);
     }
 }

@@ -1,5 +1,4 @@
 use anyhow::Result;
-use std::sync::Arc;
 
 use crate::repo::Repository;
 
@@ -24,153 +23,59 @@ fn validate_svn_url(url: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn run_push(remote_name: &str) -> Result<()> {
+pub async fn run_push(target_name: &str) -> Result<()> {
     let root = Repository::find(std::path::Path::new("."))?;
     let repo = Repository::open(&root)?;
 
-    let remote = repo
+    let transport = repo
         .config
-        .get_remote(remote_name)
-        .ok_or_else(|| anyhow::anyhow!("remote '{remote_name}' not found"))?
+        .get_transport(target_name)
+        .ok_or_else(|| anyhow::anyhow!("transport '{target_name}' not found"))?
         .clone();
-    let remote_url = remote.url.clone();
-    let remote_name_owned = remote_name.to_string();
 
-    let db = Arc::clone(&repo.db);
-    drop(repo);
-    crate::git::export_noa_to_git(&root, db).await?;
-
-    crate::git::export::validate_git_url(&remote_url)?;
-    let root_push = root.clone();
-    let root_lfs = root.clone();
-    let url_for_push = remote_url.clone();
-    let url_for_lfs = remote_url.clone();
-    let output = tokio::task::spawn_blocking(move || {
-        std::process::Command::new("git")
-            .args(["push", &url_for_push])
-            .current_dir(&root_push)
-            .output()
-    })
-    .await??;
-
-    if output.status.success() {
-        let root_lfs_check = root_lfs.clone();
-        let has_lfs = tokio::task::spawn_blocking(move || {
-            crate::git::export::detect_lfs_available(&root_lfs_check)
-                && crate::git::export::has_lfs_tracking(&root_lfs_check)
-        })
-        .await?;
-        if has_lfs {
-            let root_lfs_push = root_lfs.clone();
-            let url_for_lfs_push = url_for_lfs.clone();
-            tokio::task::spawn_blocking(move || {
-                crate::git::export::lfs_push_all(&root_lfs_push, &url_for_lfs_push)
-            })
-            .await??;
-        }
-        println!("Pushed to {} ({})", remote_name_owned, remote_url);
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git push failed: {}", stderr.trim());
-    }
-
-    Ok(())
+    crate::transport::push_vcs(&repo, &transport).await
 }
 
-pub async fn run_pull(remote_name: &str) -> Result<()> {
+pub async fn run_pull(target_name: &str) -> Result<()> {
     let root = Repository::find(std::path::Path::new("."))?;
-    let repo = Repository::open(&root)?;
+    let mut repo = Repository::open(&root)?;
 
-    let remote = repo
+    let transport = repo
         .config
-        .get_remote(remote_name)
-        .ok_or_else(|| anyhow::anyhow!("remote '{remote_name}' not found"))?
+        .get_transport(target_name)
+        .ok_or_else(|| anyhow::anyhow!("transport '{target_name}' not found"))?
         .clone();
 
-    crate::git::export::validate_git_url(&remote.url)?;
-    let root_pull = root.clone();
-    let url_for_pull = remote.url.clone();
-    let output = tokio::task::spawn_blocking(move || {
-        std::process::Command::new("git")
-            .args(["pull", &url_for_pull])
-            .current_dir(&root_pull)
-            .output()
-    })
-    .await??;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git pull failed: {}", stderr.trim());
-    }
-
-    let root_lfs_pull = root.clone();
-    if crate::git::export::detect_lfs_available(&root)
-        && crate::git::export::has_lfs_tracking(&root)
-    {
-        tokio::task::spawn_blocking(move || crate::git::export::lfs_pull(&root_lfs_pull)).await??;
-    }
-
-    let db = Arc::clone(&repo.db);
-    let head_ws = repo.read_head()?;
-
-    let ws_mgr_before = crate::workspace::WorkspaceManager::new(db.clone())?;
-    let before_head = ws_mgr_before
-        .get(&head_ws)
-        .await?
-        .map_or_else(crate::snapshot::empty_snapshot_id, |ws| ws.head.clone());
-
-    drop(repo);
-    crate::git::import::import_git_to_noa(&root, db.clone()).await?;
-
-    let ref_store = crate::refs::RedbRefStore::new(db.clone())?;
-    let head_ref = crate::refs::RefStore::get(&ref_store, "HEAD")
-        .await
-        .ok()
-        .flatten();
-    if let Some(snap_id) = head_ref {
-        if snap_id == before_head {
-            println!("Already up to date.");
-        } else {
-            let ws_mgr = crate::workspace::WorkspaceManager::new(db)?;
-            if let Err(e) = ws_mgr.update_head(&head_ws, &snap_id).await {
-                eprintln!("warning: failed to update workspace head after pull: {e}");
-            }
-            println!("Pulled from {remote_name} and re-imported into noa");
-        }
-    } else {
-        println!("Pulled from {remote_name} (no new changes)");
-    }
-
-    Ok(())
+    crate::transport::pull_vcs(&mut repo, &transport).await
 }
 
-pub async fn run_fetch(remote_name: &str) -> Result<()> {
+pub async fn run_fetch(target_name: &str) -> Result<()> {
     let root = Repository::find(std::path::Path::new("."))?;
     let repo = Repository::open(&root)?;
 
-    let remote = repo
+    let transport = repo
         .config
-        .get_remote(remote_name)
-        .ok_or_else(|| anyhow::anyhow!("remote '{remote_name}' not found"))?
+        .get_transport(target_name)
+        .ok_or_else(|| anyhow::anyhow!("transport '{target_name}' not found"))?
         .clone();
+
+    let url = transport
+        .url
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("transport has no URL"))?;
 
     let backend = crate::git::GitBackend::new();
-    let refs = crate::remote::RemoteBackend::list_refs(&backend, &remote.url).await?;
+    let refs = crate::remote::RemoteBackend::list_refs(&backend, url).await?;
 
     if refs.is_empty() {
         println!("No remote refs found.");
         return Ok(());
     }
 
-    println!("Remote refs from {remote_name}:");
+    println!("Remote refs from {target_name}:");
     for r in &refs {
-        println!(
-            "  {} -> {}",
-            r.name,
-            &r.commit_hash[..12.min(r.commit_hash.len())]
-        );
+        println!("  {} -> {}", r.name, &r.commit_hash[..12.min(r.commit_hash.len())]);
     }
-
     Ok(())
 }
 
@@ -264,12 +169,8 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
         anyhow::bail!("git commit failed");
     }
 
-    let remote_config = crate::config::RemoteConfig {
-        name: "svn-origin".to_string(),
-        url: url.to_string(),
-        protocol: "svn".to_string(),
-    };
-    let repo = crate::repo::Repository::init_with_remotes(&target, vec![remote_config])?;
+    let transport_config = crate::config::TransportConfig::vcs_svn("svn-origin", url);
+    let repo = crate::repo::Repository::init_with_remotes(&target, vec![transport_config])?;
 
     let db = std::sync::Arc::clone(&repo.db);
     crate::git::import::import_git_to_noa(&target, std::sync::Arc::clone(&db)).await?;
