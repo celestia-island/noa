@@ -58,13 +58,19 @@ pub async fn create_raw_store(config: &TransportConfig) -> Result<Box<dyn Object
             Ok(Box::new(store))
         }
         other => Err(anyhow::anyhow!(
-            "unsupported protocol '{}': expected git, svn, s3, ipfs, ftp, or sftp",
+            "unsupported protocol '{}' for raw mode: expected git, s3, ipfs, ftp, or sftp",
             other
         )),
     }
 }
 
 pub async fn push_vcs(repo: &Repository, transport: &TransportConfig) -> Result<()> {
+    if transport.protocol != "git" {
+        anyhow::bail!(
+            "VCS push is only supported for git protocol, not '{}' (svn is import-only)",
+            transport.protocol
+        );
+    }
     let url = transport
         .url
         .as_deref()
@@ -95,6 +101,12 @@ pub async fn push_vcs(repo: &Repository, transport: &TransportConfig) -> Result<
 }
 
 pub async fn pull_vcs(repo: &mut Repository, transport: &TransportConfig) -> Result<()> {
+    if transport.protocol != "git" {
+        anyhow::bail!(
+            "VCS pull is only supported for git protocol, not '{}' (svn is import-only)",
+            transport.protocol
+        );
+    }
     let url = transport
         .url
         .as_deref()
@@ -240,14 +252,16 @@ async fn push_tree_recursive(
         return Ok(());
     }
     let entries = local.get_tree(tree_id).await?;
-    let _ = remote.put_tree(&entries).await;
+    remote.put_tree(&entries).await?;
     for entry in &entries.0 {
         match entry.kind {
             crate::object::EntryKind::Blob => {
                 let blob_id = BlobId(entry.id.clone());
                 if !remote.has_blob(&blob_id).await.unwrap_or(false) {
                     if let Ok(data) = local.get_blob(&blob_id).await {
-                        let _ = remote.put_blob(&data).await;
+                        if let Err(e) = remote.put_blob(&data).await {
+                            tracing::warn!("put_blob failed for {}: {e}", entry.id);
+                        }
                     }
                 }
             }
@@ -325,7 +339,7 @@ pub async fn transport_status(repo: &Repository, target: Option<&str>) -> Result
                 println!("  Endpoint: {}", t.effective_endpoint());
                 println!("  Bucket:   {}", t.bucket.as_deref().unwrap_or("?"));
             }
-            ("raw", "ftp") => {
+            ("raw", "ftp") | ("raw", "ftps") => {
                 println!("  Endpoint: {}", t.effective_endpoint());
                 println!("  Port:     {}", if t.port > 0 { t.port } else { 21 });
             }

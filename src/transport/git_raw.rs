@@ -8,7 +8,6 @@ use crate::{
 
 pub struct GitRawObjectStore {
     work_dir: PathBuf,
-    url: String,
 }
 
 impl GitRawObjectStore {
@@ -37,7 +36,6 @@ impl GitRawObjectStore {
 
         Ok(Self {
             work_dir,
-            url: url.to_string(),
         })
     }
 
@@ -47,46 +45,6 @@ impl GitRawObjectStore {
 
     fn tree_path(&self, id: &TreeId) -> PathBuf {
         self.work_dir.join("trees").join(&id.0)
-    }
-
-    pub async fn sync(&self) -> Result<()> {
-        let wd = self.work_dir.clone();
-        let url = self.url.clone();
-        tokio::task::spawn_blocking(move || -> Result<()> {
-            for args in [
-                vec!["add", "-A"],
-                vec!["commit", "-m", "noa object sync"],
-                vec!["push", &url],
-            ] {
-                let status = std::process::Command::new("git")
-                    .args(&args)
-                    .current_dir(&wd)
-                    .status()?;
-                if !status.success() && args[0] != "commit" {
-                    anyhow::bail!("git {} failed", args.join(" "));
-                }
-            }
-            Ok(())
-        })
-        .await??;
-        Ok(())
-    }
-
-    pub async fn pull(&self) -> Result<()> {
-        let wd = self.work_dir.clone();
-        let url = self.url.clone();
-        tokio::task::spawn_blocking(move || -> Result<()> {
-            let status = std::process::Command::new("git")
-                .args(["pull", &url])
-                .current_dir(&wd)
-                .status()?;
-            if !status.success() {
-                anyhow::bail!("git pull failed");
-            }
-            Ok(())
-        })
-        .await??;
-        Ok(())
     }
 }
 
@@ -164,30 +122,6 @@ pub async fn commit_and_push(url: &str) -> Result<()> {
             if !status.success() && args[0] != "commit" {
                 anyhow::bail!("git {} failed", args.join(" "));
             }
-        }
-        Ok(())
-    })
-    .await??;
-    Ok(())
-}
-
-pub async fn pull_latest(url: &str) -> Result<()> {
-    let hash = &sha256_hex(url.as_bytes())[..16];
-    let work_dir = std::env::temp_dir().join("noa-git-raw").join(hash);
-
-    if !work_dir.exists() {
-        return Ok(());
-    }
-
-    let url_owned = url.to_string();
-    let wd = work_dir.clone();
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        let status = std::process::Command::new("git")
-            .args(["pull", &url_owned])
-            .current_dir(&wd)
-            .status()?;
-        if !status.success() {
-            anyhow::bail!("git pull failed");
         }
         Ok(())
     })

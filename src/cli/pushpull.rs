@@ -23,32 +23,6 @@ fn validate_svn_url(url: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn run_push(target_name: &str) -> Result<()> {
-    let root = Repository::find(std::path::Path::new("."))?;
-    let repo = Repository::open(&root)?;
-
-    let transport = repo
-        .config
-        .get_transport(target_name)
-        .ok_or_else(|| anyhow::anyhow!("transport '{target_name}' not found"))?
-        .clone();
-
-    crate::transport::push_vcs(&repo, &transport).await
-}
-
-pub async fn run_pull(target_name: &str) -> Result<()> {
-    let root = Repository::find(std::path::Path::new("."))?;
-    let mut repo = Repository::open(&root)?;
-
-    let transport = repo
-        .config
-        .get_transport(target_name)
-        .ok_or_else(|| anyhow::anyhow!("transport '{target_name}' not found"))?
-        .clone();
-
-    crate::transport::pull_vcs(&mut repo, &transport).await
-}
-
 pub async fn run_fetch(target_name: &str) -> Result<()> {
     let root = Repository::find(std::path::Path::new("."))?;
     let repo = Repository::open(&root)?;

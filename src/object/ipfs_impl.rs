@@ -90,11 +90,6 @@ impl IpfsObjectStore {
         }
     }
 
-    pub fn from_config(config: &crate::config::TransportConfig) -> Self {
-        let endpoint = config.effective_endpoint();
-        Self::new(&endpoint, config.auth_token.clone())
-    }
-
     fn request(&self, path: &str) -> reqwest::RequestBuilder {
         let url = format!("{}{}", self.api_url, path);
         let mut req = self.client.post(&url);
