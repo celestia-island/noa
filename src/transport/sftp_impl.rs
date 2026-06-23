@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use crate::{
-    error::{NoaError, Result},
+    error::{remote_err, NoaError, Result},
     object::{sha256_hex, BlobId, ObjectStore, TreeEntries, TreeId},
 };
 
@@ -60,10 +60,7 @@ impl SftpObjectStore {
     }
 
     fn err(ctx: &str, e: impl std::fmt::Display) -> anyhow::Error {
-        NoaError::IpfsError {
-            message: format!("SFTP {ctx}: {e}"),
-        }
-        .into()
+        remote_err("sftp", format!("{ctx}: {e}"))
     }
 
     async fn ssh_exec(&self, remote_cmd: &str) -> Result<std::process::Output> {

@@ -2,8 +2,10 @@ use async_trait::async_trait;
 use std::path::PathBuf;
 
 use crate::{
+    config::TransportConfig,
     error::{NoaError, Result},
     object::{sha256_hex, BlobId, ObjectStore, TreeEntries, TreeId},
+    transport::Credentials,
 };
 
 pub struct GitRawObjectStore {
@@ -11,18 +13,24 @@ pub struct GitRawObjectStore {
 }
 
 impl GitRawObjectStore {
-    pub async fn new(url: &str, _config: &crate::config::TransportConfig) -> Result<Self> {
+    pub async fn new(url: &str, config: &TransportConfig) -> Result<Self> {
+        let creds = Credentials::from_config(config);
+        let authed_url = creds.for_git_url(url);
         let hash = &sha256_hex(url.as_bytes())[..16];
         let work_dir = std::env::temp_dir().join("noa-git-raw").join(hash);
 
         if !work_dir.join(".git").exists() {
-            let url_owned = url.to_string();
+            let url_owned = authed_url;
             let wd = work_dir.clone();
+            let env = creds.git_env();
             tokio::task::spawn_blocking(move || -> Result<()> {
                 std::fs::create_dir_all(&wd)?;
-                let status = std::process::Command::new("git")
-                    .args(["clone", &url_owned, &wd.to_string_lossy()])
-                    .status()?;
+                let mut cmd = std::process::Command::new("git");
+                cmd.args(["clone", &url_owned, &wd.to_string_lossy()]);
+                for (k, v) in &env {
+                    cmd.env(k, v);
+                }
+                let status = cmd.status()?;
                 if !status.success() {
                     anyhow::bail!("git clone failed for {url_owned}");
                 }
@@ -34,9 +42,7 @@ impl GitRawObjectStore {
         std::fs::create_dir_all(work_dir.join("blobs"))?;
         std::fs::create_dir_all(work_dir.join("trees"))?;
 
-        Ok(Self {
-            work_dir,
-        })
+        Ok(Self { work_dir })
     }
 
     fn blob_path(&self, id: &BlobId) -> PathBuf {
@@ -99,7 +105,7 @@ impl ObjectStore for GitRawObjectStore {
     }
 }
 
-pub async fn commit_and_push(url: &str) -> Result<()> {
+pub async fn commit_and_push(url: &str, creds: &Credentials) -> Result<()> {
     let hash = &sha256_hex(url.as_bytes())[..16];
     let work_dir = std::env::temp_dir().join("noa-git-raw").join(hash);
 
@@ -107,18 +113,21 @@ pub async fn commit_and_push(url: &str) -> Result<()> {
         return Ok(());
     }
 
-    let url_owned = url.to_string();
+    let authed_url = creds.for_git_url(url);
     let wd = work_dir.clone();
+    let env = creds.git_env();
     tokio::task::spawn_blocking(move || -> Result<()> {
         for args in [
             vec!["add", "-A"],
             vec!["commit", "-m", "noa object sync"],
-            vec!["push", &url_owned],
+            vec!["push", &authed_url],
         ] {
-            let status = std::process::Command::new("git")
-                .args(&args)
-                .current_dir(&wd)
-                .status()?;
+            let mut cmd = std::process::Command::new("git");
+            cmd.args(&args).current_dir(&wd);
+            for (k, v) in &env {
+                cmd.env(k, v);
+            }
+            let status = cmd.status()?;
             if !status.success() && args[0] != "commit" {
                 anyhow::bail!("git {} failed", args.join(" "));
             }

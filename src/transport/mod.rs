@@ -1,55 +1,41 @@
+pub mod credentials;
 pub mod git_raw;
 pub mod sftp_impl;
 
 use anyhow::Result;
 
 use crate::{
-    config::TransportConfig,
+    config::{TransportConfig, TransportMode, TransportProtocol},
     object::{BlobId, ObjectStore, TreeId},
     repo::Repository,
     snapshot::SnapshotStore,
 };
 
+pub use credentials::Credentials;
+
 pub async fn create_raw_store(config: &TransportConfig) -> Result<Box<dyn ObjectStore>> {
-    match config.protocol.as_str() {
-        "ipfs" => {
+    match config.protocol {
+        TransportProtocol::Ipfs => {
             let endpoint = config.effective_endpoint();
             Ok(Box::new(crate::object::IpfsObjectStore::new(
                 &endpoint,
                 config.auth_token.clone(),
             )))
         }
-        "s3" | "minio" => {
-            let endpoint = config.effective_endpoint();
-            let bucket = config
-                .bucket
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("transport '{}' is missing 'bucket'", config.name))?;
-            let access_key = config
-                .access_key
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("transport '{}' is missing 'access_key'", config.name))?;
-            let secret_key = config
-                .secret_key
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("transport '{}' is missing 'secret_key'", config.name))?;
-            let region = config.region.as_deref().unwrap_or("us-east-1");
-            let store = crate::object::MinioObjectStore::from_config(
-                &endpoint, bucket, access_key, secret_key, region,
-            )
-            .await?;
+        TransportProtocol::S3 | TransportProtocol::Minio => {
+            let store = crate::object::MinioObjectStore::from_transport_config(config).await?;
             Ok(Box::new(store))
         }
         #[cfg(feature = "ftp")]
-        "ftp" | "ftps" => {
+        TransportProtocol::Ftp | TransportProtocol::Ftps => {
             let store = crate::object::FtpObjectStore::from_config(config)?;
             Ok(Box::new(store))
         }
-        "sftp" => {
+        TransportProtocol::Sftp => {
             let store = sftp_impl::SftpObjectStore::from_config(config)?;
             Ok(Box::new(store))
         }
-        "git" => {
+        TransportProtocol::Git => {
             let url = config
                 .url
                 .as_deref()
@@ -57,17 +43,16 @@ pub async fn create_raw_store(config: &TransportConfig) -> Result<Box<dyn Object
             let store = git_raw::GitRawObjectStore::new(url, config).await?;
             Ok(Box::new(store))
         }
-        other => Err(anyhow::anyhow!(
-            "unsupported protocol '{}' for raw mode: expected git, s3, ipfs, ftp, or sftp",
-            other
+        TransportProtocol::Svn => Err(anyhow::anyhow!(
+            "svn does not support raw mode object storage; use mode=vcs for repository import"
         )),
     }
 }
 
 pub async fn push_vcs(repo: &Repository, transport: &TransportConfig) -> Result<()> {
-    if transport.protocol != "git" {
+    if transport.protocol != TransportProtocol::Git {
         anyhow::bail!(
-            "VCS push is only supported for git protocol, not '{}' (svn is import-only)",
+            "VCS push is only supported for git, not '{}' (svn is import-only)",
             transport.protocol
         );
     }
@@ -101,9 +86,9 @@ pub async fn push_vcs(repo: &Repository, transport: &TransportConfig) -> Result<
 }
 
 pub async fn pull_vcs(repo: &mut Repository, transport: &TransportConfig) -> Result<()> {
-    if transport.protocol != "git" {
+    if transport.protocol != TransportProtocol::Git {
         anyhow::bail!(
-            "VCS pull is only supported for git protocol, not '{}' (svn is import-only)",
+            "VCS pull is only supported for git, not '{}' (svn is import-only)",
             transport.protocol
         );
     }
@@ -193,7 +178,7 @@ pub async fn push_raw(
     let mut pushed = 0u64;
     let mut failed = 0u64;
 
-    let ipfs_store = if do_pin && transport.protocol == "ipfs" {
+    let ipfs_store = if do_pin && transport.protocol == TransportProtocol::Ipfs {
         let endpoint = transport.effective_endpoint();
         Some(crate::object::IpfsObjectStore::new(&endpoint, transport.auth_token.clone()))
     } else {
@@ -228,9 +213,10 @@ pub async fn push_raw(
         }
     }
 
-    if transport.protocol == "git" {
+    if transport.protocol == TransportProtocol::Git {
         if let Some(url) = transport.url.as_deref() {
-            let _ = git_raw::commit_and_push(url).await;
+            let creds = Credentials::from_config(transport);
+            let _ = git_raw::commit_and_push(url, &creds).await;
         }
     }
 
@@ -282,7 +268,7 @@ pub async fn fetch_raw(
     print!("Fetching from '{}'... ", transport.name);
 
     let data = if hash_or_cid.starts_with("bafk") || hash_or_cid.starts_with("Qm") {
-        if transport.protocol != "ipfs" {
+        if transport.protocol != TransportProtocol::Ipfs {
             anyhow::bail!("CID-style fetch requires an IPFS transport");
         }
         let endpoint = transport.effective_endpoint();
@@ -321,12 +307,12 @@ pub async fn transport_status(repo: &Repository, target: Option<&str>) -> Result
 
     for t in targets {
         println!("── {} (mode={}, type={}) ──", t.name, t.mode, t.protocol);
-        match (t.mode.as_str(), t.protocol.as_str()) {
-            ("vcs", "git") | ("vcs", "svn") => {
+        match (t.mode, t.protocol) {
+            (TransportMode::Vcs, TransportProtocol::Git) | (TransportMode::Vcs, TransportProtocol::Svn) => {
                 println!("  URL: {}", t.url.as_deref().unwrap_or("?"));
                 println!("  Mode: full repository sync");
             }
-            ("raw", "ipfs") => {
+            (TransportMode::Raw, TransportProtocol::Ipfs) => {
                 let endpoint = t.effective_endpoint();
                 let store = crate::object::IpfsObjectStore::new(&endpoint, t.auth_token.clone());
                 print!("  Connecting to {}... ", endpoint);
@@ -335,20 +321,20 @@ pub async fn transport_status(repo: &Repository, target: Option<&str>) -> Result
                     Err(e) => println!("FAILED: {e}"),
                 }
             }
-            ("raw", "s3") | ("raw", "minio") => {
+            (TransportMode::Raw, TransportProtocol::S3) | (TransportMode::Raw, TransportProtocol::Minio) => {
                 println!("  Endpoint: {}", t.effective_endpoint());
                 println!("  Bucket:   {}", t.bucket.as_deref().unwrap_or("?"));
             }
-            ("raw", "ftp") | ("raw", "ftps") => {
+            (TransportMode::Raw, TransportProtocol::Ftp) | (TransportMode::Raw, TransportProtocol::Ftps) => {
                 println!("  Endpoint: {}", t.effective_endpoint());
                 println!("  Port:     {}", if t.port > 0 { t.port } else { 21 });
             }
-            ("raw", "sftp") => {
+            (TransportMode::Raw, TransportProtocol::Sftp) => {
                 println!("  Endpoint: {}", t.effective_endpoint());
                 println!("  Port:     {}", if t.port > 0 { t.port } else { 22 });
                 println!("  User:     {}", t.username.as_deref().unwrap_or("?"));
             }
-            ("raw", "git") => {
+            (TransportMode::Raw, TransportProtocol::Git) => {
                 println!("  URL: {}", t.url.as_deref().unwrap_or("?"));
                 println!("  Mode: raw object backup via git");
             }

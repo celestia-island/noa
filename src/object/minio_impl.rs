@@ -99,6 +99,24 @@ impl MinioObjectStore {
         Ok(())
     }
 
+    pub async fn from_transport_config(config: &crate::config::TransportConfig) -> Result<Self> {
+        let endpoint = config.effective_endpoint();
+        let bucket = config
+            .bucket
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("transport '{}' is missing 'bucket'", config.name))?;
+        let access_key = config
+            .access_key
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("transport '{}' is missing 'access_key'", config.name))?;
+        let secret_key = config
+            .secret_key
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("transport '{}' is missing 'secret_key'", config.name))?;
+        let region = config.region.as_deref().unwrap_or("us-east-1");
+        Self::from_config(&endpoint, bucket, access_key, secret_key, region).await
+    }
+
     pub async fn from_config(
         endpoint: &str,
         bucket: &str,

@@ -128,8 +128,8 @@ fn test_multiple_remote_protocols() {
 
     let loaded = libnoa::config::RepoConfig::load_from_dir(&path.join(".noa")).unwrap();
     assert_eq!(loaded.transports.len(), 3);
-    assert_eq!(loaded.get_transport("github").unwrap().protocol, "git");
-    assert_eq!(loaded.get_transport("svn-origin").unwrap().protocol, "svn");
+    assert_eq!(loaded.get_transport("github").unwrap().protocol, libnoa::config::TransportProtocol::Git);
+    assert_eq!(loaded.get_transport("svn-origin").unwrap().protocol, libnoa::config::TransportProtocol::Svn);
 }
 
 #[tokio::test(flavor = "multi_thread")]

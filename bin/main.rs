@@ -310,15 +310,14 @@ async fn main() -> anyhow::Result<()> {
                 .get_transport(&target)
                 .ok_or_else(|| anyhow::anyhow!("transport '{target}' not found"))?
                 .clone();
-            match transport.mode.as_str() {
-                "vcs" => libnoa::transport::push_vcs(&repo, &transport).await?,
-                "raw" => {
+            match transport.mode {
+                libnoa::config::TransportMode::Vcs => libnoa::transport::push_vcs(&repo, &transport).await?,
+                libnoa::config::TransportMode::Raw => {
                     libnoa::transport::push_raw(
                         &repo, &transport, snapshot.as_deref(), workspace.as_deref(), pin,
                     )
                     .await?;
                 }
-                other => anyhow::bail!("unknown transport mode: {other}"),
             }
         }
         Some(Commands::Pull { target }) => {
@@ -328,10 +327,9 @@ async fn main() -> anyhow::Result<()> {
                 .get_transport(&target)
                 .ok_or_else(|| anyhow::anyhow!("transport '{target}' not found"))?
                 .clone();
-            match transport.mode.as_str() {
-                "vcs" => libnoa::transport::pull_vcs(&mut repo, &transport).await?,
-                "raw" => anyhow::bail!("'pull' is not available for raw transports. Use 'noa fetch --target {target} <hash>' instead."),
-                other => anyhow::bail!("unknown transport mode: {other}"),
+            match transport.mode {
+                libnoa::config::TransportMode::Vcs => libnoa::transport::pull_vcs(&mut repo, &transport).await?,
+                libnoa::config::TransportMode::Raw => anyhow::bail!("'pull' is not available for raw transports. Use 'noa fetch --target {target} <hash>' instead."),
             }
         }
         Some(Commands::Fetch { target, hash_or_cid }) => {
@@ -341,11 +339,10 @@ async fn main() -> anyhow::Result<()> {
                 .get_transport(&target)
                 .ok_or_else(|| anyhow::anyhow!("transport '{target}' not found"))?
                 .clone();
-            match (transport.mode.as_str(), hash_or_cid.as_deref()) {
-                ("vcs", _) => cli::pushpull::run_fetch(&target).await?,
-                ("raw", Some(hash)) => libnoa::transport::fetch_raw(&repo, &transport, hash).await?,
-                ("raw", None) => anyhow::bail!("raw fetch requires a hash or CID argument"),
-                (other, _) => anyhow::bail!("unknown transport mode: {other}"),
+            match (transport.mode, hash_or_cid.as_deref()) {
+                (libnoa::config::TransportMode::Vcs, _) => cli::pushpull::run_fetch(&target).await?,
+                (libnoa::config::TransportMode::Raw, Some(hash)) => libnoa::transport::fetch_raw(&repo, &transport, hash).await?,
+                (libnoa::config::TransportMode::Raw, None) => anyhow::bail!("raw fetch requires a hash or CID argument"),
             }
         }
         Some(Commands::Clone { url, path, svn }) => {

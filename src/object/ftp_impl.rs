@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use std::io::Cursor;
 
 use crate::{
-    error::{NoaError, Result},
+    error::{remote_err, NoaError, Result},
     object::{sha256_hex, BlobId, ObjectStore, TreeEntries, TreeId},
 };
 
@@ -71,10 +71,7 @@ impl FtpObjectStore {
     }
 
     fn ftp_err(context: &str, e: impl std::fmt::Display) -> anyhow::Error {
-        NoaError::IpfsError {
-            message: format!("FTP {context}: {e}"),
-        }
-        .into()
+        remote_err("ftp", format!("{context}: {e}"))
     }
 
     async fn with_ftp<F, T>(&self, f: F) -> Result<T>
@@ -259,7 +256,7 @@ mod tests {
     #[test]
     fn test_ftp_config_constructor() {
         let cfg = crate::config::TransportConfig::raw_ftp("my-ftp", "ftp.example.com");
-        assert_eq!(cfg.protocol, "ftp");
+        assert_eq!(cfg.protocol, crate::config::TransportProtocol::Ftp);
         assert_eq!(cfg.effective_endpoint(), "ftp.example.com");
         assert_eq!(cfg.port, 21);
         assert!(!cfg.use_tls);

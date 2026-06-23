@@ -3,6 +3,62 @@ use std::path::Path;
 
 use crate::error::Result;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TransportMode {
+    Vcs,
+    Raw,
+}
+
+impl Default for TransportMode {
+    fn default() -> Self {
+        Self::Vcs
+    }
+}
+
+impl std::fmt::Display for TransportMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Vcs => write!(f, "vcs"),
+            Self::Raw => write!(f, "raw"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TransportProtocol {
+    Git,
+    Svn,
+    S3,
+    Minio,
+    Ipfs,
+    Ftp,
+    Ftps,
+    Sftp,
+}
+
+impl Default for TransportProtocol {
+    fn default() -> Self {
+        Self::Git
+    }
+}
+
+impl std::fmt::Display for TransportProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Git => write!(f, "git"),
+            Self::Svn => write!(f, "svn"),
+            Self::S3 => write!(f, "s3"),
+            Self::Minio => write!(f, "minio"),
+            Self::Ipfs => write!(f, "ipfs"),
+            Self::Ftp => write!(f, "ftp"),
+            Self::Ftps => write!(f, "ftps"),
+            Self::Sftp => write!(f, "sftp"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoConfig {
     #[serde(default = "default_repo_name")]
@@ -22,23 +78,15 @@ fn default_repo_name() -> String {
     "default".to_string()
 }
 
-fn default_transport_mode() -> String {
-    "vcs".to_string()
-}
-
-fn default_protocol() -> String {
-    "git".to_string()
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransportConfig {
     pub name: String,
 
-    #[serde(default = "default_transport_mode")]
-    pub mode: String,
+    #[serde(default)]
+    pub mode: TransportMode,
 
-    #[serde(rename = "type", default = "default_protocol")]
-    pub protocol: String,
+    #[serde(rename = "type", default)]
+    pub protocol: TransportProtocol,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
@@ -85,153 +133,104 @@ impl TransportConfig {
     pub fn vcs_git(name: &str, url: &str) -> Self {
         TransportConfig {
             name: name.to_string(),
-            mode: "vcs".to_string(),
-            protocol: "git".to_string(),
+            mode: TransportMode::Vcs,
+            protocol: TransportProtocol::Git,
             url: Some(url.to_string()),
-            endpoint: None,
-            bucket: None,
-            access_key: None,
-            secret_key: None,
-            region: None,
-            gateway: None,
-            auth_token: None,
-            auto_pin: false,
-            username: None,
-            password: None,
-            port: 0,
-            use_tls: false,
+            endpoint: None, bucket: None, access_key: None, secret_key: None,
+            region: None, gateway: None, auth_token: None, auto_pin: false,
+            username: None, password: None, port: 0, use_tls: false,
         }
     }
 
-    #[must_use]
     pub fn vcs_svn(name: &str, url: &str) -> Self {
         TransportConfig {
             name: name.to_string(),
-            mode: "vcs".to_string(),
-            protocol: "svn".to_string(),
+            mode: TransportMode::Vcs,
+            protocol: TransportProtocol::Svn,
             url: Some(url.to_string()),
-            endpoint: None,
-            bucket: None,
-            access_key: None,
-            secret_key: None,
-            region: None,
-            gateway: None,
-            auth_token: None,
-            auto_pin: false,
-            username: None,
-            password: None,
-            port: 0,
-            use_tls: false,
+            endpoint: None, bucket: None, access_key: None, secret_key: None,
+            region: None, gateway: None, auth_token: None, auto_pin: false,
+            username: None, password: None, port: 0, use_tls: false,
         }
     }
 
-    #[must_use]
     pub fn raw_git(name: &str, url: &str) -> Self {
         TransportConfig {
             name: name.to_string(),
-            mode: "raw".to_string(),
-            protocol: "git".to_string(),
+            mode: TransportMode::Raw,
+            protocol: TransportProtocol::Git,
             url: Some(url.to_string()),
-            endpoint: None,
-            bucket: None,
-            access_key: None,
-            secret_key: None,
-            region: None,
-            gateway: None,
-            auth_token: None,
-            auto_pin: false,
-            username: None,
-            password: None,
-            port: 0,
-            use_tls: false,
+            endpoint: None, bucket: None, access_key: None, secret_key: None,
+            region: None, gateway: None, auth_token: None, auto_pin: false,
+            username: None, password: None, port: 0, use_tls: false,
         }
     }
 
-    #[must_use]
     pub fn raw_ipfs(name: &str, endpoint: &str) -> Self {
         TransportConfig {
             name: name.to_string(),
-            mode: "raw".to_string(),
-            protocol: "ipfs".to_string(),
+            mode: TransportMode::Raw,
+            protocol: TransportProtocol::Ipfs,
             url: None,
             endpoint: Some(endpoint.to_string()),
-            bucket: None,
-            access_key: None,
-            secret_key: None,
-            region: None,
+            bucket: None, access_key: None, secret_key: None, region: None,
             gateway: Some("https://ipfs.io".to_string()),
-            auth_token: None,
-            auto_pin: false,
-            username: None,
-            password: None,
-            port: 0,
-            use_tls: false,
+            auth_token: None, auto_pin: false,
+            username: None, password: None, port: 0, use_tls: false,
         }
     }
 
-    #[must_use]
     pub fn raw_s3(name: &str, endpoint: &str, bucket: &str) -> Self {
         TransportConfig {
             name: name.to_string(),
-            mode: "raw".to_string(),
-            protocol: "s3".to_string(),
+            mode: TransportMode::Raw,
+            protocol: TransportProtocol::S3,
             url: None,
             endpoint: Some(endpoint.to_string()),
             bucket: Some(bucket.to_string()),
-            access_key: None,
-            secret_key: None,
+            access_key: None, secret_key: None,
             region: Some("us-east-1".to_string()),
-            gateway: None,
-            auth_token: None,
-            auto_pin: false,
-            username: None,
-            password: None,
-            port: 0,
-            use_tls: false,
+            gateway: None, auth_token: None, auto_pin: false,
+            username: None, password: None, port: 0, use_tls: false,
         }
     }
 
-    #[must_use]
+    pub fn raw_minio(name: &str, endpoint: &str, bucket: &str) -> Self {
+        let mut c = Self::raw_s3(name, endpoint, bucket);
+        c.protocol = TransportProtocol::Minio;
+        c
+    }
+
     pub fn raw_ftp(name: &str, endpoint: &str) -> Self {
         TransportConfig {
             name: name.to_string(),
-            mode: "raw".to_string(),
-            protocol: "ftp".to_string(),
+            mode: TransportMode::Raw,
+            protocol: TransportProtocol::Ftp,
             url: None,
             endpoint: Some(endpoint.to_string()),
-            bucket: None,
-            access_key: None,
-            secret_key: None,
-            region: None,
-            gateway: None,
-            auth_token: None,
-            auto_pin: false,
-            username: None,
-            password: None,
-            port: 21,
-            use_tls: false,
+            bucket: None, access_key: None, secret_key: None, region: None,
+            gateway: None, auth_token: None, auto_pin: false,
+            username: None, password: None, port: 21, use_tls: false,
         }
     }
 
-    #[must_use]
+    pub fn raw_ftps(name: &str, endpoint: &str) -> Self {
+        let mut c = Self::raw_ftp(name, endpoint);
+        c.protocol = TransportProtocol::Ftps;
+        c.use_tls = true;
+        c
+    }
+
     pub fn raw_sftp(name: &str, endpoint: &str) -> Self {
         TransportConfig {
             name: name.to_string(),
-            mode: "raw".to_string(),
-            protocol: "sftp".to_string(),
+            mode: TransportMode::Raw,
+            protocol: TransportProtocol::Sftp,
             url: None,
             endpoint: Some(endpoint.to_string()),
-            bucket: None,
-            access_key: None,
-            secret_key: None,
-            region: None,
-            gateway: None,
-            auth_token: None,
-            auto_pin: false,
-            username: None,
-            password: None,
-            port: 22,
-            use_tls: false,
+            bucket: None, access_key: None, secret_key: None, region: None,
+            gateway: None, auth_token: None, auto_pin: false,
+            username: None, password: None, port: 22, use_tls: false,
         }
     }
 
@@ -359,33 +358,46 @@ mod tests {
     #[test]
     fn test_vcs_git_transport() {
         let t = TransportConfig::vcs_git("github", "https://github.com/user/repo.git");
-        assert_eq!(t.mode, "vcs");
-        assert_eq!(t.protocol, "git");
+        assert_eq!(t.mode, TransportMode::Vcs);
+        assert_eq!(t.protocol, TransportProtocol::Git);
         assert_eq!(t.url.as_deref(), Some("https://github.com/user/repo.git"));
     }
 
     #[test]
     fn test_raw_ipfs_transport() {
         let t = TransportConfig::raw_ipfs("ipfs-local", "http://127.0.0.1:5001");
-        assert_eq!(t.mode, "raw");
-        assert_eq!(t.protocol, "ipfs");
+        assert_eq!(t.mode, TransportMode::Raw);
+        assert_eq!(t.protocol, TransportProtocol::Ipfs);
         assert_eq!(t.endpoint.as_deref(), Some("http://127.0.0.1:5001"));
     }
 
     #[test]
     fn test_raw_git_transport() {
         let t = TransportConfig::raw_git("git-raw", "https://github.com/user/noa-objects.git");
-        assert_eq!(t.mode, "raw");
-        assert_eq!(t.protocol, "git");
+        assert_eq!(t.mode, TransportMode::Raw);
+        assert_eq!(t.protocol, TransportProtocol::Git);
         assert_eq!(t.url.as_deref(), Some("https://github.com/user/noa-objects.git"));
     }
 
     #[test]
     fn test_raw_sftp_transport() {
         let t = TransportConfig::raw_sftp("sftp-server", "sftp.example.com");
-        assert_eq!(t.mode, "raw");
-        assert_eq!(t.protocol, "sftp");
+        assert_eq!(t.mode, TransportMode::Raw);
+        assert_eq!(t.protocol, TransportProtocol::Sftp);
         assert_eq!(t.port, 22);
+    }
+
+    #[test]
+    fn test_raw_ftps_transport() {
+        let t = TransportConfig::raw_ftps("ftps-server", "ftps.example.com");
+        assert_eq!(t.protocol, TransportProtocol::Ftps);
+        assert!(t.use_tls);
+    }
+
+    #[test]
+    fn test_raw_minio_transport() {
+        let t = TransportConfig::raw_minio("minio", "http://localhost:9000", "noa");
+        assert_eq!(t.protocol, TransportProtocol::Minio);
     }
 
     #[test]
@@ -397,9 +409,9 @@ mod tests {
         let toml_str = config.to_toml().unwrap();
         let parsed = RepoConfig::from_toml(&toml_str).unwrap();
         assert_eq!(parsed.transports.len(), 3);
-        assert_eq!(parsed.get_transport("origin").unwrap().mode, "vcs");
-        assert_eq!(parsed.get_transport("ipfs").unwrap().mode, "raw");
-        assert_eq!(parsed.get_transport("s3").unwrap().protocol, "s3");
+        assert_eq!(parsed.get_transport("origin").unwrap().mode, TransportMode::Vcs);
+        assert_eq!(parsed.get_transport("ipfs").unwrap().mode, TransportMode::Raw);
+        assert_eq!(parsed.get_transport("s3").unwrap().protocol, TransportProtocol::S3);
     }
 
     #[test]

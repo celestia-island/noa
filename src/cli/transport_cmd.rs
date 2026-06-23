@@ -1,6 +1,9 @@
 use anyhow::Result;
 
-use crate::{config::TransportConfig, repo::Repository};
+use crate::{
+    config::{TransportConfig, TransportMode, TransportProtocol},
+    repo::Repository,
+};
 
 pub fn run_add(
     repo: &mut Repository,
@@ -21,37 +24,63 @@ pub fn run_add(
     port: u16,
     use_tls: bool,
 ) -> Result<()> {
+    let mode = match mode {
+        "vcs" => TransportMode::Vcs,
+        "raw" => TransportMode::Raw,
+        other => anyhow::bail!("unknown mode '{other}': expected 'vcs' or 'raw'"),
+    };
+    let protocol = match protocol {
+        "git" => TransportProtocol::Git,
+        "svn" => TransportProtocol::Svn,
+        "s3" => TransportProtocol::S3,
+        "minio" => TransportProtocol::Minio,
+        "ipfs" => TransportProtocol::Ipfs,
+        "ftp" => TransportProtocol::Ftp,
+        "ftps" => TransportProtocol::Ftps,
+        "sftp" => TransportProtocol::Sftp,
+        other => anyhow::bail!("unknown type '{other}': expected git, svn, s3, minio, ipfs, ftp, ftps, or sftp"),
+    };
+
     let mut cfg = match (mode, protocol) {
-        ("vcs", "git") => {
+        (TransportMode::Vcs, TransportProtocol::Git) => {
             let url = url.ok_or_else(|| anyhow::anyhow!("--url is required for vcs git"))?;
             TransportConfig::vcs_git(name, &url)
         }
-        ("vcs", "svn") => {
+        (TransportMode::Vcs, TransportProtocol::Svn) => {
             let url = url.ok_or_else(|| anyhow::anyhow!("--url is required for vcs svn"))?;
             TransportConfig::vcs_svn(name, &url)
         }
-        ("raw", "git") => {
+        (TransportMode::Raw, TransportProtocol::Git) => {
             let url = url.ok_or_else(|| anyhow::anyhow!("--url is required for raw git"))?;
             TransportConfig::raw_git(name, &url)
         }
-        ("raw", "ipfs") => {
+        (TransportMode::Raw, TransportProtocol::Ipfs) => {
             let ep = endpoint.unwrap_or_else(|| "http://127.0.0.1:5001".to_string());
             TransportConfig::raw_ipfs(name, &ep)
         }
-        ("raw", "s3") | ("raw", "minio") => {
+        (TransportMode::Raw, TransportProtocol::S3) => {
             let ep = endpoint.ok_or_else(|| anyhow::anyhow!("--endpoint is required for s3"))?;
             let bucket = bucket.ok_or_else(|| anyhow::anyhow!("--bucket is required for s3"))?;
             TransportConfig::raw_s3(name, &ep, &bucket)
         }
-        ("raw", "ftp") | ("raw", "ftps") => {
+        (TransportMode::Raw, TransportProtocol::Minio) => {
+            let ep = endpoint.ok_or_else(|| anyhow::anyhow!("--endpoint is required for minio"))?;
+            let bucket = bucket.ok_or_else(|| anyhow::anyhow!("--bucket is required for minio"))?;
+            TransportConfig::raw_minio(name, &ep, &bucket)
+        }
+        (TransportMode::Raw, TransportProtocol::Ftp) => {
             let ep = endpoint.ok_or_else(|| anyhow::anyhow!("--endpoint is required for ftp"))?;
             TransportConfig::raw_ftp(name, &ep)
         }
-        ("raw", "sftp") => {
+        (TransportMode::Raw, TransportProtocol::Ftps) => {
+            let ep = endpoint.ok_or_else(|| anyhow::anyhow!("--endpoint is required for ftps"))?;
+            TransportConfig::raw_ftps(name, &ep)
+        }
+        (TransportMode::Raw, TransportProtocol::Sftp) => {
             let ep = endpoint.ok_or_else(|| anyhow::anyhow!("--endpoint is required for sftp"))?;
             TransportConfig::raw_sftp(name, &ep)
         }
-        (m, p) => anyhow::bail!("unsupported transport: mode={m}, type={p}"),
+        (m, p) => anyhow::bail!("unsupported combination: mode={m}, type={p}"),
     };
 
     if let Some(gw) = gateway { cfg.gateway = Some(gw); }
@@ -65,11 +94,10 @@ pub fn run_add(
     if port > 0 { cfg.port = port; }
     cfg.use_tls = use_tls;
 
-    let desc = match (cfg.mode.as_str(), cfg.protocol.as_str()) {
-        ("vcs", _) => format!("vcs {} -> {}", cfg.protocol, cfg.url.as_deref().unwrap_or("?")),
-        ("raw", "git") => format!("raw git backup -> {}", cfg.url.as_deref().unwrap_or("?")),
-        ("raw", _) => format!("raw {} -> {}", cfg.protocol, cfg.effective_endpoint()),
-        _ => format!("{} {}", cfg.mode, cfg.protocol),
+    let desc = match (&cfg.mode, &cfg.protocol) {
+        (TransportMode::Vcs, _) => format!("vcs {} -> {}", cfg.protocol, cfg.url.as_deref().unwrap_or("?")),
+        (TransportMode::Raw, TransportProtocol::Git) => format!("raw git backup -> {}", cfg.url.as_deref().unwrap_or("?")),
+        (TransportMode::Raw, _) => format!("raw {} -> {}", cfg.protocol, cfg.effective_endpoint()),
     };
     println!("Added transport '{}' ({})", cfg.name, desc);
 
@@ -100,15 +128,15 @@ pub fn run_list(repo: &Repository) -> Result<()> {
     }
 
     for t in &repo.config.transports {
-        let target = if t.mode == "vcs" {
+        let target = if t.mode == TransportMode::Vcs {
             t.url.as_deref().unwrap_or("?")
         } else {
             &t.effective_endpoint()
         };
-        let extra = match t.protocol.as_str() {
-            "ipfs" => format!(", pin={}", if t.auto_pin { "on" } else { "off" }),
-            "s3" => format!(", bucket={}", t.bucket.as_deref().unwrap_or("?")),
-            "ftp" | "sftp" => format!(", user={}", t.username.as_deref().unwrap_or("?")),
+        let extra = match t.protocol {
+            TransportProtocol::Ipfs => format!(", pin={}", if t.auto_pin { "on" } else { "off" }),
+            TransportProtocol::S3 | TransportProtocol::Minio => format!(", bucket={}", t.bucket.as_deref().unwrap_or("?")),
+            TransportProtocol::Ftp | TransportProtocol::Ftps | TransportProtocol::Sftp => format!(", user={}", t.username.as_deref().unwrap_or("?")),
             _ => String::new(),
         };
         println!("{}\t{} ({}/{}){}", t.name, target, t.mode, t.protocol, extra);

@@ -442,7 +442,7 @@ mod tests {
     #[test]
     fn test_ipfs_config_default() {
         let config = crate::config::TransportConfig::raw_ipfs("test", "http://127.0.0.1:5001");
-        assert_eq!(config.protocol, "ipfs");
+        assert_eq!(config.protocol, crate::config::TransportProtocol::Ipfs);
         assert_eq!(config.effective_endpoint(), "http://127.0.0.1:5001");
         assert!(!config.auto_pin);
     }
