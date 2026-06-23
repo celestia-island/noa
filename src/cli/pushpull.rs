@@ -1,25 +1,84 @@
 use anyhow::Result;
+use std::sync::Arc;
 
 use crate::repo::Repository;
 
 fn validate_svn_url(url: &str) -> Result<()> {
-    if url.is_empty() {
-        anyhow::bail!("empty SVN URL");
-    }
-    if url.contains('\0') || url.contains('\n') || url.contains('\r') {
-        anyhow::bail!("SVN URL contains control characters");
-    }
-    if url.starts_with('-') {
-        anyhow::bail!("SVN URL must not start with '-'");
-    }
-    if !url.starts_with("http://")
-        && !url.starts_with("https://")
-        && !url.starts_with("svn://")
-        && !url.starts_with("svn+ssh://")
-        && !url.starts_with("file://")
-    {
+    if url.is_empty() { anyhow::bail!("empty SVN URL"); }
+    if url.contains('\0') || url.contains('\n') || url.contains('\r') { anyhow::bail!("SVN URL contains control characters"); }
+    if url.starts_with('-') { anyhow::bail!("SVN URL must not start with '-'"); }
+    if !url.starts_with("http://") && !url.starts_with("https://") && !url.starts_with("svn://") && !url.starts_with("svn+ssh://") && !url.starts_with("file://") {
         anyhow::bail!("invalid SVN URL format: {url}");
     }
+    Ok(())
+}
+
+fn inject_git_creds(url: &str) -> String {
+    if url.starts_with("https://") || url.starts_with("http://") {
+        if let Ok(user) = std::env::var("NOA_GIT_USER") {
+            if let Ok(pass) = std::env::var("NOA_GIT_PASS") {
+                let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")).unwrap_or(url);
+                return format!("https://{user}:{pass}@{rest}");
+            }
+        }
+    }
+    url.to_string()
+}
+
+pub async fn run_push(remote_name: &str) -> Result<()> {
+    let root = Repository::find(std::path::Path::new("."))?;
+    let repo = Repository::open(&root)?;
+    let remote = repo.config.get_remote(remote_name)
+        .ok_or_else(|| anyhow::anyhow!("remote '{remote_name}' not found"))?.clone();
+    let db = Arc::clone(&repo.db);
+    let remote_url = remote.url.clone();
+    let remote_name_owned = remote_name.to_string();
+    drop(repo);
+    crate::git::export_noa_to_git(&root, db).await?;
+    crate::git::export::validate_git_url(&remote_url)?;
+    let root_push = root.clone();
+    let url_for_push = inject_git_creds(&remote_url);
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("git").args(["push", &url_for_push])
+            .current_dir(&root_push).env("GIT_TERMINAL_PROMPT", "0").output()
+    }).await??;
+    if output.status.success() { println!("Pushed to {remote_name_owned} ({remote_url})"); }
+    else { let stderr = String::from_utf8_lossy(&output.stderr); anyhow::bail!("git push failed: {}", stderr.trim()); }
+    Ok(())
+}
+
+pub async fn run_pull(remote_name: &str) -> Result<()> {
+    let root = Repository::find(std::path::Path::new("."))?;
+    let repo = Repository::open(&root)?;
+    let remote = repo.config.get_remote(remote_name)
+        .ok_or_else(|| anyhow::anyhow!("remote '{remote_name}' not found"))?.clone();
+    crate::git::export::validate_git_url(&remote.url)?;
+    let root_pull = root.clone();
+    let url_for_pull = inject_git_creds(&remote.url);
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("git").args(["pull", &url_for_pull])
+            .current_dir(&root_pull).env("GIT_TERMINAL_PROMPT", "0").output()
+    }).await??;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git pull failed: {}", stderr.trim());
+    }
+    let db = Arc::clone(&repo.db);
+    let head_ws = repo.read_head()?;
+    let ws_mgr_before = crate::workspace::WorkspaceManager::new(db.clone())?;
+    let before_head = ws_mgr_before.get(&head_ws).await?
+        .map_or_else(crate::snapshot::empty_snapshot_id, |ws| ws.head.clone());
+    drop(repo);
+    crate::git::import::import_git_to_noa(&root, db.clone()).await?;
+    let ref_store = crate::refs::RedbRefStore::new(db.clone())?;
+    let head_ref = crate::refs::RefStore::get(&ref_store, "HEAD").await.ok().flatten();
+    if let Some(snap_id) = head_ref {
+        if snap_id != before_head {
+            let ws_mgr = crate::workspace::WorkspaceManager::new(db)?;
+            let _ = ws_mgr.update_head(&head_ws, &snap_id).await;
+            println!("Pulled from {remote_name} and re-imported");
+        } else { println!("Already up to date."); }
+    } else { println!("Pulled from {remote_name} (no new changes)"); }
     Ok(())
 }
 
@@ -27,19 +86,14 @@ pub async fn run_fetch(target_name: &str) -> Result<()> {
     let root = Repository::find(std::path::Path::new("."))?;
     let repo = Repository::open(&root)?;
 
-    let transport = repo
+    let remote = repo
         .config
-        .get_transport(target_name)
-        .ok_or_else(|| anyhow::anyhow!("transport '{target_name}' not found"))?
+        .get_remote(target_name)
+        .ok_or_else(|| anyhow::anyhow!("remote '{target_name}' not found"))?
         .clone();
 
-    let url = transport
-        .url
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("transport has no URL"))?;
-
     let backend = crate::git::GitBackend::new();
-    let refs = crate::remote::RemoteBackend::list_refs(&backend, url).await?;
+    let refs = crate::remote::RemoteBackend::list_refs(&backend, &remote.url).await?;
 
     if refs.is_empty() {
         println!("No remote refs found.");
@@ -143,9 +197,12 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
         anyhow::bail!("git commit failed");
     }
 
-    let transport_config = crate::config::TransportConfig::vcs_svn("svn-origin", url);
-    let repo = crate::repo::Repository::init_with_remotes(&target, vec![transport_config])?;
-
+    let remote_config = crate::config::RemoteConfig {
+        name: "svn-origin".to_string(),
+        url: url.to_string(),
+        protocol: crate::config::RemoteProtocol::Svn,
+    };
+    let repo = crate::repo::Repository::init_with_remotes(&target, vec![remote_config])?;
     let db = std::sync::Arc::clone(&repo.db);
     crate::git::import::import_git_to_noa(&target, std::sync::Arc::clone(&db)).await?;
 

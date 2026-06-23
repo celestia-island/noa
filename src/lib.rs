@@ -14,7 +14,6 @@ pub mod repo;
 pub mod server;
 pub mod snapshot;
 pub mod sync;
-pub mod transport;
 pub mod tui;
 pub mod workspace;
 

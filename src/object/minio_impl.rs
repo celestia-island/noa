@@ -99,12 +99,12 @@ impl MinioObjectStore {
         Ok(())
     }
 
-    pub async fn from_transport_config(config: &crate::config::TransportConfig) -> Result<Self> {
+    pub async fn from_transport_config(config: &crate::config::StorageConfig) -> Result<Self> {
         let endpoint = config.effective_endpoint();
         let bucket = config
             .bucket
             .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("transport '{}' is missing 'bucket'", config.name))?;
+            .ok_or_else(|| anyhow::anyhow!("storage '{}' is missing 'bucket'", config.name))?;
         let access_key = config
             .access_key
             .as_deref()
