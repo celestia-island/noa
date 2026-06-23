@@ -66,13 +66,17 @@ pub async fn push_vcs(repo: &Repository, transport: &TransportConfig) -> Result<
     crate::git::export_noa_to_git(&root, db).await?;
 
     crate::git::export::validate_git_url(url)?;
-    let url_owned = url.to_string();
+    let creds = Credentials::from_config(transport);
+    let authed_url = creds.for_git_url(url);
+    let env = creds.git_env();
     let root_push = root.clone();
     let output = tokio::task::spawn_blocking(move || {
-        std::process::Command::new("git")
-            .args(["push", &url_owned])
-            .current_dir(&root_push)
-            .output()
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(["push", &authed_url]).current_dir(&root_push);
+        for (k, v) in &env {
+            cmd.env(k, v);
+        }
+        cmd.output()
     })
     .await??;
 
@@ -98,13 +102,17 @@ pub async fn pull_vcs(repo: &mut Repository, transport: &TransportConfig) -> Res
         .ok_or_else(|| anyhow::anyhow!("VCS transport requires 'url'"))?;
 
     crate::git::export::validate_git_url(url)?;
+    let creds = Credentials::from_config(transport);
+    let authed_url = creds.for_git_url(url);
+    let env = creds.git_env();
     let root = repo.root.clone();
-    let url_owned = url.to_string();
     let output = tokio::task::spawn_blocking(move || {
-        std::process::Command::new("git")
-            .args(["pull", &url_owned])
-            .current_dir(&root)
-            .output()
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(["pull", &authed_url]).current_dir(&root);
+        for (k, v) in &env {
+            cmd.env(k, v);
+        }
+        cmd.output()
     })
     .await??;
 
@@ -234,8 +242,10 @@ async fn push_tree_recursive(
     local: &crate::object::RedbObjectStore,
     tree_id: &TreeId,
 ) -> Result<()> {
-    if remote.has_tree(tree_id).await.unwrap_or(false) {
-        return Ok(());
+    match remote.has_tree(tree_id).await {
+        Ok(true) => return Ok(()),
+        Ok(false) => {}
+        Err(e) => tracing::warn!("has_tree check failed for {tree_id}: {e}"),
     }
     let entries = local.get_tree(tree_id).await?;
     remote.put_tree(&entries).await?;
@@ -243,11 +253,14 @@ async fn push_tree_recursive(
         match entry.kind {
             crate::object::EntryKind::Blob => {
                 let blob_id = BlobId(entry.id.clone());
-                if !remote.has_blob(&blob_id).await.unwrap_or(false) {
-                    if let Ok(data) = local.get_blob(&blob_id).await {
-                        if let Err(e) = remote.put_blob(&data).await {
-                            tracing::warn!("put_blob failed for {}: {e}", entry.id);
-                        }
+                match remote.has_blob(&blob_id).await {
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(e) => tracing::warn!("has_blob check failed for {}: {e}", entry.id),
+                }
+                if let Ok(data) = local.get_blob(&blob_id).await {
+                    if let Err(e) = remote.put_blob(&data).await {
+                        tracing::warn!("put_blob failed for {}: {e}", entry.id);
                     }
                 }
             }

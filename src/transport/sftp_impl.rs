@@ -51,6 +51,25 @@ impl SftpObjectStore {
         format!("{}@{}", self.username, self.host)
     }
 
+    fn sshpass_prefix(&self) -> Vec<String> {
+        if let Some(ref pass) = self.password {
+            vec!["sshpass".to_string(), "-p".to_string(), pass.clone()]
+        } else {
+            vec![]
+        }
+    }
+
+    fn is_sshpass_available(&self) -> bool {
+        self.password.is_some()
+            && std::process::Command::new("sshpass")
+                .arg("-V")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+    }
+
     fn blob_path(id: &BlobId) -> String {
         format!("blobs/{}", id.0)
     }
@@ -64,13 +83,23 @@ impl SftpObjectStore {
     }
 
     async fn ssh_exec(&self, remote_cmd: &str) -> Result<std::process::Output> {
-        let port_flag = format!("-P{}", self.port);
         let addr = self.remote_addr();
         let cmd = remote_cmd.to_string();
+        let use_sshpass = self.is_sshpass_available();
+        let port = self.port;
+        let sshpass_prefix = self.sshpass_prefix();
         tokio::task::spawn_blocking(move || {
-            std::process::Command::new("ssh")
-                .args([&port_flag, &addr, &cmd])
-                .output()
+            let mut command = if use_sshpass {
+                let mut c = std::process::Command::new("sshpass");
+                c.args(&sshpass_prefix).arg("ssh");
+                c
+            } else {
+                std::process::Command::new("ssh")
+            };
+            if port != 22 {
+                command.arg(format!("-p{port}"));
+            }
+            command.arg(&addr).arg(&cmd).output()
         })
         .await
         .map_err(|e| Self::err("ssh spawn", e))?
@@ -79,21 +108,35 @@ impl SftpObjectStore {
 
     async fn scp_upload(&self, data: Vec<u8>, remote_path: &str) -> Result<()> {
         let addr = self.remote_addr();
-        let port = format!("-P{}", self.port);
         let remote_full = format!("{addr}:{remote_path}");
         let remote_mkdir = format!("mkdir -p $(dirname {remote_path})");
         let remote_full_clone = remote_full.clone();
-        let port_clone = port.clone();
+        let use_sshpass = self.is_sshpass_available();
+        let port = self.port;
+        let sshpass_prefix = self.sshpass_prefix();
 
         let _ = self.ssh_exec(&remote_mkdir).await;
 
         tokio::task::spawn_blocking(move || {
-            let mut child = std::process::Command::new("scp")
-                .args([&port_clone, "-", &remote_full_clone])
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()?;
+            let mut args = Vec::new();
+            if port != 22 {
+                args.push(format!("-P{port}"));
+            }
+            args.extend_from_slice(&["-".to_string(), remote_full_clone]);
+
+            let mut child = if use_sshpass {
+                let mut c = std::process::Command::new("sshpass");
+                c.args(&sshpass_prefix).arg("scp").args(&args);
+                c
+            } else {
+                let mut c = std::process::Command::new("scp");
+                c.args(&args);
+                c
+            }
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
             if let Some(mut stdin) = child.stdin.take() {
                 use std::io::Write;
                 let _ = stdin.write_all(&data);
@@ -108,17 +151,31 @@ impl SftpObjectStore {
 
     async fn scp_download(&self, remote_path: &str) -> Result<Vec<u8>> {
         let addr = self.remote_addr();
-        let port = format!("-P{}", self.port);
         let remote_full = format!("{addr}:{remote_path}");
-        let port_clone = port.clone();
         let remote_full_clone = remote_full.clone();
+        let use_sshpass = self.is_sshpass_available();
+        let port = self.port;
+        let sshpass_prefix = self.sshpass_prefix();
 
         let output = tokio::task::spawn_blocking(move || {
-            std::process::Command::new("scp")
-                .args([&port_clone, &remote_full_clone, "-"])
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .output()
+            let mut args = Vec::new();
+            if port != 22 {
+                args.push(format!("-P{port}"));
+            }
+            args.extend_from_slice(&[remote_full_clone, "-".to_string()]);
+
+            if use_sshpass {
+                let mut c = std::process::Command::new("sshpass");
+                c.args(&sshpass_prefix).arg("scp").args(&args);
+                c
+            } else {
+                let mut c = std::process::Command::new("scp");
+                c.args(&args);
+                c
+            }
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
         })
         .await
         .map_err(|e| Self::err("scp spawn", e))?

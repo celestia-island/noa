@@ -154,9 +154,7 @@ impl ObjectStore for FtpObjectStore {
                 stream
                     .read_to_end(&mut buf)
                     .await
-                    .map_err(|e| NoaError::IpfsError {
-                        message: format!("FTP read stream: {e}"),
-                    })?;
+                    .map_err(|e| remote_err("ftp", format!("read stream: {e}")))?;
                 ftp.finalize_retr_stream(stream)
                     .await
                     .map_err(|e| Self::ftp_err("finalize_retr", e))?;
@@ -217,9 +215,7 @@ impl ObjectStore for FtpObjectStore {
                 stream
                     .read_to_end(&mut buf)
                     .await
-                    .map_err(|e| NoaError::IpfsError {
-                        message: format!("FTP read stream: {e}"),
-                    })?;
+                    .map_err(|e| remote_err("ftp", format!("read stream: {e}")))?;
                 ftp.finalize_retr_stream(stream)
                     .await
                     .map_err(|e| Self::ftp_err("finalize_retr", e))?;
