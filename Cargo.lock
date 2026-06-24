@@ -5283,6 +5283,22 @@ name = "hifumi"
 version = "0.1.1"
 
 [[patch.unused]]
+name = "aoba"
+version = "0.1.2"
+
+[[patch.unused]]
+name = "kirino"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "arona"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "evernight"
+version = "0.1.0"
+
+[[patch.unused]]
 name = "hikari-animation"
 version = "0.2.7"
 
@@ -5301,19 +5317,3 @@ version = "0.2.7"
 [[patch.unused]]
 name = "hikari-theme"
 version = "0.2.7"
-
-[[patch.unused]]
-name = "arona"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "aoba"
-version = "0.1.2"
-
-[[patch.unused]]
-name = "kirino"
-version = "0.5.0"
-
-[[patch.unused]]
-name = "evernight"
-version = "0.1.0"
