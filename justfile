@@ -16,7 +16,22 @@ python_cmd := if os_family() == "windows" {
 default:
     @just --list
 
-import "../just-common/build.just"
+# ── build flag parser (inlined; repos are self-contained, no shared just-common) ──
+#   always-pre — runs before every build (pass ":" for nothing)
+#   --dev      — debug build instead of release
+#   --clean    — `cargo clean` before anything else
+_build always_pre dcmd rcmd *FLAGS='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    profile=release
+    for a in {{FLAGS}}; do
+      case "$a" in
+        --dev)   profile=dev ;;
+        --clean) cargo clean ;;
+      esac
+    done
+    [ "X{{always_pre}}" != "X:" ] && {{always_pre}}
+    if [ "$profile" = dev ]; then {{dcmd}}; else {{rcmd}}; fi
 
 # Initialization
 
