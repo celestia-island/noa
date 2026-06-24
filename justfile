@@ -16,6 +16,8 @@ python_cmd := if os_family() == "windows" {
 default:
     @just --list
 
+import "../just-common/build.just"
+
 # Initialization
 
 init:
@@ -27,16 +29,7 @@ init:
 
 # Build noa. Release by default; `--dev` for debug, `--clean` to clean first.
 build *FLAGS='':
-    #!/usr/bin/env bash
-    set -euo pipefail
-    profile=release
-    for a in {{FLAGS}}; do
-      case "$a" in
-        --dev)   profile=dev ;;
-        --clean) cargo clean ;;
-      esac
-    done
-    if [ "$profile" = dev ]; then cargo build; else cargo build --release; fi
+    just _build ":" "cargo build" "cargo build --release" {{FLAGS}}
 
 check:
     cargo check --workspace
