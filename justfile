@@ -25,11 +25,18 @@ init:
 
 # Build
 
-build:
-    cargo build --release
-
-build-dev:
-    cargo build
+# Build noa. Release by default; `--dev` for debug, `--clean` to clean first.
+build *FLAGS='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    profile=release
+    for a in {{FLAGS}}; do
+      case "$a" in
+        --dev)   profile=dev ;;
+        --clean) cargo clean ;;
+      esac
+    done
+    if [ "$profile" = dev ]; then cargo build; else cargo build --release; fi
 
 check:
     cargo check --workspace
