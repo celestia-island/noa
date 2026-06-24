@@ -40,8 +40,9 @@ clean:
 # Format & Lint
 
 fmt:
-    {{python_cmd}} scripts/utils/format_markdown.py .
-    {{python_cmd}} scripts/utils/enforce_use_groups.py
+    cargo clippy --workspace --lib --bins -- -D warnings
+    {{ python_cmd }} scripts/utils/format_markdown.py .
+    {{ python_cmd }} scripts/utils/enforce_use_groups.py
     cargo fmt --all
 
 fmt-check:
