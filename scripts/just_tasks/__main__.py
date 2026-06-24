@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts" / "utils"))
 try:
     import logger as _log
-    _log = _log.Logger(source="noa", module="just_tasks", source_width=10, module_width=12)
+    _log = _log.Logger(source="noa", module="just_tasks")
 except ImportError:
     _log = None
 
