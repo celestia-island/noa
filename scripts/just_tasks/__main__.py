@@ -6,6 +6,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 
+sys.path.insert(0, str(ROOT / "scripts" / "utils"))
+try:
+    import logger as _log
+    _log = _log.Logger(source="noa", module="just_tasks", source_width=10, module_width=12)
+except ImportError:
+    _log = None
+
 
 def run_command(
     cmd: list[str],
@@ -33,19 +40,31 @@ def configure_stdout() -> None:
 
 
 def log_ok(msg: str) -> None:
-    print(f"\033[32m{msg}\033[0m", flush=True)
+    if _log:
+        _log.ok(msg)
+    else:
+        print(f"\033[32m{msg}\033[0m", flush=True)
 
 
 def log_warn(msg: str) -> None:
-    print(f"\033[33m{msg}\033[0m", flush=True)
+    if _log:
+        _log.warn(msg)
+    else:
+        print(f"\033[33m{msg}\033[0m", flush=True)
 
 
 def log_info(msg: str) -> None:
-    print(f"\033[36m{msg}\033[0m", flush=True)
+    if _log:
+        _log.info(msg)
+    else:
+        print(f"\033[36m{msg}\033[0m", flush=True)
 
 
 def log_blank() -> None:
-    print(flush=True)
+    if _log:
+        _log.blank()
+    else:
+        print(flush=True)
 
 
 def main() -> None:
