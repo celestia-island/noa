@@ -7,7 +7,6 @@ pub mod ignore;
 pub mod log;
 pub mod merge;
 pub mod object;
-pub mod precheck;
 pub mod refs;
 pub mod remote;
 pub mod repo;

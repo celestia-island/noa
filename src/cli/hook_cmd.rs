@@ -1,10 +1,7 @@
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 
-use crate::precheck::{self, commit_source::Acquisition};
-
 const COMMIT_MSG_HOOK: &str = include_str!("../../assets/commit-msg.sh");
-const PRE_COMMIT_HOOK: &str = include_str!("../../assets/pre-commit.sh");
 
 /// Sentinel string present in every noa-managed hook script.
 /// Used to detect whether an existing hook file is safe to overwrite.
@@ -16,8 +13,13 @@ pub struct InstallArgs {
     pub noa_bin: Option<String>,
 }
 
-/// Install all noa-managed git hooks (currently: `commit-msg` and `pre-commit`)
-/// into the target repository's `.git/hooks/` directory.
+/// Install noa-managed git hooks into the target repository's `.git/hooks/`
+/// directory. Currently this is just `commit-msg` (AI co-author trailers).
+///
+/// Pre-commit build/secret validation used to live here but has moved to
+/// entelecheia's review agent — it is not noa's responsibility. The
+/// `noa hook pre-commit` subcommand is retained as a no-op so hooks installed
+/// by older noa versions don't break (they just do nothing).
 pub fn run(args: InstallArgs) -> Result<()> {
     let repo = if args.repo.is_absolute() {
         args.repo.clone()
@@ -51,13 +53,6 @@ pub fn run(args: InstallArgs) -> Result<()> {
         &hooks_dir,
         "commit-msg",
         COMMIT_MSG_HOOK,
-        &resolved,
-        args.force,
-    )?;
-    install_hook(
-        &hooks_dir,
-        "pre-commit",
-        PRE_COMMIT_HOOK,
         &resolved,
         args.force,
     )?;
@@ -105,58 +100,19 @@ fn install_hook(
     Ok(())
 }
 
-/// Entry point for `noa hook pre-commit`. Runs the pre-commit gate:
-/// secret scan + (optionally) `cargo check`. Invoked by the installed
-/// `.git/hooks/pre-commit` shell wrapper. Exits non-zero (via `Result`) on
-/// any finding, which aborts the commit.
+/// Entry point for `noa hook pre-commit`.
 ///
-/// Staged commit data is acquired through [`precheck::commit_source`], which
-/// tries the evernight IPC daemon (host-side git, for agent/container
-/// contexts) and falls back to local git. If **no** source is reachable the
-/// gate silently passes (exit 0): a data-source outage must never block a
-/// commit. Real findings, once data is obtained, still abort.
+/// Pre-commit build/secret validation has moved to entelecheia's review agent
+/// and is no longer noa's responsibility. This subcommand is retained as a
+/// **no-op** so `.git/hooks/pre-commit` scripts installed by older noa versions
+/// keep working (they call into here, do nothing, and exit 0) instead of
+/// breaking commits with an unknown-subcommand error. It is no longer
+/// installed by `noa hook install`.
 pub fn run_pre_commit() -> Result<()> {
-    if precheck::skip_requested() {
-        eprintln!("[noa pre-commit] NOA_SKIP_HOOKS set; skipping checks.");
-        return Ok(());
-    }
-
-    let entries = match precheck::commit_source::acquire_staged() {
-        Acquisition::Ok(files) => files,
-        Acquisition::NoSource => {
-            tracing::debug!(
-                "no commit-data source reachable (evernight down, no local git); \
-                 silently passing pre-commit gate"
-            );
-            return Ok(());
-        }
-    };
-
-    let hits = precheck::scan_entries(&entries);
-    if !hits.is_empty() {
-        for hit in &hits {
-            eprintln!(
-                "[noa pre-commit] potential {kind} in {path}:{line}",
-                kind = hit.kind,
-                path = hit.path,
-                line = hit.line
-            );
-        }
-        bail!(
-            "secret scan found {} potential leak(s) in staged files; \
-             aborting commit. Set NOA_SKIP_HOOKS=1 to bypass.",
-            hits.len()
-        );
-    }
-
-    if precheck::cargo_check_skip_requested() {
-        tracing::debug!(
-            "NOA_SKIP_CARGO_CHECK set; skipping cargo check gate (secret scan already ran)"
-        );
-    } else {
-        precheck::run_cargo_check()?;
-    }
-
+    eprintln!(
+        "[noa pre-commit] pre-commit checks have moved to the entelecheia review \
+         agent; this hook is now a no-op and can be removed from .git/hooks."
+    );
     Ok(())
 }
 
