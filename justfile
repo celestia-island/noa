@@ -15,6 +15,19 @@ python_cmd := if os_family() == "windows" {
 default:
     @just --list
 
+_build always_pre dcmd rcmd *FLAGS='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    profile=release
+    for a in {{FLAGS}}; do
+      case "$a" in
+        --dev)   profile=dev ;;
+        --clean) cargo clean ;;
+      esac
+    done
+    [ "X{{always_pre}}" != "X:" ] && {{always_pre}}
+    if [ "$profile" = dev ]; then {{dcmd}}; else {{rcmd}}; fi
+
 # Initialization
 
 init:
@@ -24,11 +37,9 @@ init:
 
 # Build
 
-build:
-    cargo build --release
-
-build-dev:
-    cargo build
+# Build noa. Release by default; `--dev` for debug, `--clean` to clean first.
+build *FLAGS='':
+    just _build ":" "cargo build" "cargo build --release" {{FLAGS}}
 
 check:
     cargo check --workspace
@@ -39,8 +50,9 @@ clean:
 # Format & Lint
 
 fmt:
-    {{python_cmd}} scripts/utils/format_markdown.py .
-    {{python_cmd}} scripts/utils/enforce_use_groups.py
+    cargo clippy --workspace --lib --bins -- -D warnings
+    {{ python_cmd }} scripts/utils/format_markdown.py .
+    {{ python_cmd }} scripts/utils/enforce_use_groups.py
     cargo fmt --all
 
 fmt-check:

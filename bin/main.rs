@@ -87,12 +87,23 @@ enum Commands {
         #[arg(short, long)]
         path: Option<String>,
     },
+    CoAuthor {
+        #[command(subcommand)]
+        cmd: CoauthorSub,
+    },
+    Hook {
+        #[command(subcommand)]
+        cmd: HookSub,
+    },
     Sync {
         #[arg(short, long, default_value = "/tmp/noa-sync.sock")]
         socket: String,
-        /// Path to the workspace root directory (default: current directory)
         #[arg(short, long, default_value = ".")]
         path: String,
+    },
+    Storage {
+        #[command(subcommand)]
+        cmd: StorageSub,
     },
 }
 
@@ -110,7 +121,6 @@ enum SnapshotSub {
         b: String,
     },
 }
-
 #[derive(Subcommand)]
 enum WorkspaceSub {
     Create {
@@ -134,12 +144,94 @@ enum WorkspaceSub {
         strategy: String,
     },
 }
-
 #[derive(Subcommand)]
 enum RemoteSub {
     Add { name: String, url: String },
     Remove { name: String },
     List,
+}
+#[derive(Subcommand)]
+enum CoauthorSub {
+    Resolve {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        #[arg(long)]
+        chat_log_dir: Option<PathBuf>,
+        #[arg(long)]
+        aporia_config: Option<PathBuf>,
+        #[arg(long, default_value_t = 0)]
+        lookback_secs: u64,
+    },
+}
+#[derive(Subcommand)]
+enum HookSub {
+    Install {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        #[arg(long, default_value_t = false)]
+        force: bool,
+        #[arg(long)]
+        noa_bin: Option<String>,
+    },
+    PreCommit,
+}
+#[derive(Subcommand)]
+enum StorageSub {
+    Add {
+        name: String,
+        #[arg(short, long)]
+        r#type: String,
+        #[arg(long)]
+        endpoint: Option<String>,
+        #[arg(long)]
+        gateway: Option<String>,
+        #[arg(long)]
+        auth_token: Option<String>,
+        #[arg(long)]
+        auto_pin: bool,
+        #[arg(long)]
+        bucket: Option<String>,
+        #[arg(long)]
+        access_key: Option<String>,
+        #[arg(long)]
+        secret_key: Option<String>,
+        #[arg(long)]
+        region: Option<String>,
+        #[arg(long)]
+        username: Option<String>,
+        #[arg(long)]
+        password: Option<String>,
+        #[arg(long)]
+        port: u16,
+        #[arg(long)]
+        tls: bool,
+    },
+    Remove {
+        name: String,
+    },
+    List,
+    Status {
+        name: Option<String>,
+    },
+    Push {
+        #[arg(long)]
+        target: Option<String>,
+        #[arg(long)]
+        snapshot: Option<String>,
+        #[arg(short, long)]
+        workspace: Option<String>,
+        #[arg(long)]
+        pin: bool,
+    },
+    Fetch {
+        target: String,
+        hash_or_cid: String,
+    },
+}
+
+fn find_repo() -> anyhow::Result<libnoa::repo::Repository> {
+    let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
+    libnoa::repo::Repository::open(&root)
 }
 
 #[tokio::main]
@@ -149,8 +241,7 @@ async fn main() -> anyhow::Result<()> {
 
     match app.command {
         None => {
-            let mut cmd = App::command();
-            cmd.print_help()?;
+            App::command().print_help()?;
         }
         Some(Commands::Init {
             path,
@@ -163,17 +254,14 @@ async fn main() -> anyhow::Result<()> {
                 no_git,
             })?;
         }
-        Some(Commands::Status) => {
-            cli::status::run().await?;
-        }
+        Some(Commands::Status) => cli::status::run().await?,
         Some(Commands::Log {
             workspace,
             limit,
             tui,
         }) => {
             if tui {
-                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
-                let repo = libnoa::repo::Repository::open(&root)?;
+                let repo = find_repo()?;
                 let snap_store = repo.snapshot_store()?;
                 let snapshots = snap_store.list_all().await?;
                 let current = repo.read_head()?;
@@ -187,35 +275,29 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Snapshot { cmd }) => match cmd {
             SnapshotSub::Create { message, author } => {
-                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
-                let repo = libnoa::repo::Repository::open(&root)?;
+                let repo = find_repo()?;
                 cli::snapshot_cmd::run_create(&repo, &message, &author).await?;
             }
             SnapshotSub::List => {
-                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
-                let repo = libnoa::repo::Repository::open(&root)?;
+                let repo = find_repo()?;
                 cli::snapshot_cmd::run_list(&repo).await?;
             }
             SnapshotSub::Diff { a, b } => {
-                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
-                let repo = libnoa::repo::Repository::open(&root)?;
+                let repo = find_repo()?;
                 cli::snapshot_cmd::run_diff(&repo, &a, &b).await?;
             }
         },
         Some(Commands::Workspace { cmd }) => match cmd {
             WorkspaceSub::Create { name, agent } => {
-                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
-                let repo = libnoa::repo::Repository::open(&root)?;
+                let repo = find_repo()?;
                 cli::workspace_cmd::run_create(&repo, &name, agent.as_deref()).await?;
             }
             WorkspaceSub::Switch { name } => {
-                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
-                let repo = libnoa::repo::Repository::open(&root)?;
+                let repo = find_repo()?;
                 cli::workspace_cmd::run_switch(&repo, &name).await?;
             }
             WorkspaceSub::List { tui } => {
-                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
-                let repo = libnoa::repo::Repository::open(&root)?;
+                let repo = find_repo()?;
                 if tui {
                     let ws_mgr = repo.workspace_manager()?;
                     let branches = ws_mgr.list().await?;
@@ -231,30 +313,25 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             WorkspaceSub::Delete { name } => {
-                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
-                let repo = libnoa::repo::Repository::open(&root)?;
+                let repo = find_repo()?;
                 cli::workspace_cmd::run_delete(&repo, &name).await?;
             }
             WorkspaceSub::Merge { from, strategy } => {
-                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
-                let repo = libnoa::repo::Repository::open(&root)?;
+                let repo = find_repo()?;
                 cli::workspace_cmd::run_merge(&repo, &from, &strategy).await?;
             }
         },
         Some(Commands::Remote { cmd }) => match cmd {
             RemoteSub::Add { name, url } => {
-                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
-                let mut repo = libnoa::repo::Repository::open(&root)?;
+                let mut repo = find_repo()?;
                 cli::remote_cmd::run_add(&mut repo, &name, &url)?;
             }
             RemoteSub::Remove { name } => {
-                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
-                let mut repo = libnoa::repo::Repository::open(&root)?;
+                let mut repo = find_repo()?;
                 cli::remote_cmd::run_remove(&mut repo, &name)?;
             }
             RemoteSub::List => {
-                let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
-                let repo = libnoa::repo::Repository::open(&root)?;
+                let repo = find_repo()?;
                 cli::remote_cmd::run_list(&repo)?;
             }
         },
@@ -275,32 +352,121 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Some(Commands::Resolve { strategy, path }) => {
-            let root = libnoa::repo::Repository::find(std::path::Path::new("."))?;
-            let repo = libnoa::repo::Repository::open(&root)?;
+            let repo = find_repo()?;
             cli::resolve_cmd::run_resolve(&repo, &strategy, path.as_deref()).await?;
         }
+        Some(Commands::CoAuthor { cmd }) => match cmd {
+            CoauthorSub::Resolve {
+                repo,
+                chat_log_dir,
+                aporia_config,
+                lookback_secs,
+            } => {
+                cli::coauthor_cmd::run(cli::coauthor_cmd::ResolveArgs {
+                    repo,
+                    chat_log_dir,
+                    aporia_config,
+                    lookback_secs,
+                })?;
+            }
+        },
+        Some(Commands::Hook { cmd }) => match cmd {
+            HookSub::Install {
+                repo,
+                force,
+                noa_bin,
+            } => {
+                cli::hook_cmd::run(cli::hook_cmd::InstallArgs {
+                    repo,
+                    force,
+                    noa_bin,
+                })?;
+            }
+            HookSub::PreCommit => cli::hook_cmd::run_pre_commit()?,
+        },
         Some(Commands::Sync { socket, path }) => {
             let root = std::path::Path::new(&path)
                 .canonicalize()
-                .unwrap_or_else(|_| std::path::PathBuf::from(&path));
+                .unwrap_or_else(|_| PathBuf::from(&path));
             let ws_root = libnoa::repo::Repository::find(&root)?;
             let server =
                 libnoa::sync::SyncServer::new(std::path::Path::new(&socket), &ws_root, "default")?;
             server.listen().await?;
         }
+        Some(Commands::Storage { cmd }) => match cmd {
+            StorageSub::Add {
+                name,
+                r#type,
+                endpoint,
+                gateway,
+                auth_token,
+                auto_pin,
+                bucket,
+                access_key,
+                secret_key,
+                region,
+                username,
+                password,
+                port,
+                tls,
+            } => {
+                let mut repo = find_repo()?;
+                cli::storage_cmd::run_add(
+                    &mut repo,
+                    &name,
+                    &r#type,
+                    cli::storage_cmd::StorageAddOptions {
+                        endpoint,
+                        gateway,
+                        auth_token,
+                        auto_pin,
+                        bucket,
+                        access_key,
+                        secret_key,
+                        region,
+                        username,
+                        password,
+                        port,
+                        use_tls: tls,
+                    },
+                )?;
+            }
+            StorageSub::Remove { name } => {
+                let mut repo = find_repo()?;
+                cli::storage_cmd::run_remove(&mut repo, &name)?;
+            }
+            StorageSub::List => {
+                let repo = find_repo()?;
+                cli::storage_cmd::run_list(&repo)?;
+            }
+            StorageSub::Status { name } => {
+                let repo = find_repo()?;
+                cli::storage_cmd::run_status(&repo, name.as_deref()).await?;
+            }
+            StorageSub::Push {
+                target,
+                snapshot,
+                workspace,
+                pin,
+            } => {
+                let repo = find_repo()?;
+                cli::storage_cmd::run_push(
+                    &repo,
+                    target.as_deref(),
+                    snapshot.as_deref(),
+                    workspace.as_deref(),
+                    pin,
+                )
+                .await?;
+            }
+            StorageSub::Fetch {
+                target,
+                hash_or_cid,
+            } => {
+                let repo = find_repo()?;
+                cli::storage_cmd::run_fetch(&repo, &target, &hash_or_cid).await?;
+            }
+        },
     }
-
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_try_init_called_twice_does_not_panic() {
-        // Simulating what happens if `noa sync` is called in a long-running process
-        // where tracing_subscriber::fmt::init() could be called multiple times
-        let _ = tracing_subscriber::fmt().try_init();
-        let _ = tracing_subscriber::fmt().try_init();
-        // If we reach here without panic, the fix works
-    }
 }

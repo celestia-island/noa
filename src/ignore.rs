@@ -102,7 +102,8 @@ impl IgnoreMatcher {
                     Some(n) => n.to_string_lossy(),
                     None => continue,
                 };
-                if name == ".git" || name == ".noa" {                    continue;
+                if name == ".git" || name == ".noa" {
+                    continue;
                 }
                 let gi = path.join(".gitignore");
                 if gi.exists() {

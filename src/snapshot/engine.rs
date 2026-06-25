@@ -118,7 +118,14 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
 
         let timestamp = crate::now_micros();
 
-        let id = content_addressed_snapshot_id_with_ts(&tree_id.0, &parent_ids, workspace, author, message, timestamp);
+        let id = content_addressed_snapshot_id_with_ts(
+            &tree_id.0,
+            &parent_ids,
+            workspace,
+            author,
+            message,
+            timestamp,
+        );
 
         let snapshot = Snapshot {
             id,
@@ -364,7 +371,10 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                             let blob_id = match tokio::fs::read(&file_path).await {
                                 Ok(content) => self.object_store.put_blob(&content).await?.0,
                                 Err(e) => {
-                                    tracing::warn!("failed to read {}, keeping previous blob: {e}", path);
+                                    tracing::warn!(
+                                        "failed to read {}, keeping previous blob: {e}",
+                                        path
+                                    );
                                     log_blob_id.clone()
                                 }
                             };

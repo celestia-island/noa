@@ -1,11 +1,19 @@
+#[cfg(feature = "ftp")]
+pub mod ftp_impl;
+pub mod ipfs_impl;
 pub mod minio_impl;
 mod redb_impl;
+pub mod sftp_impl;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "ftp")]
+pub use ftp_impl::FtpObjectStore;
+pub use ipfs_impl::IpfsObjectStore;
 pub use minio_impl::MinioObjectStore;
 pub use redb_impl::RedbObjectStore;
+pub use sftp_impl::SftpObjectStore;
 use sha2::{Digest, Sha256};
 
 use crate::error::Result;
@@ -90,4 +98,36 @@ pub trait ObjectStore: Send + Sync {
     async fn put_tree(&self, entries: &TreeEntries) -> Result<TreeId>;
     async fn get_tree(&self, id: &TreeId) -> Result<TreeEntries>;
     async fn has_tree(&self, id: &TreeId) -> Result<bool>;
+}
+
+pub async fn create_remote_store(
+    config: &crate::config::StorageConfig,
+) -> Result<Box<dyn ObjectStore>> {
+    match config.backend_type {
+        crate::config::StorageProtocol::Ipfs => {
+            let ipfs_env = std::env::var("IPFS_API").ok();
+            let endpoint = config
+                .endpoint
+                .as_deref()
+                .or(ipfs_env.as_deref())
+                .unwrap_or("http://127.0.0.1:5001");
+            Ok(Box::new(IpfsObjectStore::new(
+                endpoint,
+                config.auth_token.clone(),
+            )))
+        }
+        crate::config::StorageProtocol::S3 | crate::config::StorageProtocol::Minio => {
+            let store = MinioObjectStore::from_transport_config(config).await?;
+            Ok(Box::new(store))
+        }
+        #[cfg(feature = "ftp")]
+        crate::config::StorageProtocol::Ftp | crate::config::StorageProtocol::Ftps => {
+            let store = FtpObjectStore::from_config(config)?;
+            Ok(Box::new(store))
+        }
+        crate::config::StorageProtocol::Sftp => {
+            let store = SftpObjectStore::from_config(config)?;
+            Ok(Box::new(store))
+        }
+    }
 }

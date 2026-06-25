@@ -3,7 +3,7 @@ use anyhow::Result;
 use crate::{
     log::AgentLog,
     merge::{extract_conflicts, ConflictResolution},
-    object::{EntryKind, ObjectStore, TreeEntries, TreeId, TreeEntry},
+    object::{EntryKind, ObjectStore, TreeEntries, TreeEntry, TreeId},
     repo::Repository,
     snapshot::{content_addressed_snapshot_id_with_ts, SnapshotStore},
 };
@@ -37,9 +37,7 @@ fn resolve_nested_entry<'a, O: ObjectStore + 'a>(
                     .iter()
                     .find(|e| e.name == first)
                     .map(|e| e.id.clone())
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("path '{}' not found in source tree", filter)
-                    })?;
+                    .ok_or_else(|| anyhow::anyhow!("path '{}' not found in source tree", filter))?;
                 target_entry.id = source_id;
                 return Ok(true);
             }
@@ -56,17 +54,10 @@ fn resolve_nested_entry<'a, O: ObjectStore + 'a>(
                         .unwrap_or_default(),
                 ))
                 .await?;
-            let mut target_sub = obj_store
-                .get_tree(&TreeId(target_entry.id.clone()))
-                .await?;
-            let found = resolve_nested_entry(
-                obj_store,
-                &mut target_sub.0,
-                &source_sub,
-                rest,
-                filter,
-            )
-            .await?;
+            let mut target_sub = obj_store.get_tree(&TreeId(target_entry.id.clone())).await?;
+            let found =
+                resolve_nested_entry(obj_store, &mut target_sub.0, &source_sub, rest, filter)
+                    .await?;
             if found {
                 let new_sub_id = obj_store.put_tree(&target_sub).await?;
                 target_entry.id = new_sub_id.0;

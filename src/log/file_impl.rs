@@ -1,12 +1,11 @@
 use async_trait::async_trait;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::{
     fs::{File, OpenOptions},
     io::{BufRead, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
-
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
 
 use super::{format, AgentLog, LogEntry};
 use crate::error::Result;
@@ -173,8 +172,12 @@ impl AgentLog for FileAgentLog {
             if !path.exists() {
                 return Ok(());
             }
-            let file = OpenOptions::new().read(true).open(&path)
-                .map_err(|e| anyhow::anyhow!("failed to open log for compaction ({}): {e}", path.display()))?;
+            let file = OpenOptions::new().read(true).open(&path).map_err(|e| {
+                anyhow::anyhow!(
+                    "failed to open log for compaction ({}): {e}",
+                    path.display()
+                )
+            })?;
             let reader = std::io::BufReader::new(file);
 
             let temp_path = compact_temp_path(&path);

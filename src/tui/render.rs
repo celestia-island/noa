@@ -379,7 +379,21 @@ mod tests {
         let backend = ratatui::backend::TestBackend::new(80, 24);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app)).unwrap();
-        assert!(!terminal.backend().buffer().content.is_empty());
+        // The previous `!content.is_empty()` assertion was a tautology —
+        // TestBackend pre-allocates w*h cells in `Buffer::empty`, so the Vec
+        // is always non-empty regardless of what `render` writes. Assert on
+        // real content instead.
+        let txt = buffer_text(terminal.backend().buffer());
+        assert!(
+            txt.contains("Log"),
+            "log-mode render must include the Log panel chrome, got: {}",
+            txt
+        );
+        assert!(
+            txt.contains("noa_s1") || txt.contains("noa_s2"),
+            "log-mode render must show at least one seeded snapshot id, got: {}",
+            txt
+        );
     }
 
     #[test]
@@ -388,7 +402,18 @@ mod tests {
         let backend = ratatui::backend::TestBackend::new(80, 24);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app)).unwrap();
-        assert!(!terminal.backend().buffer().content.is_empty());
+        // Same tautology fix as test_log_mode_80x24 above.
+        let txt = buffer_text(terminal.backend().buffer());
+        assert!(
+            txt.contains("Branches") || txt.contains("branch"),
+            "branches-mode render must include the Branches panel chrome, got: {}",
+            txt
+        );
+        assert!(
+            txt.contains("default") || txt.contains("feature"),
+            "branches-mode render must show at least one seeded workspace name, got: {}",
+            txt
+        );
     }
 
     #[test]
@@ -423,6 +448,12 @@ mod tests {
         assert_eq!(buf1, buf2);
     }
 
+    /// Collect all non-empty cell symbols from a TestBackend buffer into a
+    /// single `String` so we can assert on what was actually rendered.
+    fn buffer_text(buf: &ratatui::buffer::Buffer) -> String {
+        buf.content.iter().map(|c| c.symbol()).collect::<String>()
+    }
+
     #[test]
     fn test_empty_snapshots() {
         let mut app = make_log_app();
@@ -431,6 +462,27 @@ mod tests {
         let backend = ratatui::backend::TestBackend::new(80, 24);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app)).unwrap();
+
+        let txt = buffer_text(terminal.backend().buffer());
+        // The Log panel chrome is always present, even with zero snapshots.
+        assert!(
+            txt.contains("Log"),
+            "the Log panel chrome must render even when there are zero snapshots, got: {}",
+            txt
+        );
+        // And none of the seeded snapshot IDs may appear in the empty view.
+        assert!(
+            !txt.contains("noa_s1") && !txt.contains("noa_s2"),
+            "empty-snapshots view must not leak seeded snapshot IDs, got: {}",
+            txt
+        );
+        // And the empty state must not render any commit messages from the
+        // seeded fixtures.
+        assert!(
+            !txt.contains("initial commit") && !txt.contains("add feature"),
+            "empty-snapshots view must not leak seeded commit messages, got: {}",
+            txt
+        );
     }
 
     #[test]
@@ -439,6 +491,16 @@ mod tests {
         let backend = ratatui::backend::TestBackend::new(40, 12);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app)).unwrap();
+
+        // On a 40x12 terminal the render must not panic AND must still emit
+        // at least one of the seeded snapshot IDs — proving the small viewport
+        // still shows real data, not a blank screen.
+        let txt = buffer_text(terminal.backend().buffer());
+        assert!(
+            txt.contains("noa_s1") || txt.contains("noa_s2") || txt.contains("MESSAGE"),
+            "small-terminal render must show at least one snapshot id or the header, got: {}",
+            txt
+        );
     }
 
     #[test]
@@ -459,6 +521,33 @@ mod tests {
         let backend = ratatui::backend::TestBackend::new(80, 24);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app)).unwrap();
+
+        let txt = buffer_text(terminal.backend().buffer());
+
+        // After scrolling down by 10, snapshot #0 (identified by BOTH noa_s0
+        // AND commit 0) must NOT be visible. The previous assertion used `||`
+        // which only required ONE of the two substrings to be absent —
+        // letting partial regressions slip through. Both must be gone.
+        assert!(
+            !txt.contains("commit 0") && !txt.contains("noa_s0"),
+            "after scrolling down by 10 the topmost snapshot must be scrolled out of view, got: {}",
+            txt
+        );
+        // After scrolling down by 10, snapshot #10 or #11 must be visible
+        // (the canonical witness that the scroll pointer advanced). The
+        // previous assertion also accepted snapshots #1/#2 as witnesses —
+        // but they are out of view after scroll_down(10), so accepting them
+        // would mask scroll regressions. We can't use a simple substring
+        // check for "snapshot #1 must be absent" because "noa_s1" is a
+        // prefix of "noa_s10".."noa_s19" which ARE visible.
+        assert!(
+            txt.contains("commit 10")
+                || txt.contains("commit 11")
+                || txt.contains("noa_s10")
+                || txt.contains("noa_s11"),
+            "after scrolling down by 10, snapshot #10 or #11 must be visible, got: {}",
+            txt
+        );
     }
 
     #[test]
@@ -481,29 +570,53 @@ mod tests {
     #[test]
     fn test_utf8_long_message_no_panic() {
         let mut app = make_log_app();
+        let cjk_msg = "你好世界".repeat(20);
+        let emoji_msg = "🎉🚀💎".repeat(20);
         app.snapshots.push(make_snap(
             "noa_cjk",
             "default",
-            &"你好世界".repeat(20),
+            &cjk_msg,
             1_000_002_000_000_000,
         ));
         app.snapshots.push(make_snap(
             "noa_emoji",
             "default",
-            &"🎉🚀💎".repeat(20),
+            &emoji_msg,
             1_000_003_000_000_000,
         ));
         app.log_scroll.set_total(app.snapshots.len());
         let backend = ratatui::backend::TestBackend::new(80, 24);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app)).unwrap();
+
+        let txt = buffer_text(terminal.backend().buffer());
+        // The snapshot IDs we just added must appear in the rendered buffer.
+        assert!(
+            txt.contains("noa_cjk"),
+            "CJK snapshot id must appear in the buffer, got: {}",
+            txt
+        );
+        assert!(
+            txt.contains("noa_emoji"),
+            "emoji snapshot id must appear in the buffer, got: {}",
+            txt
+        );
+        // And the first CJK character of the message must survive rendering
+        // (it may be truncated due to column width, but at least one CJK
+        // glyph must be present, proving UTF-8 didn't get mangled).
+        assert!(
+            txt.contains('你'),
+            "at least one CJK glyph from the message must be rendered, got: {}",
+            txt
+        );
     }
 
     #[test]
     fn test_utf8_long_id_no_panic() {
+        let cjk_id = "你好".repeat(20);
         let mut app = make_log_app();
         app.snapshots.push(make_snap(
-            &"你好".repeat(20),
+            &cjk_id,
             "default",
             "normal message",
             1_000_004_000_000_000,
@@ -512,5 +625,23 @@ mod tests {
         let backend = ratatui::backend::TestBackend::new(80, 24);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app)).unwrap();
+
+        let txt = buffer_text(terminal.backend().buffer());
+        // The CJK snapshot id must be rendered (may be truncated, so check
+        // for the leading glyph). The first CJK character must survive the
+        // round-trip through the cell buffer without being mojibake'd.
+        assert!(
+            txt.contains('你'),
+            "CJK snapshot id must be rendered with at least one of its leading glyphs, got: {}",
+            txt
+        );
+        // And the previously-seeded snapshot IDs (which are ASCII) must still
+        // be visible — proving the CJK snapshot didn't displace or corrupt
+        // the rest of the table.
+        assert!(
+            txt.contains("noa_s1") || txt.contains("noa_s2"),
+            "ASCII snapshot IDs must still render alongside the CJK-id snapshot, got: {}",
+            txt
+        );
     }
 }

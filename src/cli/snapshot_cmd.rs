@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 use crate::{
+    cli::log_cmd::truncate_message,
     ignore::IgnoreMatcher,
     object::ObjectStore,
     refs::RefStore,
@@ -87,12 +88,7 @@ pub async fn run_list(repo: &Repository) -> Result<()> {
         "ID", "WORKSPACE", "AUTHOR", "MESSAGE"
     );
     for snap in all {
-        let msg = if snap.message.chars().count() > 40 {
-            let truncated: String = snap.message.chars().take(37).collect();
-            format!("{truncated}...")
-        } else {
-            snap.message
-        };
+        let msg = truncate_message(&snap.message, 40, "...");
         println!(
             "{:<16} {:<12} {:<16} {:<40}",
             snap.id, snap.workspace, snap.author, msg
@@ -121,13 +117,8 @@ pub async fn run_diff(repo: &Repository, a: &str, b: &str) -> Result<()> {
         .get_tree(&crate::object::TreeId(snap_b.tree_hash))
         .await?;
 
-    let diffs = crate::snapshot::diff_snapshots_recursive(
-        &tree_a.0,
-        &tree_b.0,
-        "",
-        &obj_store,
-    )
-    .await;
+    let diffs =
+        crate::snapshot::diff_snapshots_recursive(&tree_a.0, &tree_b.0, "", &obj_store).await;
 
     if diffs.is_empty() {
         println!("No differences between {a} and {b}");
@@ -147,21 +138,43 @@ pub async fn run_diff(repo: &Repository, a: &str, b: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use crate::cli::log_cmd::truncate_message;
+
+    /// The snapshot table truncates at 40 chars (not 50 like the log table).
+    /// Verify the *production* truncation helper at this width rather than
+    /// re-implementing the logic inline.
     #[test]
     fn test_utf8_truncation_no_panic() {
         let msg = "你好世界".repeat(20);
-        // This would panic with byte slicing (&msg[..37])
-        let truncated: String = msg.chars().take(37).collect();
-        assert_eq!(truncated.chars().count(), 37);
+        let truncated = truncate_message(&msg, 40, "...");
+        assert!(
+            truncated.chars().count() <= 40,
+            "snapshot-table truncation must respect the 40-char cap, got {}: {}",
+            truncated.chars().count(),
+            truncated
+        );
+        assert!(
+            truncated.ends_with("..."),
+            "truncated output must end with the ellipsis, got: {}",
+            truncated
+        );
 
         let emoji_msg = "🎉🚀💎".repeat(20);
-        let truncated_emoji: String = emoji_msg.chars().take(37).collect();
-        assert_eq!(truncated_emoji.chars().count(), 37);
+        let truncated_emoji = truncate_message(&emoji_msg, 40, "...");
+        assert!(truncated_emoji.chars().count() <= 40);
+        assert!(truncated_emoji.ends_with("..."));
     }
 
     #[test]
     fn test_short_message_not_truncated() {
         let msg = "short msg";
-        assert!(msg.chars().count() <= 40);
+        assert_eq!(truncate_message(msg, 40, "..."), msg);
+        // Boundary cases at the 40-char width.
+        let exact: String = "a".repeat(40);
+        assert_eq!(truncate_message(&exact, 40, "..."), exact);
+        let over: String = "a".repeat(41);
+        let trunc = truncate_message(&over, 40, "...");
+        assert_eq!(trunc.chars().count(), 40);
+        assert!(trunc.ends_with("..."));
     }
 }

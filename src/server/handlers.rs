@@ -14,7 +14,8 @@ use crate::{
     refs::{RedbRefStore, RefStore},
     server::RateLimiter,
     snapshot::{
-        content_addressed_snapshot_id_with_ts, RedbSnapshotStore, Snapshot, SnapshotId, SnapshotStore,
+        content_addressed_snapshot_id_with_ts, RedbSnapshotStore, Snapshot, SnapshotId,
+        SnapshotStore,
     },
     workspace::{Workspace, WorkspaceManager},
 };
@@ -102,7 +103,6 @@ fn not_found_json(msg: impl ToString) -> (StatusCode, Json<ApiError>) {
         }),
     )
 }
-
 
 fn validate_object_hash_id(id: &str) -> Result<(), (StatusCode, Json<ApiError>)> {
     if id.len() != 64 {
@@ -358,7 +358,11 @@ pub async fn list_snapshots(
     let total = snapshots.len();
     let start = page.offset.min(total);
     let end = (start + page.limit).min(total);
-    let page_data: Vec<Snapshot> = snapshots.into_iter().skip(start).take(end - start).collect();
+    let page_data: Vec<Snapshot> = snapshots
+        .into_iter()
+        .skip(start)
+        .take(end - start)
+        .collect();
     Ok(Json(page_data))
 }
 
@@ -393,7 +397,9 @@ pub async fn create_snapshot(
     let store = state.snapshot_store().map_err(err_json)?;
     for parent in &body.snapshot.parents {
         if store.get(parent).await.is_err() {
-            return Err(not_found_json(format!("parent snapshot not found: {parent}")));
+            return Err(not_found_json(format!(
+                "parent snapshot not found: {parent}"
+            )));
         }
     }
     store.store(&body.snapshot).await.map_err(err_json)?;

@@ -1641,9 +1641,15 @@ async fn merge_parent_in_children_of() {
         .unwrap();
     assert_eq!(ms.parents.len(), 2);
     let children = ss.children_of(&s1.id).await.unwrap();
-    assert!(children.contains(&ms.id), "merge snapshot should be child of s1");
+    assert!(
+        children.contains(&ms.id),
+        "merge snapshot should be child of s1"
+    );
     let children_s2 = ss.children_of(&s2.id).await.unwrap();
-    assert!(children_s2.contains(&ms.id), "merge snapshot should be child of s2");
+    assert!(
+        children_s2.contains(&ms.id),
+        "merge snapshot should be child of s2"
+    );
 }
 
 #[test]
