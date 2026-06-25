@@ -99,6 +99,45 @@ impl MinioObjectStore {
         Ok(())
     }
 
+    pub async fn from_transport_config(config: &crate::config::StorageConfig) -> Result<Self> {
+        let bucket = config
+            .bucket
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("storage '{}' is missing 'bucket'", config.name))?;
+        let region = config.region.as_deref().unwrap_or("us-east-1");
+
+        match (config.access_key.as_deref(), config.secret_key.as_deref()) {
+            (Some(ak), Some(sk)) => {
+                let endpoint = config.effective_endpoint();
+                Self::from_config(&endpoint, bucket, ak, sk, region).await
+            }
+            _ => Self::from_system_defaults(config.endpoint.as_deref(), bucket, region).await,
+        }
+    }
+
+    pub async fn from_system_defaults(
+        endpoint: Option<&str>,
+        bucket: &str,
+        region: &str,
+    ) -> Result<Self> {
+        let mut builder = aws_config::defaults(BehaviorVersion::latest())
+            .region(aws_config::Region::new(region.to_string()));
+        if let Some(ep) = endpoint {
+            builder = builder.endpoint_url(ep);
+            Self::validate_endpoint(ep)?;
+        }
+        let config = builder.load().await;
+        let mut s3_builder = aws_sdk_s3::config::Builder::from(&config).force_path_style(true);
+        if endpoint.is_some() {
+            s3_builder = s3_builder.force_path_style(true);
+        }
+        let client = Client::from_conf(s3_builder.build());
+        Ok(MinioObjectStore {
+            client,
+            bucket: bucket.to_string(),
+        })
+    }
+
     pub async fn from_config(
         endpoint: &str,
         bucket: &str,

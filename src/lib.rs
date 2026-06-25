@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod coauthor;
 pub mod config;
 pub mod error;
 pub mod git;

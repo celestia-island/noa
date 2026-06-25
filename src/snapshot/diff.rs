@@ -93,7 +93,9 @@ pub async fn diff_snapshots_recursive<O: ObjectStore>(
         match old_map.get(entry.name.as_str()) {
             None => {
                 if entry.kind == EntryKind::Tree {
-                    let mut added = diff_tree_entries_inner(&entry.id, &path, DiffKind::Added, object_store).await;
+                    let mut added =
+                        diff_tree_entries_inner(&entry.id, &path, DiffKind::Added, object_store)
+                            .await;
                     diffs.append(&mut added);
                 } else {
                     diffs.push(FileDiff {
@@ -141,7 +143,9 @@ pub async fn diff_snapshots_recursive<O: ObjectStore>(
                 format!("{}/{}", prefix, entry.name)
             };
             if entry.kind == EntryKind::Tree {
-                let mut deleted = diff_tree_entries_inner(&entry.id, &path, DiffKind::Deleted, object_store).await;
+                let mut deleted =
+                    diff_tree_entries_inner(&entry.id, &path, DiffKind::Deleted, object_store)
+                        .await;
                 diffs.append(&mut deleted);
             } else {
                 diffs.push(FileDiff {

@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::{
     path::{Component, Path, PathBuf},
     process::Command,
@@ -10,7 +11,6 @@ use crate::{
     refs::{RedbRefStore, RefStore},
     snapshot::{RedbSnapshotStore, SnapshotStore},
 };
-use anyhow::Context;
 
 fn get_git_email(repo_root: &Path) -> String {
     std::process::Command::new("git")
@@ -277,7 +277,7 @@ pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
     let config = crate::config::RemoteConfig {
         name: "origin".to_string(),
         url: url_owned,
-        protocol: "git".to_string(),
+        protocol: crate::config::RemoteProtocol::Git,
     };
     let repo = crate::repo::Repository::init_with_remotes(&target, vec![config])?;
 

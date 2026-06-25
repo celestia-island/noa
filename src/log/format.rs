@@ -1,5 +1,4 @@
-use crate::error::Result;
-use crate::log::LogEntry;
+use crate::{error::Result, log::LogEntry};
 
 pub fn serialize_entry(entry: &LogEntry) -> Result<String> {
     Ok(serde_json::to_string(entry)?)

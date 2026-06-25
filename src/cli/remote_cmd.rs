@@ -1,13 +1,16 @@
 use anyhow::Result;
 
-use crate::{config::RemoteConfig, repo::Repository};
+use crate::{
+    config::{RemoteConfig, RemoteProtocol},
+    repo::Repository,
+};
 
 pub fn run_add(repo: &mut Repository, name: &str, url: &str) -> Result<()> {
     crate::git::export::validate_git_url(url)?;
     repo.config.add_remote(RemoteConfig {
         name: name.to_string(),
         url: url.to_string(),
-        protocol: "git".to_string(),
+        protocol: RemoteProtocol::Git,
     });
     repo.save_config()?;
     println!("Added remote '{name}' -> {url}");
@@ -26,7 +29,6 @@ pub fn run_list(repo: &Repository) -> Result<()> {
         println!("No remotes configured.");
         return Ok(());
     }
-
     for remote in &repo.config.remotes {
         println!("{}\t{} ({})", remote.name, remote.url, remote.protocol);
     }

@@ -55,7 +55,14 @@ pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Resul
     let timestamp = (time.seconds as u64) * 1_000_000;
 
     let snapshot = Snapshot {
-        id: content_addressed_snapshot_id_with_ts(&noa_tree_id.0, &[], "default", &author, &message, timestamp),
+        id: content_addressed_snapshot_id_with_ts(
+            &noa_tree_id.0,
+            &[],
+            "default",
+            &author,
+            &message,
+            timestamp,
+        ),
         tree_hash: noa_tree_id.0,
         parents: vec![],
         workspace: "default".to_string(),
@@ -142,7 +149,8 @@ async fn import_tree_recursive(
     let git_dir = repo.git_dir().to_path_buf();
 
     let file_contents = tokio::task::spawn_blocking(move || {
-        let opened = gix::open(&git_dir).map_err(|e| anyhow::anyhow!("failed to open git repo: {e}"))?;
+        let opened =
+            gix::open(&git_dir).map_err(|e| anyhow::anyhow!("failed to open git repo: {e}"))?;
         walk_tree(&opened, tree_id)
     })
     .await??;

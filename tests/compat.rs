@@ -90,26 +90,23 @@ fn test_bitbucket_url_format_handling() {
     repo.config.add_remote(libnoa::config::RemoteConfig {
         name: "bitbucket-ssh".to_string(),
         url: "git@bitbucket.org:workspace/repo.git".to_string(),
-        protocol: "git".to_string(),
+        protocol: libnoa::config::RemoteProtocol::Git,
     });
     repo.config.add_remote(libnoa::config::RemoteConfig {
         name: "bitbucket-https".to_string(),
         url: "https://user@bitbucket.org/workspace/repo.git".to_string(),
-        protocol: "git".to_string(),
+        protocol: libnoa::config::RemoteProtocol::Git,
     });
     repo.config.save_to_dir(&path.join(".noa")).unwrap();
 
     let loaded = libnoa::config::RepoConfig::load_from_dir(&path.join(".noa")).unwrap();
     assert_eq!(loaded.remotes.len(), 2);
 
-    let ssh_remote = loaded.get_remote("bitbucket-ssh").unwrap();
-    assert_eq!(ssh_remote.url, "git@bitbucket.org:workspace/repo.git");
+    let ssh = loaded.get_remote("bitbucket-ssh").unwrap();
+    assert_eq!(ssh.url, "git@bitbucket.org:workspace/repo.git");
 
-    let https_remote = loaded.get_remote("bitbucket-https").unwrap();
-    assert_eq!(
-        https_remote.url,
-        "https://user@bitbucket.org/workspace/repo.git"
-    );
+    let https = loaded.get_remote("bitbucket-https").unwrap();
+    assert_eq!(https.url, "https://user@bitbucket.org/workspace/repo.git");
 }
 
 #[test]
@@ -125,30 +122,30 @@ fn test_multiple_remote_protocols() {
     repo.config.add_remote(libnoa::config::RemoteConfig {
         name: "github".to_string(),
         url: "https://github.com/user/repo.git".to_string(),
-        protocol: "git".to_string(),
+        protocol: libnoa::config::RemoteProtocol::Git,
     });
     repo.config.add_remote(libnoa::config::RemoteConfig {
         name: "gitlab".to_string(),
         url: "git@gitlab.com:user/repo.git".to_string(),
-        protocol: "git".to_string(),
+        protocol: libnoa::config::RemoteProtocol::Git,
     });
     repo.config.add_remote(libnoa::config::RemoteConfig {
         name: "svn-origin".to_string(),
         url: "https://svn.example.com/repo/trunk".to_string(),
-        protocol: "svn".to_string(),
-    });
-    repo.config.add_remote(libnoa::config::RemoteConfig {
-        name: "noa-server".to_string(),
-        url: "https://noa.example.com/repo".to_string(),
-        protocol: "noa".to_string(),
+        protocol: libnoa::config::RemoteProtocol::Svn,
     });
     repo.config.save_to_dir(&path.join(".noa")).unwrap();
 
     let loaded = libnoa::config::RepoConfig::load_from_dir(&path.join(".noa")).unwrap();
-    assert_eq!(loaded.remotes.len(), 4);
-    assert_eq!(loaded.get_remote("github").unwrap().protocol, "git");
-    assert_eq!(loaded.get_remote("svn-origin").unwrap().protocol, "svn");
-    assert_eq!(loaded.get_remote("noa-server").unwrap().protocol, "noa");
+    assert_eq!(loaded.remotes.len(), 3);
+    assert_eq!(
+        loaded.get_remote("github").unwrap().protocol,
+        libnoa::config::RemoteProtocol::Git
+    );
+    assert_eq!(
+        loaded.get_remote("svn-origin").unwrap().protocol,
+        libnoa::config::RemoteProtocol::Svn
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -243,11 +240,7 @@ fn test_export_noa_to_git_roundtrip() {
     );
     let noa_dir = libnoa::repo::Repository::resolve_noa_dir(&work_path);
     std::fs::create_dir_all(noa_dir.join("agent-logs")).unwrap();
-    std::fs::write(
-        noa_dir.join("agent-logs").join("default.log"),
-        &log_entry,
-    )
-    .unwrap();
+    std::fs::write(noa_dir.join("agent-logs").join("default.log"), &log_entry).unwrap();
 
     let rt2 = tokio::runtime::Runtime::new().unwrap();
     rt2.block_on(async {
@@ -279,11 +272,15 @@ fn test_export_noa_to_git_roundtrip() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "requires git-lfs on PATH; run with `cargo test -- --ignored` on a host that has it"]
 fn test_git_lfs_clone_roundtrip() {
     if !git_lfs_available() {
-        eprintln!("Skipping LFS test: git lfs not available");
-        return;
+        panic!(
+            "git-lfs is required for the LFS clone regression test; \
+             install it (`git lfs install`) or run this test on a host that has it. \
+             Silent skip was removed because this is the only coverage for the \
+             LFS-aware clone path."
+        );
     }
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -359,11 +356,14 @@ fn test_git_lfs_clone_roundtrip() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "requires svn on PATH; run with `cargo test -- --ignored` on a host that has it"]
 fn test_svn_export_and_import() {
     if !svn_available() {
-        eprintln!("Skipping SVN test: svn not available");
-        return;
+        panic!(
+            "svn is required for the SVN-export → git-import regression test; \
+             install it or run this test on a host that has it. Silent skip was \
+             removed because this is the only end-to-end coverage of the svn bridge."
+        );
     }
 
     let tmp = tempfile::TempDir::new().unwrap();
@@ -441,11 +441,26 @@ fn test_svn_export_and_import() {
             {
                 let txn = db.begin_write().unwrap();
                 {
-                    let _ = txn.open_table(redb::TableDefinition::<&[u8], &[u8]>::new("blobs"));
-                    let _ = txn.open_table(redb::TableDefinition::<&[u8], &[u8]>::new("trees"));
-                    let _ = txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("snapshots"));
-                    let _ = txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("workspaces"));
-                    let _ = txn.open_table(redb::TableDefinition::<&str, &[u8]>::new("refs"));
+                    // Propagate errors from open_table — a redb schema or
+                    // version mismatch here would otherwise surface as a
+                    // confusing downstream "table not found" error during
+                    // import_git_to_noa, instead of pointing at the actual
+                    // setup failure.
+                    let _ = txn
+                        .open_table(redb::TableDefinition::<&[u8], &[u8]>::new("blobs"))
+                        .expect("create blobs table");
+                    let _ = txn
+                        .open_table(redb::TableDefinition::<&[u8], &[u8]>::new("trees"))
+                        .expect("create trees table");
+                    let _ = txn
+                        .open_table(redb::TableDefinition::<&str, &[u8]>::new("snapshots"))
+                        .expect("create snapshots table");
+                    let _ = txn
+                        .open_table(redb::TableDefinition::<&str, &[u8]>::new("workspaces"))
+                        .expect("create workspaces table");
+                    let _ = txn
+                        .open_table(redb::TableDefinition::<&str, &[u8]>::new("refs"))
+                        .expect("create refs table");
                 }
                 txn.commit().unwrap();
             }
@@ -478,11 +493,22 @@ async fn test_git_import_no_deadlock_on_single_thread_runtime() {
     {
         let txn = db.begin_write().unwrap();
         {
-            let _ = txn.open_table::<&[u8], &[u8]>(redb::TableDefinition::new("blobs"));
-            let _ = txn.open_table::<&[u8], &[u8]>(redb::TableDefinition::new("trees"));
-            let _ = txn.open_table::<&str, &[u8]>(redb::TableDefinition::new("snapshots"));
-            let _ = txn.open_table::<&str, &[u8]>(redb::TableDefinition::new("workspaces"));
-            let _ = txn.open_table::<&str, &[u8]>(redb::TableDefinition::new("refs"));
+            // Propagate errors — see the sibling setup block above.
+            let _ = txn
+                .open_table::<&[u8], &[u8]>(redb::TableDefinition::new("blobs"))
+                .expect("create blobs table");
+            let _ = txn
+                .open_table::<&[u8], &[u8]>(redb::TableDefinition::new("trees"))
+                .expect("create trees table");
+            let _ = txn
+                .open_table::<&str, &[u8]>(redb::TableDefinition::new("snapshots"))
+                .expect("create snapshots table");
+            let _ = txn
+                .open_table::<&str, &[u8]>(redb::TableDefinition::new("workspaces"))
+                .expect("create workspaces table");
+            let _ = txn
+                .open_table::<&str, &[u8]>(redb::TableDefinition::new("refs"))
+                .expect("create refs table");
         }
         txn.commit().unwrap();
     }
