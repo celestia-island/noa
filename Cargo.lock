@@ -2964,7 +2964,7 @@ checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
 name = "libnoa"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5279,10 +5279,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[patch.unused]]
-name = "arona"
-version = "0.1.0"
-
-[[patch.unused]]
 name = "aoba"
 version = "0.2.0"
 
@@ -5291,12 +5287,12 @@ name = "kirino"
 version = "0.5.0"
 
 [[patch.unused]]
-name = "evernight"
-version = "0.1.0"
-
-[[patch.unused]]
 name = "hifumi"
 version = "0.1.1"
+
+[[patch.unused]]
+name = "arona"
+version = "0.1.0"
 
 [[patch.unused]]
 name = "hikari-animation"
@@ -5316,4 +5312,8 @@ version = "0.1.0"
 
 [[patch.unused]]
 name = "hikari-theme"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "evernight"
 version = "0.1.0"
