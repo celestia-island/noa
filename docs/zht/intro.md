@@ -13,12 +13,12 @@
 </div>
 <!-- markdownlint-enable MD033 MD041 MD036 -->
 
-> Part of the [celestia-island](https://github.com/celestia-island) ecosystem.
+> 屬於 [celestia-island](https://github.com/celestia-island) 生態的一部分。
 
 每個代理的工作區隔離、僅附加的 JSONL 日誌、基於快照的歷史紀錄，以及與 git 協定完全相容。
 
-## Documentation
+## 文件
 
-Architecture, design, and guides live at [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en).
+架構、設計與指南位於 [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en)。
 
-Source: [noa](https://github.com/celestia-island/noa).
+原始碼：[noa](https://github.com/celestia-island/noa)。

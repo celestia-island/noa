@@ -17,7 +17,7 @@
 
 按智能体隔离的工作区、JSONL 仅追加日志、基于快照的历史记录，以及完整的 git 协议兼容性。
 
-## Documentation
+## 文档
 
 架构、设计与指南位于 [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en)。
 

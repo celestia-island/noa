@@ -17,7 +17,7 @@
 
 عزل مساحة العمل لكل وكيل، وسجلات JSONL للإلحاق فقط، وتاريخ قائم على اللقطات، وتوافق كامل مع بروتوكول git.
 
-## Documentation
+## الوثائق
 
 تتواجد البنية المعمارية والتصميم والأدلة في [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en).
 

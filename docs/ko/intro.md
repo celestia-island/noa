@@ -13,12 +13,12 @@
 </div>
 <!-- markdownlint-enable MD033 MD041 MD036 -->
 
-> Part of the [celestia-island](https://github.com/celestia-island) ecosystem.
+> [celestia-island](https://github.com/celestia-island) 생태계의 일부입니다.
 
 에이전트별 작업 공간 격리, JSONL 추가 전용 로그, 스냅샷 기반 히스토리, 완전한 git 프로토콜 호환성.
 
-## Documentation
+## 문서
 
-Architecture, design, and guides live at [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en).
+아키텍처, 설계 및 가이드는 [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en)에 있습니다.
 
-Source: [noa](https://github.com/celestia-island/noa).
+소스: [noa](https://github.com/celestia-island/noa).

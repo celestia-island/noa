@@ -13,12 +13,12 @@
 </div>
 <!-- markdownlint-enable MD033 MD041 MD036 -->
 
-> Part of the [celestia-island](https://github.com/celestia-island) ecosystem.
+> [celestia-island](https://github.com/celestia-island) エコシステムの一部。
 
 エージェントごとのワークスペース隔離、JSONL追記専用ログ、スナップショットベースの履歴、および完全な git プロトコル互換性を備えます。
 
-## Documentation
+## ドキュメント
 
-Architecture, design, and guides live at [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en).
+アーキテクチャ、設計、ガイドは [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en) にあります。
 
-Source: [noa](https://github.com/celestia-island/noa).
+ソース: [noa](https://github.com/celestia-island/noa)。

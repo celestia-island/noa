@@ -13,12 +13,12 @@
 </div>
 <!-- markdownlint-enable MD033 MD041 MD036 -->
 
-> Part of the [celestia-island](https://github.com/celestia-island) ecosystem.
+> Часть экосистемы [celestia-island](https://github.com/celestia-island).
 
 Изоляция рабочего пространства для каждого агента, журналы JSONL только для добавления (append-only), история на основе снимков и полная совместимость с протоколом git.
 
-## Documentation
+## Документация
 
-Architecture, design, and guides live at [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en).
+Архитектура, дизайн и руководства находятся на [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en).
 
-Source: [noa](https://github.com/celestia-island/noa).
+Исходный код: [noa](https://github.com/celestia-island/noa).
