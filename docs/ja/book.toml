@@ -1,0 +1,17 @@
+[book]
+title = "Noa ドキュメント"
+description = "AI ネイティブな分散バージョン管理システム —— エージェントごとのワークスペース分離、JSONL 追記専用ログ、スナップショットベースの履歴、完全な git プロトコル互換性"
+authors = ["celestia-island"]
+language = "ja"
+src = "."
+
+[build]
+build-dir = "../../target/docs/ja"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/celestia-island/noa"
+edit-url-template = "https://github.com/celestia-island/noa/edit/dev/docs/ja/{path}"
+additional-js = ["../theme/lang-switcher.js"]
+additional-css = ["../theme/lang-switcher.css"]

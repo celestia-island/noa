@@ -1,0 +1,17 @@
+[book]
+title = "Документация Noa"
+description = "Распределённая система контроля версий, созданная для ИИ — изоляция рабочего пространства по агентам, журналы JSONL только для добавления, история на снимках, полная совместимость с протоколом git"
+authors = ["celestia-island"]
+language = "ru"
+src = "."
+
+[build]
+build-dir = "../../target/docs/ru"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/celestia-island/noa"
+edit-url-template = "https://github.com/celestia-island/noa/edit/dev/docs/ru/{path}"
+additional-js = ["../theme/lang-switcher.js"]
+additional-css = ["../theme/lang-switcher.css"]

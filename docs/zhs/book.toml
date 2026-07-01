@@ -1,0 +1,17 @@
+[book]
+title = "Noa 文档"
+description = "AI 原生的分布式版本控制系统 —— 每代理工作区隔离、JSONL 只追加日志、基于快照的历史、完整的 git 协议兼容性"
+authors = ["celestia-island"]
+language = "zh-CN"
+src = "."
+
+[build]
+build-dir = "../../target/docs/zhs"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/celestia-island/noa"
+edit-url-template = "https://github.com/celestia-island/noa/edit/dev/docs/zhs/{path}"
+additional-js = ["../theme/lang-switcher.js"]
+additional-css = ["../theme/lang-switcher.css"]

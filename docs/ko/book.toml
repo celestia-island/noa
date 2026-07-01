@@ -1,0 +1,17 @@
+[book]
+title = "Noa 문서"
+description = "AI 네이티브 분산 버전 관리 시스템 —— 에이전트별 워크스페이스 격리, JSONL 추가 전용 로그, 스냅샷 기반 히스토리, 완전한 git 프로토콜 호환성"
+authors = ["celestia-island"]
+language = "ko"
+src = "."
+
+[build]
+build-dir = "../../target/docs/ko"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/celestia-island/noa"
+edit-url-template = "https://github.com/celestia-island/noa/edit/dev/docs/ko/{path}"
+additional-js = ["../theme/lang-switcher.js"]
+additional-css = ["../theme/lang-switcher.css"]

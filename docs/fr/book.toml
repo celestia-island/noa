@@ -1,0 +1,17 @@
+[book]
+title = "Documentation Noa"
+description = "Système de contrôle de version distribué natif IA — isolation de l'espace de travail par agent, journaux JSONL à ajout seul, historique basé sur des instantanés, compatibilité totale avec le protocole git"
+authors = ["celestia-island"]
+language = "fr"
+src = "."
+
+[build]
+build-dir = "../../target/docs/fr"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/celestia-island/noa"
+edit-url-template = "https://github.com/celestia-island/noa/edit/dev/docs/fr/{path}"
+additional-js = ["../theme/lang-switcher.js"]
+additional-css = ["../theme/lang-switcher.css"]

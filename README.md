@@ -7,7 +7,7 @@
 
 **AI-native distributed version control system**
 
-[![License](https://img.shields.io/badge/license-BSL--1.1-blue.svg)](https://github.com/celestia-island/noa/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/license-SySL--1.0-blue.svg)](https://github.com/celestia-island/noa/blob/main/LICENSE)
 [![GitHub](https://img.shields.io/badge/github-celestia--island%2Fnoa-blue.svg)](https://github.com/celestia-island/noa)
 
 </div>
