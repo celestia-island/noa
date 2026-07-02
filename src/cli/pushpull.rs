@@ -112,7 +112,9 @@ pub async fn run_pull(remote_name: &str) -> Result<()> {
     if let Some(snap_id) = head_ref {
         if snap_id != before_head {
             let ws_mgr = crate::workspace::WorkspaceManager::new(db)?;
-            let _ = ws_mgr.update_head(&head_ws, &snap_id).await;
+            if let Err(e) = ws_mgr.update_head(&head_ws, &snap_id).await {
+                eprintln!("warning: failed to update workspace head '{head_ws}': {e}");
+            }
             println!("Pulled from {remote_name} and re-imported");
         } else {
             println!("Already up to date.");

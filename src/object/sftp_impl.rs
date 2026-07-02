@@ -144,7 +144,7 @@ impl SftpObjectStore {
             .spawn()?;
             if let Some(mut stdin) = child.stdin.take() {
                 use std::io::Write;
-                let _ = stdin.write_all(&data);
+                stdin.write_all(&data)?;
             }
             child.wait_with_output()
         })
