@@ -19,6 +19,31 @@
 
 Per-agent workspace isolation, JSONL append-only logs, snapshot-based history, and full git protocol compatibility.
 
+## Quick Start
+
+```bash
+# Build
+cargo build --release
+
+# Run tests
+cargo test --all-features
+
+# Initialize a noa repository
+noa init
+
+# Create a snapshot
+noa snapshot
+
+# View the TUI
+noa tui
+```
+
+For a full list of commands:
+
+```bash
+noa --help
+```
+
 ## Documentation
 
 Architecture, design, and guides live at [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en).
