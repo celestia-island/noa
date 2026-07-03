@@ -56,25 +56,6 @@ impl SftpObjectStore {
         format!("{}@{}", self.username, self.host)
     }
 
-    fn sshpass_prefix(&self) -> Vec<String> {
-        if let Some(ref pass) = self.password {
-            vec!["sshpass".to_string(), "-p".to_string(), pass.clone()]
-        } else {
-            vec![]
-        }
-    }
-
-    fn is_sshpass_available(&self) -> bool {
-        self.password.is_some()
-            && std::process::Command::new("sshpass")
-                .arg("-V")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-    }
-
     fn blob_path(id: &BlobId) -> String {
         format!("blobs/{}", id.0)
     }
@@ -90,10 +71,23 @@ impl SftpObjectStore {
     async fn ssh_exec(&self, remote_cmd: &str) -> Result<std::process::Output> {
         let addr = self.remote_addr();
         let cmd = remote_cmd.to_string();
-        let use_sshpass = self.is_sshpass_available();
         let port = self.port;
-        let sshpass_prefix = self.sshpass_prefix();
+        let password = self.password.clone();
         tokio::task::spawn_blocking(move || {
+            let use_sshpass = password.is_some()
+                && std::process::Command::new("sshpass")
+                    .arg("-V")
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+            let sshpass_prefix = if let Some(ref pass) = password {
+                vec!["sshpass".to_string(), "-p".to_string(), pass.clone()]
+            } else {
+                vec![]
+            };
+
             let mut command = if use_sshpass {
                 let mut c = std::process::Command::new("sshpass");
                 c.args(&sshpass_prefix).arg("ssh");
@@ -116,13 +110,26 @@ impl SftpObjectStore {
         let remote_full = format!("{addr}:{remote_path}");
         let remote_mkdir = format!("mkdir -p $(dirname {remote_path})");
         let remote_full_clone = remote_full.clone();
-        let use_sshpass = self.is_sshpass_available();
         let port = self.port;
-        let sshpass_prefix = self.sshpass_prefix();
+        let password = self.password.clone();
 
         let _ = self.ssh_exec(&remote_mkdir).await;
 
         tokio::task::spawn_blocking(move || {
+            let use_sshpass = password.is_some()
+                && std::process::Command::new("sshpass")
+                    .arg("-V")
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+            let sshpass_prefix = if let Some(ref pass) = password {
+                vec!["sshpass".to_string(), "-p".to_string(), pass.clone()]
+            } else {
+                vec![]
+            };
+
             let mut args = Vec::new();
             if port != 22 {
                 args.push(format!("-P{port}"));
@@ -158,11 +165,24 @@ impl SftpObjectStore {
         let addr = self.remote_addr();
         let remote_full = format!("{addr}:{remote_path}");
         let remote_full_clone = remote_full.clone();
-        let use_sshpass = self.is_sshpass_available();
         let port = self.port;
-        let sshpass_prefix = self.sshpass_prefix();
+        let password = self.password.clone();
 
         let output = tokio::task::spawn_blocking(move || {
+            let use_sshpass = password.is_some()
+                && std::process::Command::new("sshpass")
+                    .arg("-V")
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+            let sshpass_prefix = if let Some(ref pass) = password {
+                vec!["sshpass".to_string(), "-p".to_string(), pass.clone()]
+            } else {
+                vec![]
+            };
+
             let mut args = Vec::new();
             if port != 22 {
                 args.push(format!("-P{port}"));
