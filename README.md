@@ -1,21 +1,29 @@
-<!-- markdownlint-disable MD033 MD041 MD036 -->
+<p align="center"><img src="https://raw.githubusercontent.com/celestia-island/noa/master/docs/logo.webp" alt="noa" width="200" /></p>
+
+<h1 align="center">Noa</h1>
+
+<p align="center"><strong>AI-native distributed version control system</strong></p>
+
 <div align="center">
-
-<img src="res/logo/noa.webp" alt="Noa" width="200"/>
-
-# Noa
-
-**AI-native distributed version control**
 
 [![License](https://img.shields.io/badge/license-SySL--1.0-blue.svg)](https://github.com/celestia-island/noa/blob/main/LICENSE)
 [![GitHub](https://img.shields.io/badge/github-celestia--island%2Fnoa-blue.svg)](https://github.com/celestia-island/noa)
 
 </div>
-<!-- markdownlint-enable MD033 MD041 MD036 -->
 
-**[English](https://github.com/celestia-island/docs.celestia.world/blob/master/docs/en/guides/platforms/README-noa.md)** &bull; **[简体中文](https://github.com/celestia-island/docs.celestia.world/blob/master/docs/zhs/guides/platforms/README-noa.md)** &bull; **[繁體中文](https://github.com/celestia-island/docs.celestia.world/blob/master/docs/zht/guides/platforms/README-noa.md)** &bull; **[日本語](https://github.com/celestia-island/docs.celestia.world/blob/master/docs/ja/guides/platforms/README-noa.md)** &bull; **[한국어](https://github.com/celestia-island/docs.celestia.world/blob/master/docs/ko/guides/platforms/README-noa.md)** &bull; **[Français](https://github.com/celestia-island/docs.celestia.world/blob/master/docs/fr/guides/platforms/README-noa.md)** &bull; **[Español](https://github.com/celestia-island/docs.celestia.world/blob/master/docs/es/guides/platforms/README-noa.md)** &bull; **[Русский](https://github.com/celestia-island/docs.celestia.world/blob/master/docs/ru/guides/platforms/README-noa.md)**
+<div align="center">
 
-> Part of the [celestia-island](https://github.com/celestia-island) ecosystem.
+**English** ·
+[简体中文](./docs/zhs/intro.md) ·
+[繁體中文](./docs/zht/intro.md) ·
+[日本語](./docs/ja/intro.md) ·
+[한국어](./docs/ko/intro.md) ·
+[Français](./docs/fr/intro.md) ·
+[Español](./docs/es/intro.md) ·
+[Русский](./docs/ru/intro.md) ·
+[العربية](./docs/ar/intro.md)
+
+</div>
 
 Per-agent workspace isolation, JSONL append-only logs, snapshot-based history, and full git protocol compatibility.
 

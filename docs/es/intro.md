@@ -1,19 +1,29 @@
-# Noa
-<!-- markdownlint-disable MD033 MD041 MD036 -->
+<p align="center"><img src="https://raw.githubusercontent.com/celestia-island/noa/master/docs/logo.webp" alt="noa" width="200" /></p>
+
+<h1 align="center">Noa</h1>
+
+<p align="center"><strong>Sistema de control de versiones distribuido nativo de IA</strong></p>
+
 <div align="center">
-
-<img src="../logo.webp" alt="Noa" width="200"/>
-
-
-**Sistema de control de versiones distribuido nativo de IA**
 
 [![License](https://img.shields.io/badge/license-SySL%201.0-blue)](../../LICENSE)
 [![GitHub](https://img.shields.io/badge/github-celestia--island%2Fnoa-blue.svg)](https://github.com/celestia-island/noa)
 
 </div>
-<!-- markdownlint-enable MD033 MD041 MD036 -->
 
-> Parte del ecosistema [celestia-island](https://github.com/celestia-island).
+<div align="center">
+
+[English](../en/intro.md) ·
+[简体中文](../zhs/intro.md) ·
+[繁體中文](../zht/intro.md) ·
+[日本語](../ja/intro.md) ·
+[한국어](../ko/intro.md) ·
+[Français](../fr/intro.md) ·
+**Español** ·
+[Русский](../ru/intro.md) ·
+[العربية](../ar/intro.md)
+
+</div>
 
 Aislamiento de espacio de trabajo por agente, registros JSONL de solo adición, historial basado en instantáneas y compatibilidad total con el protocolo git.
 
