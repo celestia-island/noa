@@ -4,6 +4,7 @@ set unstable
 set lists
 set shell := ["bash", "-c"]
 set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
+set lists
 
 python_cmd := if os_family() == "windows" {
     "python"
@@ -13,21 +14,10 @@ python_cmd := if os_family() == "windows" {
     "python"
 }
 
+import "./celestia-devtools.just"
+
 default:
     @just --list
-
-_build always_pre dcmd rcmd *FLAGS='':
-    #!/usr/bin/env bash
-    set -euo pipefail
-    profile=release
-    for a in {{FLAGS}}; do
-      case "$a" in
-        --dev)   profile=dev ;;
-        --clean) cargo clean ;;
-      esac
-    done
-    [ "X{{always_pre}}" != "X:" ] && {{always_pre}}
-    if [ "$profile" = dev ]; then {{dcmd}}; else {{rcmd}}; fi
 
 # Initialization
 
