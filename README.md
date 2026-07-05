@@ -6,7 +6,7 @@
 
 <div align="center">
 
-[![License](https://img.shields.io/badge/license-SySL--1.0-blue.svg)](https://github.com/celestia-island/noa/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/license-SySL--1.0-blue.svg)](https://sysl.celestia.world)
 [![GitHub](https://img.shields.io/badge/github-celestia--island%2Fnoa-blue.svg)](https://github.com/celestia-island/noa)
 
 </div>
