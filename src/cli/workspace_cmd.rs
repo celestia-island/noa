@@ -175,6 +175,7 @@ pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<
 
     let author = "noa".to_string();
     let message = format!("merge {from} into {current}");
+    let now = crate::now_micros();
     let merge_snapshot = crate::snapshot::Snapshot {
         id: content_addressed_snapshot_id_with_ts(
             &new_tree_id.0,
@@ -182,13 +183,13 @@ pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<
             &current,
             &author,
             &message,
-            crate::now_micros(),
+            now,
         ),
         tree_hash: new_tree_id.0,
         parents: vec![cur_ws.head.clone(), from_ws.head.clone()],
         workspace: current.clone(),
         author,
-        timestamp: crate::now_micros(),
+        timestamp: now,
         message,
     };
 
