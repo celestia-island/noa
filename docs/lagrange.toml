@@ -1,0 +1,7 @@
+[site]
+title = "Noa"
+description = "AI-native distributed version control system with per-agent workspace isolation, JSONL append-only logs, snapshot-based history, and full git protocol compatibility"
+
+[languages]
+default = "en"
+order = ["en", "zhs", "zht", "ja", "ko", "fr", "es", "ru", "ar"]

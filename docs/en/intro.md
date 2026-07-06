@@ -6,7 +6,7 @@
 
 <div align="center">
 
-[![License](https://img.shields.io/badge/license-SySL--1.0-blue.svg)](https://sysl.celestia.world)
+[![License](https://img.shields.io/badge/license-SySL%201.0-blue)](../../LICENSE)
 [![GitHub](https://img.shields.io/badge/github-celestia--island%2Fnoa-blue.svg)](https://github.com/celestia-island/noa)
 
 </div>
@@ -14,43 +14,18 @@
 <div align="center">
 
 **English** ·
-[简体中文](./docs/zhs/intro.md) ·
-[繁體中文](./docs/zht/intro.md) ·
-[日本語](./docs/ja/intro.md) ·
-[한국어](./docs/ko/intro.md) ·
-[Français](./docs/fr/intro.md) ·
-[Español](./docs/es/intro.md) ·
-[Русский](./docs/ru/intro.md) ·
-[العربية](./docs/ar/intro.md)
+[简体中文](../zhs/intro.md) ·
+[繁體中文](../zht/intro.md) ·
+[日本語](../ja/intro.md) ·
+[한국어](../ko/intro.md) ·
+[Français](../fr/intro.md) ·
+[Español](../es/intro.md) ·
+[Русский](../ru/intro.md) ·
+[العربية](../ar/intro.md)
 
 </div>
 
 Per-agent workspace isolation, JSONL append-only logs, snapshot-based history, and full git protocol compatibility.
-
-## Quick Start
-
-```bash
-# Build
-cargo build --release
-
-# Run tests
-cargo test --all-features
-
-# Initialize a noa repository
-noa init
-
-# Create a snapshot
-noa snapshot
-
-# View the TUI
-noa tui
-```
-
-For a full list of commands:
-
-```bash
-noa --help
-```
 
 ## Documentation
 

@@ -58,7 +58,12 @@ pub fn handle_handshake_request(
     if noa_dir.exists() {
         let is_parasitic = noa_dir.starts_with(workspace_root.join(".git"));
         let gitignore_path = workspace_root.join(".gitignore");
-        if !is_parasitic && gitignore_path.exists() {
+        if is_parasitic {
+            // Parasitic mode: noa data lives under .git/noa/; git already
+            // ignores .git/, so no .gitignore entry is needed.  Deliberately
+            // mirror Repository::init which skips manage_gitignore here.
+            gitignore_updated = false;
+        } else if gitignore_path.exists() {
             let content = std::fs::read_to_string(&gitignore_path)?;
             let has_noa = content
                 .lines()
