@@ -2,6 +2,10 @@ use async_trait::async_trait;
 
 use aws_config::BehaviorVersion;
 use aws_sdk_s3::{primitives::ByteStream, Client};
+use aws_smithy_http_client::{
+    tls::{self, rustls_provider::CryptoMode},
+    Builder as HttpBuilder,
+};
 
 use crate::{
     error::Result,
@@ -120,8 +124,12 @@ impl MinioObjectStore {
         bucket: &str,
         region: &str,
     ) -> Result<Self> {
+        let http_client = HttpBuilder::new()
+            .tls_provider(tls::Provider::Rustls(CryptoMode::Ring))
+            .build_https();
         let mut builder = aws_config::defaults(BehaviorVersion::latest())
-            .region(aws_config::Region::new(region.to_string()));
+            .region(aws_config::Region::new(region.to_string()))
+            .http_client(http_client);
         if let Some(ep) = endpoint {
             builder = builder.endpoint_url(ep);
             Self::validate_endpoint(ep)?;
@@ -146,8 +154,12 @@ impl MinioObjectStore {
         region: &str,
     ) -> Result<Self> {
         Self::validate_endpoint(endpoint)?;
+        let http_client = HttpBuilder::new()
+            .tls_provider(tls::Provider::Rustls(CryptoMode::Ring))
+            .build_https();
         let config = aws_config::defaults(BehaviorVersion::latest())
             .region(aws_config::Region::new(region.to_string()))
+            .http_client(http_client)
             .endpoint_url(endpoint)
             .credentials_provider(aws_sdk_s3::config::Credentials::new(
                 access_key,

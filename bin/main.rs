@@ -95,6 +95,7 @@ enum Commands {
         #[command(subcommand)]
         cmd: HookSub,
     },
+    #[cfg(unix)]
     Sync {
         #[arg(short, long, default_value = "/tmp/noa-sync.sock")]
         socket: String,
@@ -384,6 +385,7 @@ async fn main() -> anyhow::Result<()> {
             }
             HookSub::PreCommit => cli::hook_cmd::run_pre_commit()?,
         },
+        #[cfg(unix)]
         Some(Commands::Sync { socket, path }) => {
             let root = std::path::Path::new(&path)
                 .canonicalize()
