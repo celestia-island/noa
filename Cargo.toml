@@ -1,6 +1,6 @@
 [package]
 name = "libnoa"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 rust-version = "1.85"
 
@@ -49,8 +49,10 @@ regex = "^1"
 
 axum = "^0.8"
 
-aws-sdk-s3 = "^1"
-aws-config = "^1"
+aws-sdk-s3 = { version = "^1", default-features = false, features = ["sigv4a", "rt-tokio"] }
+aws-config = { version = "^1", default-features = false, features = ["credentials-process", "rt-tokio", "sso"] }
+# Pure-Rust TLS: use rustls+ring instead of aws-lc-rs (avoids C compilation of aws-lc-sys)
+aws-smithy-http-client = { version = "^1", features = ["rustls-ring"] }
 
 reqwest = { version = "^0.12", default-features = false, features = ["rustls-tls", "json", "multipart"] }
 
