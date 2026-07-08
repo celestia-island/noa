@@ -2,7 +2,10 @@ use async_trait::async_trait;
 
 use aws_config::BehaviorVersion;
 use aws_sdk_s3::{primitives::ByteStream, Client};
-use aws_smithy_http_client::{tls, tls::rustls_provider::CryptoMode, Builder as HttpBuilder};
+use aws_smithy_http_client::{
+    tls::{self, rustls_provider::CryptoMode},
+    Builder as HttpBuilder,
+};
 
 use crate::{
     error::Result,

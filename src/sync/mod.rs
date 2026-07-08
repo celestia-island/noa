@@ -1,5 +1,6 @@
 mod events;
 mod handshake;
+#[cfg(unix)]
 mod server;
 mod transport;
 
@@ -10,6 +11,7 @@ pub use handshake::{
     handle_auth_request, handle_handshake_request, handle_ready, BranchSelection, NoaAuthResponse,
     NoaHandshakeResponse,
 };
+#[cfg(unix)]
 pub use server::SyncServer;
 pub use transport::JsonRpcMessage;
 
