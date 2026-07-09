@@ -29,7 +29,17 @@ SPDX expression.
 2. noa is mid-interactive-rebase, so editing `Cargo.toml`/`README.md` now
    risks a rebase conflict.
 
-### Suggested resolution (pick one, after the rebase completes)
+### Resolution decided (2026-07-10)
+
+Decision: option 2 — change Cargo.toml to license-file = "LICENSE" to match
+the actual SySL file (mirrors hikari/kirino/lagrange/hifumi/arona).
+
+NOT YET APPLIED to noa because the repo is mid-interactive-rebase and
+Cargo.toml may be in the rebased history. Apply this one-line change
+(license = "Apache-2.0" -> license-file = "LICENSE") and republish with a
+semver bump once the rebase completes.
+
+### Original suggested resolution (pick one, after the rebase completes)
 
 1. **The crate really is Apache-2.0**: replace the root `LICENSE` with the
    Apache-2.0 text and keep `license = "Apache-2.0"` (align the file with
