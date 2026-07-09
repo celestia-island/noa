@@ -5,4 +5,4 @@ description = "AI-native distributed version control system with per-agent works
 cname = "noa.docs.celestia.world"
 [languages]
 default = "en"
-order = ["en", "zhs", "zht", "ja", "ko", "fr", "es", "ru", "ar"]
+order = ["en", "zh-hans", "zh-hant", "ja", "ko", "fr", "es", "ru", "ar"]

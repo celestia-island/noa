@@ -2,7 +2,7 @@
 
 <h1 align="center">Noa</h1>
 
-<p align="center"><strong>AI 原生的分散式版本控制系統</strong></p>
+<p align="center"><strong>面向 AI 的原生分布式版本控制系统</strong></p>
 
 <div align="center">
 
@@ -14,8 +14,8 @@
 <div align="center">
 
 [English](../en/intro.md) ·
-[简体中文](../zhs/intro.md) ·
-**繁體中文** ·
+**简体中文** ·
+[繁體中文](../zh-hant/intro.md) ·
 [日本語](../ja/intro.md) ·
 [한국어](../ko/intro.md) ·
 [Français](../fr/intro.md) ·
@@ -25,10 +25,10 @@
 
 </div>
 
-每個代理的工作區隔離、僅附加的 JSONL 日誌、基於快照的歷史紀錄，以及與 git 協定完全相容。
+按智能体隔离的工作区、JSONL 仅追加日志、基于快照的历史记录，以及完整的 git 协议兼容性。
 
-## 文件
+## 文档
 
-架構、設計與指南位於 [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en)。
+架构、设计与指南位于 [docs.celestia.world/zh-hans/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/zh-hans)。
 
-原始碼：[noa](https://github.com/celestia-island/noa)。
+源码：[noa](https://github.com/celestia-island/noa)。

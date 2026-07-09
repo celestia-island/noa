@@ -14,8 +14,8 @@
 <div align="center">
 
 [English](../en/intro.md) ·
-[简体中文](../zhs/intro.md) ·
-[繁體中文](../zht/intro.md) ·
+[简体中文](../zh-hans/intro.md) ·
+[繁體中文](../zh-hant/intro.md) ·
 [日本語](../ja/intro.md) ·
 [한국어](../ko/intro.md) ·
 [Français](../fr/intro.md) ·
