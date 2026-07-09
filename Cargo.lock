@@ -4926,6 +4926,30 @@ name = "arona"
 version = "0.1.0"
 
 [[patch.unused]]
+name = "hikari-animation"
+version = "0.3.10"
+
+[[patch.unused]]
+name = "hikari-components"
+version = "0.3.10"
+
+[[patch.unused]]
+name = "hikari-icons"
+version = "0.3.10"
+
+[[patch.unused]]
+name = "hikari-palette"
+version = "0.3.10"
+
+[[patch.unused]]
+name = "hikari-theme"
+version = "0.3.10"
+
+[[patch.unused]]
+name = "hifumi"
+version = "0.1.1"
+
+[[patch.unused]]
 name = "aoba"
 version = "0.2.0"
 
@@ -4952,27 +4976,3 @@ version = "0.5.14"
 [[patch.unused]]
 name = "tairitsu-web"
 version = "0.5.14"
-
-[[patch.unused]]
-name = "hifumi"
-version = "0.1.1"
-
-[[patch.unused]]
-name = "hikari-animation"
-version = "0.3.10"
-
-[[patch.unused]]
-name = "hikari-components"
-version = "0.3.10"
-
-[[patch.unused]]
-name = "hikari-icons"
-version = "0.3.10"
-
-[[patch.unused]]
-name = "hikari-palette"
-version = "0.3.10"
-
-[[patch.unused]]
-name = "hikari-theme"
-version = "0.3.10"
