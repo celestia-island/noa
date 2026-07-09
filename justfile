@@ -3,16 +3,8 @@
 set unstable
 set lists
 set shell := ["bash", "-c"]
-set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
+set windows-shell := ["pwsh.exe", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $PSDefaultParameterValues['*:Encoding'] = 'utf8';"]
 set lists
-
-python_cmd := if os_family() == "windows" {
-    "python"
-} else if which("python3") != "" {
-    "python3"
-} else {
-    "python"
-}
 
 import "./celestia-devtools.just"
 
