@@ -1,6 +1,7 @@
 # noa justfile
 
 set unstable
+set lists
 set shell := ["bash", "-c"]
 set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
 
