@@ -35,3 +35,5 @@ Thumbs.db
 
 # redb database files (should never be committed)
 *.redb
+
+dist/
