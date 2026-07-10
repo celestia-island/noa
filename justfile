@@ -4,8 +4,6 @@ set unstable
 set lists
 set windows-shell := ["C:/Program Files/Git/bin/bash.exe", "-c"]
 set shell := ["bash", "-c"]
-set windows-shell := ["pwsh.exe", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $PSDefaultParameterValues['*:Encoding'] = 'utf8';"]
-set lists
 
 import "./celestia-devtools.just"
 
