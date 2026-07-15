@@ -1,6 +1,5 @@
 # Squash Message Clean — amends bloated squash-merge commit bodies to 1 line.
 # Installed by: noa hook install-action
-# Requires: noa binary available in PATH (downloaded from GitHub Releases)
 
 name: Squash Message Clean
 
@@ -17,38 +16,15 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install noa
-        run: |
-          set -euo pipefail
-          VERSION="${NOA_VERSION:-latest}"
-          if [ "$VERSION" = "latest" ]; then
-            URL="https://github.com/celestia-island/noa/releases/latest/download/noa-x86_64-unknown-linux-gnu"
-          else
-            URL="https://github.com/celestia-island/noa/releases/download/${VERSION}/noa-x86_64-unknown-linux-gnu"
-          fi
-          curl -fsSL "$URL" -o /usr/local/bin/noa
-          chmod +x /usr/local/bin/noa
 
       - name: Amend squash message
         run: |
           set -euo pipefail
-          # Only run if the HEAD commit is a squash merge (body >= 3 lines).
           BODY_LINES=$(git log -1 --format='%B' | wc -l)
-          if [ "$BODY_LINES" -le 3 ]; then
+          if [ "$BODY_LINES" -le 1 ]; then
             echo "Commit body is already clean (${BODY_LINES} lines), skipping."
             exit 0
           fi
           SUBJECT=$(git log -1 --format='%s')
-          # Extract PR number from the squash body.
-          PR_NUM=$(echo "$SUBJECT" | grep -oP '#\d+' | head -1 || true)
-          if [ -n "$PR_NUM" ]; then
-            NEW_MSG="${SUBJECT}"
-          else
-            NEW_MSG="${SUBJECT}"
-          fi
-          # Validate the new message.
-          noa hook validate-msg -m "$NEW_MSG" -p celestia
-          git commit --amend -m "$NEW_MSG"
-          git push --force
+          git commit --amend -m "$SUBJECT"
+          git push --force-with-lease
