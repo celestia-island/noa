@@ -67,7 +67,7 @@ rustls = { version = "^0.23", default-features = false, features = ["ring", "std
 tokio-rustls = { version = "^0.26", default-features = false, features = ["ring", "logging", "tls12"] }
 hyper-rustls = { version = "^0.27", default-features = false, features = ["native-tokio", "http1", "tls12", "logging", "ring"] }
 
-reqwest = { version = "^0.12", default-features = false, features = ["rustls-tls", "json", "multipart"] }
+reqwest = { version = "^0.12", default-features = false, features = ["rustls-tls-no-provider", "json", "multipart"] }
 
 suppaftp = { version = "^9", features = ["tokio"], optional = true }
 
