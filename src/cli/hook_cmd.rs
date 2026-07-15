@@ -83,7 +83,7 @@ pub fn validate_msg(args: ValidateMsgArgs) -> Result<()> {
 
 /// Strip a leading emoji / multi-codepoint emoji sequence from `s`.
 fn strip_leading_emoji(s: &str) -> &str {
-    let mut indices = s.char_indices();
+    let indices = s.char_indices();
     for (i, c) in indices {
         if c.is_ascii_whitespace() {
             continue;
