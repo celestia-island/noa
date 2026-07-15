@@ -1,0 +1,44 @@
+name: Code Checks
+
+on:
+  push:
+    branches: [master, dev]
+  pull_request:
+    branches: [master, dev]
+  workflow_dispatch:
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Code Checks
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Cache Cargo
+      uses: Swatinem/rust-cache@v2
+
+    - name: Check import group ordering
+      run: python3 scripts/utils/enforce_use_groups.py --test
+
+    - name: Check markdown formatting
+      run: python3 scripts/utils/format_markdown.py . --check
+
+    - name: Format check
+      run: cargo fmt --all -- --check
+
+    - name: Compile check
+      run: cargo check --workspace --all-targets

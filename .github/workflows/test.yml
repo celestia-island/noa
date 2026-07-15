@@ -1,8 +1,13 @@
+<<<<<<< HEAD
 name: Clippy
+=======
+name: Test
+>>>>>>> origin/dev
 
 on:
   pull_request:
     paths:
+<<<<<<< HEAD
       - '.github/workflows/clippy.yml'
       - 'noa/**/*'
       - 'noa-macros/**/*'
@@ -21,18 +26,48 @@ jobs:
         toolchain:
           - stable
           - nightly
+=======
+      - '.github/workflows/test.yml'
+      - 'src/**/*'
+      - 'bin/**/*'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  push:
+    branches: [master, dev]
+
+jobs:
+  test:
+    name: Test (${{ matrix.toolchain }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        toolchain: [stable, nightly]
+        include:
+          - os: windows-latest
+            toolchain: stable
+>>>>>>> origin/dev
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup toolchain
+<<<<<<< HEAD
         uses: dtolnay/rust-toolchain@master
+=======
+        uses: dtolnay/rust-toolchain@stable
+>>>>>>> origin/dev
         with:
           toolchain: ${{ matrix.toolchain }}
 
       - uses: Swatinem/rust-cache@v2
 
+<<<<<<< HEAD
       - name: Run unit test
+=======
+      - name: Run tests
+>>>>>>> origin/dev
         run: |
           cargo test \
             --all-targets \

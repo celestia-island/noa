@@ -1,0 +1,499 @@
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+use redb::ReadableTable;
+
+use crate::{
+    error::{NoaError, Result},
+    snapshot::SnapshotId,
+};
+
+pub fn validate_workspace_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        anyhow::bail!("workspace name must not be empty");
+    }
+    if name.len() > 255 {
+        anyhow::bail!("workspace name must be at most 255 characters");
+    }
+    if name.contains("..") {
+        anyhow::bail!("workspace name must not contain '..'");
+    }
+    if name.starts_with('.') {
+        anyhow::bail!("workspace name must not start with '.'");
+    }
+    for (i, ch) in name.char_indices() {
+        match ch {
+            '/' | '\\' | '\0' => {
+                anyhow::bail!(
+                    "invalid workspace name: contains invalid character {ch:?} at position {i}"
+                );
+            }
+            _ if ch.is_ascii_control() => {
+                anyhow::bail!(
+                    "invalid workspace name: contains control character U+{:04X} at position {i}",
+                    ch as u32
+                );
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Workspace {
+    pub name: String,
+    pub head: SnapshotId,
+    pub base: SnapshotId,
+    pub agent_id: Option<String>,
+    pub last_seq: u64,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
+const WORKSPACES: redb::TableDefinition<&str, &[u8]> = redb::TableDefinition::new("workspaces");
+
+#[derive(Clone)]
+pub struct WorkspaceManager {
+    db: Arc<redb::Database>,
+}
+
+impl WorkspaceManager {
+    pub fn new(db: Arc<redb::Database>) -> Result<Self> {
+        let mgr = WorkspaceManager { db };
+        mgr.ensure_table()?;
+        Ok(mgr)
+    }
+
+    fn ensure_table(&self) -> Result<()> {
+        let txn = self.db.begin_write()?;
+        txn.open_table(WORKSPACES)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    pub async fn create(&self, workspace: &Workspace) -> Result<()> {
+        validate_workspace_name(&workspace.name)?;
+        let db = self.db.clone();
+        let ws = workspace.clone();
+        tokio::task::spawn_blocking(move || {
+            let data = rmp_serde::to_vec(&ws)?;
+            let txn = db.begin_write()?;
+            {
+                let mut table = txn.open_table(WORKSPACES)?;
+                let exists = table.get(ws.name.as_str())?.is_some();
+                if exists {
+                    return Err(NoaError::WorkspaceAlreadyExists { name: ws.name }.into());
+                }
+                table.insert(ws.name.as_str(), data.as_slice())?;
+            }
+            txn.commit()?;
+            Ok(())
+        })
+        .await?
+    }
+
+    pub async fn get(&self, name: &str) -> Result<Option<Workspace>> {
+        let db = self.db.clone();
+        let name = name.to_string();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_read()?;
+            let table = txn.open_table(WORKSPACES)?;
+            match table.get(name.as_str())? {
+                Some(guard) => {
+                    let ws: Workspace = rmp_serde::from_slice(guard.value())?;
+                    Ok(Some(ws))
+                }
+                None => Ok(None),
+            }
+        })
+        .await?
+    }
+
+    pub async fn put(&self, workspace: &Workspace) -> Result<()> {
+        validate_workspace_name(&workspace.name)?;
+        let db = self.db.clone();
+        let name = workspace.name.clone();
+        let data = rmp_serde::to_vec(workspace)?;
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_write()?;
+            {
+                let mut table = txn.open_table(WORKSPACES)?;
+                table.insert(name.as_str(), data.as_slice())?;
+            }
+            txn.commit()?;
+            Ok(())
+        })
+        .await?
+    }
+
+    pub async fn delete(&self, name: &str) -> Result<bool> {
+        let db = self.db.clone();
+        let name = name.to_string();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_write()?;
+            let existed = {
+                let mut table = txn.open_table(WORKSPACES)?;
+                let removed = table.remove(name.as_str())?;
+                removed.is_some()
+            };
+            txn.commit()?;
+            Ok(existed)
+        })
+        .await?
+    }
+
+    pub async fn list(&self) -> Result<Vec<Workspace>> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_read()?;
+            let table = txn.open_table(WORKSPACES)?;
+            let mut result = Vec::new();
+            for entry in table.iter()? {
+                let (_, value) = entry?;
+                let ws: Workspace = rmp_serde::from_slice(value.value())?;
+                result.push(ws);
+            }
+            Ok(result)
+        })
+        .await?
+    }
+
+    async fn update_workspace<F>(&self, name: &str, update: F) -> Result<()>
+    where
+        F: FnOnce(&mut Workspace) + Send + 'static,
+    {
+        let db = self.db.clone();
+        let name = name.to_string();
+        let now = crate::now_micros();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_write()?;
+            {
+                let mut table = txn.open_table(WORKSPACES)?;
+                let ws_slice = {
+                    let guard = table
+                        .get(name.as_str())?
+                        .ok_or_else(|| NoaError::WorkspaceNotFound { name: name.clone() })?;
+                    guard.value().to_vec()
+                };
+                let mut ws: Workspace = rmp_serde::from_slice(&ws_slice)?;
+                ws.updated_at = now;
+                update(&mut ws);
+                let data = rmp_serde::to_vec(&ws)?;
+                table.insert(name.as_str(), data.as_slice())?;
+            }
+            txn.commit()?;
+            Ok(())
+        })
+        .await?
+    }
+
+    pub async fn update_head(&self, name: &str, new_head: &SnapshotId) -> Result<()> {
+        let new_head = new_head.clone();
+        self.update_workspace(name, move |ws| {
+            ws.head = new_head;
+        })
+        .await
+    }
+
+    pub async fn update_head_and_seq(
+        &self,
+        name: &str,
+        new_head: &SnapshotId,
+        last_seq: u64,
+    ) -> Result<()> {
+        let new_head = new_head.clone();
+        self.update_workspace(name, move |ws| {
+            ws.head = new_head;
+            ws.last_seq = last_seq;
+        })
+        .await
+    }
+
+    pub async fn update_head_seq_and_base(
+        &self,
+        name: &str,
+        new_head: &SnapshotId,
+        last_seq: u64,
+        new_base: &SnapshotId,
+    ) -> Result<()> {
+        let new_head = new_head.clone();
+        let new_base = new_base.clone();
+        self.update_workspace(name, move |ws| {
+            ws.head = new_head;
+            ws.last_seq = last_seq;
+            ws.base = new_base;
+        })
+        .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn make_manager() -> (TempDir, WorkspaceManager) {
+        let tmp = TempDir::new().unwrap();
+        let db = Arc::new(
+            redb::Database::builder()
+                .create(tmp.path().join("test.redb"))
+                .unwrap(),
+        );
+        let mgr = WorkspaceManager::new(db).unwrap();
+        (tmp, mgr)
+    }
+
+    fn make_workspace(name: &str) -> Workspace {
+        Workspace {
+            name: name.to_string(),
+            head: SnapshotId("noa_base".to_string()),
+            base: SnapshotId("noa_base".to_string()),
+            agent_id: None,
+            last_seq: 0,
+            created_at: 1000,
+            updated_at: 1000,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_and_get() {
+        let (_tmp, mgr) = make_manager();
+        let ws = make_workspace("default");
+        mgr.create(&ws).await.unwrap();
+        let got = mgr.get("default").await.unwrap().unwrap();
+        assert_eq!(got, ws);
+    }
+
+    #[tokio::test]
+    async fn test_create_duplicate_fails() {
+        let (_tmp, mgr) = make_manager();
+        mgr.create(&make_workspace("ws1")).await.unwrap();
+        let result = mgr.create(&make_workspace("ws1")).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_list() {
+        let (_tmp, mgr) = make_manager();
+        mgr.create(&make_workspace("a")).await.unwrap();
+        mgr.create(&make_workspace("b")).await.unwrap();
+        let list = mgr.list().await.unwrap();
+        assert_eq!(list.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_delete() {
+        let (_tmp, mgr) = make_manager();
+        mgr.create(&make_workspace("ws1")).await.unwrap();
+        mgr.delete("ws1").await.unwrap();
+        assert!(mgr.get("ws1").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_update_head() {
+        let (_tmp, mgr) = make_manager();
+        mgr.create(&make_workspace("ws1")).await.unwrap();
+        let new_head = SnapshotId("noa_new".to_string());
+        mgr.update_head("ws1", &new_head).await.unwrap();
+        let ws = mgr.get("ws1").await.unwrap().unwrap();
+        assert_eq!(ws.head, new_head);
+    }
+
+    #[tokio::test]
+    async fn test_get_nonexistent() {
+        let (_tmp, mgr) = make_manager();
+        assert!(mgr.get("missing").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_update_head_nonexistent() {
+        let (_tmp, mgr) = make_manager();
+        let result = mgr
+            .update_head("missing", &SnapshotId("noa_x".to_string()))
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_put_overwrites() {
+        let (_tmp, mgr) = make_manager();
+        let ws = make_workspace("ws1");
+        mgr.create(&ws).await.unwrap();
+        let mut updated = ws.clone();
+        updated.head = SnapshotId("noa_new_head".to_string());
+        mgr.put(&updated).await.unwrap();
+        let got = mgr.get("ws1").await.unwrap().unwrap();
+        assert_eq!(got.head, SnapshotId("noa_new_head".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_workspace_with_agent_id() {
+        let (_tmp, mgr) = make_manager();
+        let ws = Workspace {
+            name: "agent-ws".to_string(),
+            head: SnapshotId("noa_base".to_string()),
+            base: SnapshotId("noa_base".to_string()),
+            agent_id: Some("agent-007".to_string()),
+            last_seq: 0,
+            created_at: 1000,
+            updated_at: 1000,
+        };
+        mgr.create(&ws).await.unwrap();
+        let got = mgr.get("agent-ws").await.unwrap().unwrap();
+        assert_eq!(got.agent_id, Some("agent-007".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_update_head_updates_timestamp() {
+        let (_tmp, mgr) = make_manager();
+        let ws = make_workspace("ws1");
+        mgr.create(&ws).await.unwrap();
+        let before = mgr.get("ws1").await.unwrap().unwrap().updated_at;
+        std::thread::sleep(std::time::Duration::from_micros(100));
+        mgr.update_head("ws1", &SnapshotId("noa_new".to_string()))
+            .await
+            .unwrap();
+        let after = mgr.get("ws1").await.unwrap().unwrap().updated_at;
+        assert!(after >= before);
+    }
+
+    #[tokio::test]
+    async fn test_list_empty_after_delete_all() {
+        let (_tmp, mgr) = make_manager();
+        mgr.create(&make_workspace("a")).await.unwrap();
+        mgr.create(&make_workspace("b")).await.unwrap();
+        mgr.delete("a").await.unwrap();
+        mgr.delete("b").await.unwrap();
+        let list = mgr.list().await.unwrap();
+        assert!(list.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_workspace_serialization_roundtrip() {
+        let (_tmp, mgr) = make_manager();
+        let ws = Workspace {
+            name: "test".to_string(),
+            head: SnapshotId("noa_head".to_string()),
+            base: SnapshotId("noa_base".to_string()),
+            agent_id: Some("agent-001".to_string()),
+            last_seq: 5,
+            created_at: 12345,
+            updated_at: 67890,
+        };
+        mgr.create(&ws).await.unwrap();
+        let got = mgr.get("test").await.unwrap().unwrap();
+        assert_eq!(got, ws);
+    }
+
+    #[tokio::test]
+    async fn test_delete_nonexistent_returns_false() {
+        let (_tmp, mgr) = make_manager();
+        let existed = mgr.delete("ghost").await.unwrap();
+        assert!(!existed);
+    }
+
+    #[tokio::test]
+    async fn test_delete_existent_returns_true() {
+        let (_tmp, mgr) = make_manager();
+        mgr.create(&make_workspace("ws1")).await.unwrap();
+        let existed = mgr.delete("ws1").await.unwrap();
+        assert!(existed);
+        assert!(mgr.get("ws1").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_create_only_one_succeeds() {
+        let (_tmp, mgr) = make_manager();
+        let mgr2 = mgr.clone();
+        let ws1 = make_workspace("race-ws");
+        let ws2 = make_workspace("race-ws");
+        let (r1, r2) = tokio::join!(async { mgr.create(&ws1).await }, async {
+            mgr2.create(&ws2).await
+        });
+        let successes = [&r1, &r2].iter().filter(|r| r.is_ok()).count();
+        assert_eq!(successes, 1);
+        let ws = mgr.get("race-ws").await.unwrap().unwrap();
+        assert_eq!(ws.name, "race-ws");
+    }
+
+    #[tokio::test]
+    async fn test_update_head_and_seq() {
+        let (_tmp, mgr) = make_manager();
+        mgr.create(&make_workspace("ws1")).await.unwrap();
+        let new_head = SnapshotId("noa_updated".to_string());
+        mgr.update_head_and_seq("ws1", &new_head, 42).await.unwrap();
+        let ws = mgr.get("ws1").await.unwrap().unwrap();
+        assert_eq!(ws.head, new_head);
+        assert_eq!(ws.last_seq, 42);
+    }
+
+    #[tokio::test]
+    async fn test_update_head_and_seq_nonexistent() {
+        let (_tmp, mgr) = make_manager();
+        let result = mgr
+            .update_head_and_seq("missing", &SnapshotId("noa_x".to_string()), 1)
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_put_creates_if_missing() {
+        let (_tmp, mgr) = make_manager();
+        let ws = make_workspace("new-ws");
+        mgr.put(&ws).await.unwrap();
+        let got = mgr.get("new-ws").await.unwrap().unwrap();
+        assert_eq!(got.name, "new-ws");
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_update_head_is_atomic() {
+        let (_tmp, mgr) = make_manager();
+        mgr.create(&make_workspace("concurrent-ws")).await.unwrap();
+
+        let mgr2 = mgr.clone();
+        let h1 = SnapshotId("noa_head_1".to_string());
+        let h2 = SnapshotId("noa_head_2".to_string());
+
+        let (r1, r2) = tokio::join!(
+            async { mgr.update_head("concurrent-ws", &h1).await },
+            async { mgr2.update_head("concurrent-ws", &h2).await }
+        );
+
+        let successes = [&r1, &r2].iter().filter(|r| r.is_ok()).count();
+        assert!(successes >= 1, "at least one update_head must succeed");
+
+        let ws = mgr.get("concurrent-ws").await.unwrap().unwrap();
+        assert!(
+            ws.head == h1 || ws.head == h2,
+            "head must be one of the concurrent updates, got {}",
+            ws.head
+        );
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_update_head_and_seq_is_atomic() {
+        let (_tmp, mgr) = make_manager();
+        mgr.create(&make_workspace("atomic-ws")).await.unwrap();
+
+        let mgr2 = mgr.clone();
+        let h1 = SnapshotId("noa_head_seq_1".to_string());
+        let h2 = SnapshotId("noa_head_seq_2".to_string());
+
+        let (r1, r2) = tokio::join!(
+            async { mgr.update_head_and_seq("atomic-ws", &h1, 10).await },
+            async { mgr2.update_head_and_seq("atomic-ws", &h2, 20).await }
+        );
+
+        let successes = [&r1, &r2].iter().filter(|r| r.is_ok()).count();
+        assert!(successes >= 1);
+
+        let ws = mgr.get("atomic-ws").await.unwrap().unwrap();
+        let expected = if ws.head == h1 { (h1, 10) } else { (h2, 20) };
+        assert_eq!(
+            (ws.head, ws.last_seq),
+            expected,
+            "head and last_seq must be consistent"
+        );
+    }
+}
