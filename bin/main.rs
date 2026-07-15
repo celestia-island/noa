@@ -175,6 +175,20 @@ enum HookSub {
         noa_bin: Option<String>,
     },
     PreCommit,
+    ValidateMsg {
+        #[arg(long, short)]
+        message: String,
+        #[arg(long, short, default_value = "celestia")]
+        preset: String,
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+    },
+    InstallAction {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
 }
 #[derive(Subcommand)]
 enum StorageSub {
@@ -384,6 +398,21 @@ async fn main() -> anyhow::Result<()> {
                 })?;
             }
             HookSub::PreCommit => cli::hook_cmd::run_pre_commit()?,
+            HookSub::ValidateMsg {
+                message,
+                preset,
+                repo,
+            } => {
+                cli::hook_cmd::validate_msg(cli::hook_cmd::ValidateMsgArgs {
+                    message,
+                    preset: Some(preset),
+                    repo,
+                })?;
+                println!("OK");
+            }
+            HookSub::InstallAction { repo, force } => {
+                cli::hook_cmd::install_action(cli::hook_cmd::InstallActionArgs { repo, force })?;
+            }
         },
         #[cfg(unix)]
         Some(Commands::Sync { socket, path }) => {

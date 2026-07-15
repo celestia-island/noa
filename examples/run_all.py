@@ -39,9 +39,9 @@ def main() -> None:
         results.append((name, passed, result.stdout + result.stderr))
 
         if passed:
-            print(f"  PASS")
+            print("  PASS")
         else:
-            print(f"  FAIL")
+            print("  FAIL")
             print(result.stdout)
             print(result.stderr)
 
