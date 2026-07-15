@@ -1,20 +1,10 @@
-<<<<<<< HEAD
 name: Publish
 
-=======
-<<<<<<< HEAD
-name: Publish docker image
-=======
-name: Publish
-
->>>>>>> origin/dev
->>>>>>> origin/dev
 on:
   push:
     tags: [v*]
 
 jobs:
-<<<<<<< HEAD
   verify-version:
     name: Verify version consistency
     runs-on: ubuntu-latest
@@ -38,65 +28,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: verify-version
-=======
-<<<<<<< HEAD
-  publish:
-    name: Publish to crates.io
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-=======
-  verify-version:
-    name: Verify version consistency
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Extract tag version
-        id: tag
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
-      - name: Check Cargo.toml version matches tag
-        run: |
-          TAG_VERSION="${{ steps.tag.outputs.version }}"
-          CARGO_VERSION=$(grep -oP '^version\s*=\s*"\K[^"]+' Cargo.toml | head -1)
-          if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
-            echo "::error::Cargo.toml version ($CARGO_VERSION) != tag ($TAG_VERSION)"
-            exit 1
-          fi
-          echo "Version matches tag v$TAG_VERSION"
-
-  publish-crates:
-    name: Publish to crates.io
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: verify-version
->>>>>>> origin/dev
->>>>>>> origin/dev
 
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
-
->>>>>>> origin/dev
       - uses: Swatinem/rust-cache@v2
 
-<<<<<<< HEAD
-=======
-      - run: cargo login ${{ secrets.CRATES_IO_API_TOKEN }}
-      - run: |-
-          cargo release \
-            publish \
-            --workspace \
-            --all-features \
-            --allow-branch HEAD \
-            --no-confirm \
-            --no-verify \
-            --execute
-=======
-      - uses: Swatinem/rust-cache@v2
-
->>>>>>> origin/dev
       - name: Publish libnoa to crates.io
         env:
           CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
@@ -232,7 +169,3 @@ jobs:
           files: |
             release-assets/*.tar.gz
             release-assets/*.zip
-<<<<<<< HEAD
-=======
->>>>>>> origin/dev
->>>>>>> origin/dev
