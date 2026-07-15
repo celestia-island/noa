@@ -35,3 +35,9 @@ Thumbs.db
 
 # redb database files (should never be committed)
 *.redb
+
+dist/
+
+# celestia-devtools: staged-on-demand shared justfile recipes (just fetch)
+/.just/
+/celestia-devtools.just

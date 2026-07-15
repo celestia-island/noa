@@ -22,7 +22,7 @@ NUM_AGENTS = 10
 def main() -> None:
     print("=== Example 2: Multi-Agent Workflow ===")
 
-    log(f"Initializing repo")
+    log("Initializing repo")
     init_repo(REPO)
 
     log(f"Creating {NUM_AGENTS} agent workspaces sequentially")
@@ -45,7 +45,7 @@ def main() -> None:
     r = noa("log", "--workspace", "agent-000", "--limit", "50", cwd=REPO)
     snapshot_count = r.stdout.count("noa_")
     log(f"Found {snapshot_count} snapshots in agent-000")
-    assert snapshot_count >= 1, f"expected at least 1 snapshot"
+    assert snapshot_count >= 1, "expected at least 1 snapshot"
 
     r = noa("snapshot", "list", cwd=REPO)
     total = r.stdout.count("noa_")
