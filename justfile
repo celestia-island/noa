@@ -1,5 +1,6 @@
 # noa justfile
 
+<<<<<<< HEAD
 set unstable
 set shell := ["bash", "-c"]
 set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
@@ -14,6 +15,40 @@ python_cmd := if os_family() == "windows" {
 }
 
 import "./celestia-devtools.just"
+=======
+set shell := ["bash", "-c"]
+set windows-shell := ["bash.exe", "-c"]
+set unstable
+set lists
+
+# Shared celestia-devtools recipes — NOT in git. This justfile references shared
+# variables, so the import is REQUIRED. Bootstrap once: celestia-devtools init
+# (or `just fetch` if already staged). Refresh after upgrades.
+import? "./.just/git-bash-interop.just"
+import "./.just/celestia-devtools.just"
+
+# Stage shared celestia-devtools recipes into .just/ (gitignored).
+# Source order: explicit URL arg → local pip bundle (offline) → GitHub raw.
+# curl honors HTTP_PROXY/HTTPS_PROXY/ALL_PROXY env vars automatically.
+[script('bash')]
+fetch URL='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=.just/celestia-devtools.just
+    mkdir -p .just
+    if [ -n "{{URL}}" ]; then
+      echo "[fetch] {{URL}} -> $out"
+      curl -fsSL "{{URL}}" -o "$out"
+    elif command -v celestia-devtools >/dev/null 2>&1; then
+      src=$(celestia-devtools include-path)
+      echo "[fetch] local bundle ($src) -> $out"
+      cp "$src" "$out"
+    else
+      echo "[fetch] github raw -> $out"
+      curl -fsSL "https://raw.githubusercontent.com/celestia-island/celestia-devtools/dev/src/celestia_devtools/common.just" -o "$out"
+    fi
+    echo "[fetch] wrote $out"
+>>>>>>> origin/dev
 
 default:
     @just --list
