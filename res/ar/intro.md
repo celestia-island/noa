@@ -1,4 +1,4 @@
-<p align="center"><img src="https://raw.githubusercontent.com/celestia-island/noa/master/docs/logo.webp" alt="noa" width="200" /></p>
+<p align="center"><img src="https://raw.githubusercontent.com/celestia-island/docs.celestia.world/dev/res/logo/noa.webp" alt="noa" width="200" /></p>
 
 <h1 align="center">Noa</h1>
 
