@@ -13,8 +13,6 @@ pub struct InstallArgs {
     pub noa_bin: Option<String>,
 }
 
-<<<<<<< HEAD
-=======
 pub struct ValidateMsgArgs {
     pub message: String,
     pub preset: Option<String>,
@@ -86,7 +84,7 @@ pub fn validate_msg(args: ValidateMsgArgs) -> Result<()> {
 /// Strip a leading emoji / multi-codepoint emoji sequence from `s`.
 fn strip_leading_emoji(s: &str) -> &str {
     let mut indices = s.char_indices();
-    while let Some((i, c)) = indices.next() {
+    for (i, c) in indices {
         if c.is_ascii_whitespace() {
             continue;
         }
@@ -163,12 +161,11 @@ impl MessageRules {
     }
 }
 
->>>>>>> origin/dev
 /// Install noa-managed git hooks into the target repository's `.git/hooks/`
 /// directory. Currently this is just `commit-msg` (AI co-author trailers).
 ///
 /// Pre-commit build/secret validation used to live here but has moved to
-/// entelecheia's review agent — it is not noa's responsibility. The
+/// entelecheia's review agent 鈥?it is not noa's responsibility. The
 /// `noa hook pre-commit` subcommand is retained as a no-op so hooks installed
 /// by older noa versions don't break (they just do nothing).
 pub fn run(args: InstallArgs) -> Result<()> {
@@ -267,8 +264,6 @@ pub fn run_pre_commit() -> Result<()> {
     Ok(())
 }
 
-<<<<<<< HEAD
-=======
 pub struct InstallActionArgs {
     pub repo: PathBuf,
     pub force: bool,
@@ -280,8 +275,8 @@ const SQUASH_MSG_CLEAN_YML: &str = include_str!("../../assets/squash-msg-clean.y
 /// Install noa's GitHub Action workflows into `.github/workflows/`.
 ///
 /// Writes two workflow files:
-/// - `pr-title-check.yml` — validates PR titles on open/edit/sync.
-/// - `squash-msg-clean.yml` — amends squash-merge bodies to 1 line on push to master.
+/// - `pr-title-check.yml` 鈥?validates PR titles on open/edit/sync.
+/// - `squash-msg-clean.yml` 鈥?amends squash-merge bodies to 1 line on push to master.
 ///
 /// Refuses to overwrite existing files unless `--force` is used.
 pub fn install_action(args: InstallActionArgs) -> Result<()> {
@@ -289,10 +284,23 @@ pub fn install_action(args: InstallActionArgs) -> Result<()> {
     std::fs::create_dir_all(&workflows_dir)
         .with_context(|| format!("creating {}", workflows_dir.display()))?;
 
-    install_workflow(&workflows_dir, "pr-title-check.yml", PR_TITLE_CHECK_YML, args.force)?;
-    install_workflow(&workflows_dir, "squash-msg-clean.yml", SQUASH_MSG_CLEAN_YML, args.force)?;
+    install_workflow(
+        &workflows_dir,
+        "pr-title-check.yml",
+        PR_TITLE_CHECK_YML,
+        args.force,
+    )?;
+    install_workflow(
+        &workflows_dir,
+        "squash-msg-clean.yml",
+        SQUASH_MSG_CLEAN_YML,
+        args.force,
+    )?;
 
-    println!("Installed noa GitHub Actions into {}", workflows_dir.display());
+    println!(
+        "Installed noa GitHub Actions into {}",
+        workflows_dir.display()
+    );
     Ok(())
 }
 
@@ -300,17 +308,15 @@ fn install_workflow(dir: &Path, name: &str, content: &str, force: bool) -> Resul
     let path = dir.join(name);
     if path.exists() && !force {
         bail!(
-            "{} already exists — use --force to overwrite",
+            "{} already exists 鈥?use --force to overwrite",
             path.display()
         );
     }
-    std::fs::write(&path, content)
-        .with_context(|| format!("writing {}", path.display()))?;
+    std::fs::write(&path, content).with_context(|| format!("writing {}", path.display()))?;
     println!("  {name}");
     Ok(())
 }
 
->>>>>>> origin/dev
 fn detect_noa_bin() -> Option<String> {
     if let Ok(exe) = std::env::current_exe() {
         return Some(exe.to_string_lossy().to_string());
