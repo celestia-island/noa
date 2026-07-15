@@ -33,44 +33,28 @@ def main() -> None:
     noa("workspace", "switch", "feature-1", cwd=REPO)
 
     r = noa("status", cwd=REPO)
-<<<<<<< HEAD
-    assert "feature-1" in r.stdout, f"expected 'feature-1' in status"
-=======
     assert "feature-1" in r.stdout, "expected 'feature-1' in status"
->>>>>>> origin/dev
     log(f"Status: {r.stdout.strip()}")
 
     log("Creating snapshot with message")
     noa("snapshot", "create", "-m", "initial empty snapshot", cwd=REPO)
 
     r = noa("snapshot", "list", cwd=REPO)
-<<<<<<< HEAD
-    assert "initial empty snapshot" in r.stdout, f"snapshot not found in list"
-=======
     assert "initial empty snapshot" in r.stdout, "snapshot not found in list"
->>>>>>> origin/dev
     log(f"Snapshots: {r.stdout.strip()}")
 
     log("Creating another snapshot")
     noa("snapshot", "create", "-m", "second snapshot", "-a", "agent-1", cwd=REPO)
 
     r = noa("log", cwd=REPO)
-<<<<<<< HEAD
-    assert "agent-1" in r.stdout, f"author not found in log"
-=======
     assert "agent-1" in r.stdout, "author not found in log"
->>>>>>> origin/dev
     log(f"Log: {r.stdout.strip()}")
 
     log("Adding remote")
     noa("remote", "add", "origin", "https://github.com/example/test.git", cwd=REPO)
 
     r = noa("remote", "list", cwd=REPO)
-<<<<<<< HEAD
-    assert "origin" in r.stdout, f"remote not listed"
-=======
     assert "origin" in r.stdout, "remote not listed"
->>>>>>> origin/dev
     log(f"Remotes: {r.stdout.strip()}")
 
     log("Switching back to default")
@@ -80,11 +64,7 @@ def main() -> None:
     noa("workspace", "delete", "feature-1", cwd=REPO)
 
     r = noa("workspace", "list", cwd=REPO)
-<<<<<<< HEAD
-    assert "feature-1" not in r.stdout, f"workspace not deleted"
-=======
     assert "feature-1" not in r.stdout, "workspace not deleted"
->>>>>>> origin/dev
     log(f"Final workspaces: {r.stdout.strip()}")
 
     print("\n=== Example 1 PASSED ===\n")

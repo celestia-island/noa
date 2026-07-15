@@ -41,10 +41,6 @@ def main() -> None:
     log(f"After removal: {r.stdout.strip()}")
 
     log("Verifying config persistence")
-<<<<<<< HEAD
-    import configparser
-=======
->>>>>>> origin/dev
     config_path = REPO / ".noa" / "config"
     content = config_path.read_text()
     assert "origin" in content, "origin not persisted in config"
