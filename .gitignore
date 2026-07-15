@@ -1,9 +1,3 @@
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
-/target
-=======
->>>>>>> origin/dev
 # Rust
 /target/
 Cargo.lock
@@ -41,13 +35,9 @@ Thumbs.db
 
 # redb database files (should never be committed)
 *.redb
-<<<<<<< HEAD
-=======
 
 dist/
 
 # celestia-devtools: staged-on-demand shared justfile recipes (just fetch)
 /.just/
 /celestia-devtools.just
->>>>>>> origin/dev
->>>>>>> origin/dev
