@@ -1,5 +1,21 @@
 # noa justfile
 
+<<<<<<< HEAD
+set unstable
+set shell := ["bash", "-c"]
+set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
+set lists
+
+python_cmd := if os_family() == "windows" {
+    "python"
+} else if which("python3") != "" {
+    "python3"
+} else {
+    "python"
+}
+
+import "./celestia-devtools.just"
+=======
 set shell := ["bash", "-c"]
 set windows-shell := ["bash.exe", "-c"]
 set unstable
@@ -32,6 +48,7 @@ fetch URL='':
       curl -fsSL "https://raw.githubusercontent.com/celestia-island/celestia-devtools/dev/src/celestia_devtools/common.just" -o "$out"
     fi
     echo "[fetch] wrote $out"
+>>>>>>> origin/dev
 
 default:
     @just --list

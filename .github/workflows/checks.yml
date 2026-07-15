@@ -34,9 +34,12 @@ jobs:
     - name: Check import group ordering
       run: python3 scripts/utils/enforce_use_groups.py --test
 
+<<<<<<< HEAD
+=======
     - name: Check markdown formatting
       run: python3 scripts/utils/format_markdown.py . --check
 
+>>>>>>> origin/dev
     - name: Format check
       run: cargo fmt --all -- --check
 

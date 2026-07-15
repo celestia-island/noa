@@ -13,6 +13,8 @@ pub struct InstallArgs {
     pub noa_bin: Option<String>,
 }
 
+<<<<<<< HEAD
+=======
 pub struct ValidateMsgArgs {
     pub message: String,
     pub preset: Option<String>,
@@ -161,6 +163,7 @@ impl MessageRules {
     }
 }
 
+>>>>>>> origin/dev
 /// Install noa-managed git hooks into the target repository's `.git/hooks/`
 /// directory. Currently this is just `commit-msg` (AI co-author trailers).
 ///
@@ -264,6 +267,8 @@ pub fn run_pre_commit() -> Result<()> {
     Ok(())
 }
 
+<<<<<<< HEAD
+=======
 pub struct InstallActionArgs {
     pub repo: PathBuf,
     pub force: bool,
@@ -305,6 +310,7 @@ fn install_workflow(dir: &Path, name: &str, content: &str, force: bool) -> Resul
     Ok(())
 }
 
+>>>>>>> origin/dev
 fn detect_noa_bin() -> Option<String> {
     if let Ok(exe) = std::env::current_exe() {
         return Some(exe.to_string_lossy().to_string());

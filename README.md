@@ -1,28 +1,57 @@
 <<<<<<< HEAD
+<p align="center"><img src="https://raw.githubusercontent.com/celestia-island/noa/master/docs/logo.webp" alt="noa" width="200" /></p>
+=======
+<<<<<<< HEAD
 <img src="splash.png" alt="noa" />
+>>>>>>> origin/dev
 
-![Crates.io License](https://img.shields.io/crates/l/noa)
-[![Crates.io Version](https://img.shields.io/crates/v/noa)](https://docs.rs/noa)
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/celestia-island/noa/test.yml)
+<h1 align="center">Noa</h1>
 
-## Introduction
+<p align="center"><strong>AI-native distributed version control system</strong></p>
 
-This is a helper library to generate internationalized markdown documentation via comment macros.
+<div align="center">
 
-The name `noa` comes from the character [Noa](https://bluearchive.wiki/wiki/Noa) in the game [Blue Archive](https://bluearchive.jp/).
+[![License](https://img.shields.io/badge/license-SySL--1.0-blue.svg)](https://sysl.celestia.world)
+[![GitHub](https://img.shields.io/badge/github-celestia--island%2Fnoa-blue.svg)](https://github.com/celestia-island/noa)
+
+</div>
+
+<div align="center">
+
+**English** ·
+[简体中文](./docs/zhs/intro.md) ·
+[繁體中文](./docs/zht/intro.md) ·
+[日本語](./docs/ja/intro.md) ·
+[한국어](./docs/ko/intro.md) ·
+[Français](./docs/fr/intro.md) ·
+[Español](./docs/es/intro.md) ·
+[Русский](./docs/ru/intro.md) ·
+[العربية](./docs/ar/intro.md)
+
+</div>
+
+Per-agent workspace isolation, JSONL append-only logs, snapshot-based history, and full git protocol compatibility.
 
 ## Quick Start
 
-```rust
-use noa::generate_document;
+```bash
+# Build
+cargo build --release
 
-#[generate_document]
-pub mod doc {
-    /// # Hello
-    ///
-    /// This is a test.
-}
+# Run tests
+cargo test --all-features
+
+# Initialize a noa repository
+noa init
+
+# Create a snapshot
+noa snapshot
+
+# View the TUI
+noa tui
 ```
+<<<<<<< HEAD
+=======
 =======
 <p align="center"><img src="https://raw.githubusercontent.com/celestia-island/docs.celestia.world/dev/res/logo/noa.webp" alt="noa" width="200" /></p>
 
@@ -71,6 +100,7 @@ noa snapshot
 # View the TUI
 noa tui
 ```
+>>>>>>> origin/dev
 
 For a full list of commands:
 
@@ -83,4 +113,7 @@ noa --help
 Architecture, design, and guides live at [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en).
 
 Source: [noa](https://github.com/celestia-island/noa).
+<<<<<<< HEAD
+=======
+>>>>>>> origin/dev
 >>>>>>> origin/dev

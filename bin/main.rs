@@ -175,6 +175,8 @@ enum HookSub {
         noa_bin: Option<String>,
     },
     PreCommit,
+<<<<<<< HEAD
+=======
     ValidateMsg {
         #[arg(long, short)]
         message: String,
@@ -189,6 +191,7 @@ enum HookSub {
         #[arg(long, default_value_t = false)]
         force: bool,
     },
+>>>>>>> origin/dev
 }
 #[derive(Subcommand)]
 enum StorageSub {
@@ -398,6 +401,8 @@ async fn main() -> anyhow::Result<()> {
                 })?;
             }
             HookSub::PreCommit => cli::hook_cmd::run_pre_commit()?,
+<<<<<<< HEAD
+=======
             HookSub::ValidateMsg {
                 message,
                 preset,
@@ -416,6 +421,7 @@ async fn main() -> anyhow::Result<()> {
                     force,
                 })?;
             }
+>>>>>>> origin/dev
         },
         #[cfg(unix)]
         Some(Commands::Sync { socket, path }) => {

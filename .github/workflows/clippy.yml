@@ -5,6 +5,14 @@ on:
     paths:
       - '.github/workflows/clippy.yml'
 <<<<<<< HEAD
+      - 'src/**/*'
+      - 'bin/**/*'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  push:
+    branches: [master, dev]
+=======
+<<<<<<< HEAD
       - 'noa/**/*'
       - 'noa-macros/**/*'
       - 'Cargo.toml'
@@ -18,6 +26,7 @@ on:
       - 'Cargo.lock'
   push:
     branches: [master, dev]
+>>>>>>> origin/dev
 >>>>>>> origin/dev
 
 jobs:

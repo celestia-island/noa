@@ -3,6 +3,16 @@ on:
   pull_request:
     paths:
 <<<<<<< HEAD
+      - '.github/workflows/fmt.yml'
+      - 'src/**/*'
+      - 'bin/**/*'
+      - 'scripts/**/*'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  push:
+    branches: [master, dev]
+=======
+<<<<<<< HEAD
       - '.github/workflows/clippy.yml'
       - 'noa/**/*'
       - 'noa-macros/**/*'
@@ -19,6 +29,7 @@ on:
       - 'Cargo.lock'
   push:
     branches: [master, dev]
+>>>>>>> origin/dev
 >>>>>>> origin/dev
 
 jobs:
@@ -40,6 +51,12 @@ jobs:
           components: rustfmt
 
 <<<<<<< HEAD
+      - name: Check import group ordering
+        run: python3 scripts/utils/enforce_use_groups.py --test
+
+      - name: Run cargo fmt
+=======
+<<<<<<< HEAD
       - name: Run fmt
 =======
       - name: Check import group ordering
@@ -49,5 +66,6 @@ jobs:
         run: python3 scripts/utils/format_markdown.py . --check
 
       - name: Run cargo fmt
+>>>>>>> origin/dev
 >>>>>>> origin/dev
         run: cargo +nightly fmt --all -- --check --unstable-features

@@ -39,9 +39,15 @@ def main() -> None:
         results.append((name, passed, result.stdout + result.stderr))
 
         if passed:
+<<<<<<< HEAD
+            print(f"  PASS")
+        else:
+            print(f"  FAIL")
+=======
             print("  PASS")
         else:
             print("  FAIL")
+>>>>>>> origin/dev
             print(result.stdout)
             print(result.stderr)
 
