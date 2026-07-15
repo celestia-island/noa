@@ -1,0 +1,7 @@
+
+
+[preset.celestia]
+required_prefix_pattern = "^[\\u{2600}-\\u{27BF}\\u{2B50}\\u{1F300}-\\u{1F9FF}\\u{1FA00}-\\u{1FA6F}\\u{1FA70}-\\u{1FAFF}\\u{2702}-\\u{27B0}\\u{1F600}-\\u{1F64F}]"
+require_capitalized = true
+require_period = true
+pr_suffix_format = " (#%d)"

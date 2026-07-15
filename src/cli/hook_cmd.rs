@@ -13,11 +13,159 @@ pub struct InstallArgs {
     pub noa_bin: Option<String>,
 }
 
+pub struct ValidateMsgArgs {
+    pub message: String,
+    pub preset: Option<String>,
+    pub repo: PathBuf,
+}
+
+/// Validate a commit / PR-title message against a named preset.
+///
+/// Rules are loaded from `.noa/message-rules.toml` in the given repository
+/// (or the built-in `celestia` preset when no config file exists). The preset
+/// name defaults to `celestia`. Returns `Ok(())` when the message passes all
+/// checks, or an error describing the first violation.
+pub fn validate_msg(args: ValidateMsgArgs) -> Result<()> {
+    let preset_name = args.preset.unwrap_or_else(|| "celestia".to_string());
+    let rules = load_rules(&args.repo, &preset_name)?;
+    let msg = args.message.trim();
+
+    if msg.is_empty() {
+        bail!("message is empty");
+    }
+
+    // 1. Gitmoji prefix check.
+    if let Some(ref pattern) = rules.required_prefix_pattern {
+        let re = regex::Regex::new(pattern)
+            .with_context(|| format!("invalid prefix regex: {pattern}"))?;
+        if !re.is_match_at(msg, 0) {
+            bail!(
+                "message must start with a gitmoji (pattern: {pattern})\n\
+                 see https://gitmoji.dev for the full list"
+            );
+        }
+    }
+
+    // 2. After stripping emoji, first letter must be uppercase.
+    let after_emoji = strip_leading_emoji(msg);
+    if rules.require_capitalized && !after_emoji.is_empty() {
+        let first_char = after_emoji.chars().next().unwrap();
+        if first_char != first_char.to_uppercase().next().unwrap() {
+            bail!("message must start with a capital letter after the gitmoji");
+        }
+    }
+
+    // 3. Must end with a period (before any PR suffix).
+    if rules.require_period {
+        let base = strip_pr_suffix(after_emoji);
+        if !base.trim_end().ends_with('.') {
+            bail!("message must end with a period (.)");
+        }
+    }
+
+    // 4. PR suffix format check.
+    if let Some(ref _fmt) = rules.pr_suffix_format {
+        let body = after_emoji.trim();
+        if let Some(suffix_start) = body.rfind(" (#") {
+            let suffix = &body[suffix_start..];
+            if !suffix.ends_with(')') {
+                bail!("PR reference must end with )");
+            }
+            let num_str = &suffix[3..suffix.len() - 1];
+            if num_str.parse::<u64>().is_err() {
+                bail!("PR reference must be a number: {suffix}");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Strip a leading emoji / multi-codepoint emoji sequence from `s`.
+fn strip_leading_emoji(s: &str) -> &str {
+    let indices = s.char_indices();
+    for (i, c) in indices {
+        if c.is_ascii_whitespace() {
+            continue;
+        }
+        if c as u32 >= 0x2000 || c.is_alphabetic() || c.is_ascii_punctuation() {
+            return &s[i..];
+        }
+        if c.is_ascii() {
+            return &s[i..];
+        }
+    }
+    s
+}
+
+/// Remove a trailing ` (#999)` suffix from `s` and return the text before it.
+fn strip_pr_suffix(s: &str) -> &str {
+    let s = s.trim();
+    if let Some(pos) = s.rfind(" (#") {
+        if s[pos..].ends_with(')') {
+            return s[..pos].trim_end();
+        }
+    }
+    s
+}
+
+/// Load message validation rules for `preset_name` from `.noa/message-rules.toml`
+/// in the given repository, falling back to the built-in `celestia` preset.
+fn load_rules(repo: &Path, preset_name: &str) -> Result<MessageRules> {
+    let config_path = repo.join(".noa").join("message-rules.toml");
+    if config_path.exists() {
+        let content = std::fs::read_to_string(&config_path)
+            .with_context(|| format!("reading {}", config_path.display()))?;
+        let config: RulesConfig = toml::from_str(&content)
+            .with_context(|| format!("parsing {}", config_path.display()))?;
+        if let Some(rules) = config.preset.get(preset_name) {
+            return Ok(rules.clone());
+        }
+    }
+    // Fall back to built-in celestia preset.
+    if preset_name == "celestia" {
+        Ok(MessageRules::celestia())
+    } else {
+        bail!(
+            "preset '{preset_name}' not found in {}",
+            config_path.display()
+        );
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct RulesConfig {
+    preset: std::collections::HashMap<String, MessageRules>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct MessageRules {
+    #[serde(default)]
+    required_prefix_pattern: Option<String>,
+    #[serde(default)]
+    require_capitalized: bool,
+    #[serde(default)]
+    require_period: bool,
+    #[serde(default)]
+    pr_suffix_format: Option<String>,
+}
+
+impl MessageRules {
+    fn celestia() -> Self {
+        Self {
+            required_prefix_pattern: Some(r"^[\u{2600}-\u{27BF}\u{2B50}\u{1F300}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2702}-\u{27B0}\u{1F600}-\u{1F64F}]".to_string()),
+            require_capitalized: true,
+            require_period: true,
+            pr_suffix_format: Some(" (#%d)".to_string()),
+        }
+    }
+}
+
 /// Install noa-managed git hooks into the target repository's `.git/hooks/`
 /// directory. Currently this is just `commit-msg` (AI co-author trailers).
 ///
 /// Pre-commit build/secret validation used to live here but has moved to
-/// entelecheia's review agent — it is not noa's responsibility. The
+/// entelecheia's review agent 鈥?it is not noa's responsibility. The
 /// `noa hook pre-commit` subcommand is retained as a no-op so hooks installed
 /// by older noa versions don't break (they just do nothing).
 pub fn run(args: InstallArgs) -> Result<()> {
@@ -113,6 +261,59 @@ pub fn run_pre_commit() -> Result<()> {
         "[noa pre-commit] pre-commit checks have moved to the entelecheia review \
          agent; this hook is now a no-op and can be removed from .git/hooks."
     );
+    Ok(())
+}
+
+pub struct InstallActionArgs {
+    pub repo: PathBuf,
+    pub force: bool,
+}
+
+const PR_TITLE_CHECK_YML: &str = include_str!("../../assets/pr-title-check.yml");
+const SQUASH_MSG_CLEAN_YML: &str = include_str!("../../assets/squash-msg-clean.yml");
+
+/// Install noa's GitHub Action workflows into `.github/workflows/`.
+///
+/// Writes two workflow files:
+/// - `pr-title-check.yml` 鈥?validates PR titles on open/edit/sync.
+/// - `squash-msg-clean.yml` 鈥?amends squash-merge bodies to 1 line on push to master.
+///
+/// Refuses to overwrite existing files unless `--force` is used.
+pub fn install_action(args: InstallActionArgs) -> Result<()> {
+    let workflows_dir = args.repo.join(".github").join("workflows");
+    std::fs::create_dir_all(&workflows_dir)
+        .with_context(|| format!("creating {}", workflows_dir.display()))?;
+
+    install_workflow(
+        &workflows_dir,
+        "pr-title-check.yml",
+        PR_TITLE_CHECK_YML,
+        args.force,
+    )?;
+    install_workflow(
+        &workflows_dir,
+        "squash-msg-clean.yml",
+        SQUASH_MSG_CLEAN_YML,
+        args.force,
+    )?;
+
+    println!(
+        "Installed noa GitHub Actions into {}",
+        workflows_dir.display()
+    );
+    Ok(())
+}
+
+fn install_workflow(dir: &Path, name: &str, content: &str, force: bool) -> Result<()> {
+    let path = dir.join(name);
+    if path.exists() && !force {
+        bail!(
+            "{} already exists 鈥?use --force to overwrite",
+            path.display()
+        );
+    }
+    std::fs::write(&path, content).with_context(|| format!("writing {}", path.display()))?;
+    println!("  {name}");
     Ok(())
 }
 
