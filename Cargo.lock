@@ -4798,6 +4798,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b142a20ec14a91d5bc708c1dc21b080c550113d8aa77afa29635673a65dd02c5"
 
 [[patch.unused]]
+name = "aoba"
+version = "0.2.0"
+
+[[patch.unused]]
+name = "kirino"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "evernight"
+version = "0.1.0"
+
+[[patch.unused]]
 name = "_bootloader"
 version = "0.1.0"
 
@@ -4875,16 +4887,4 @@ version = "0.1.0"
 
 [[patch.unused]]
 name = "arona"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "aoba"
-version = "0.2.0"
-
-[[patch.unused]]
-name = "kirino"
-version = "0.5.0"
-
-[[patch.unused]]
-name = "evernight"
 version = "0.1.0"
