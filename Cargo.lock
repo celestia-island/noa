@@ -2850,7 +2850,7 @@ dependencies = [
  "chrono",
  "clap",
  "crossterm",
- "getrandom 0.2.17",
+ "getrandom 0.4.3",
  "gix",
  "hex",
  "hyper-rustls",

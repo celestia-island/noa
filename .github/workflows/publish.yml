@@ -9,7 +9,7 @@ jobs:
     name: Verify version consistency
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Extract tag version
         id: tag
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
@@ -30,7 +30,7 @@ jobs:
     needs: verify-version
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Ensure tag is on master
         run: |
@@ -101,7 +101,7 @@ jobs:
             ext: zip
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -171,7 +171,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
