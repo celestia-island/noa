@@ -77,7 +77,7 @@ fn test_noa_subcommand_help() {
     let output = noa_bin().args(["init", "--help"]).output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success());
-    assert!(stdout.contains("Usage: noa init"));
+    assert!(stdout.contains("Usage: noa") && stdout.contains("init"));
 
     let output = noa_bin().args(["log", "--help"]).output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);

@@ -4796,3 +4796,95 @@ name = "zlib-rs"
 version = "0.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b142a20ec14a91d5bc708c1dc21b080c550113d8aa77afa29635673a65dd02c5"
+
+[[patch.unused]]
+name = "aoba"
+version = "0.2.0"
+
+[[patch.unused]]
+name = "kirino"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "evernight"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "_bootloader"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "_config"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "_container"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "_container_runtime"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "_core"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "_custom_agent"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "_domain_agent"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "_domain_skills"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "_domain_skills_permissions"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "_infra_jsonrpc"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "_infra_services"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "_infra_utils"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "_llm_provider"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "_macros"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "_prompt"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "_res"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "_state_sync"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "_text"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "_timeline"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "arona"
+version = "0.1.0"
