@@ -58,6 +58,7 @@ clean:
 # Format & Lint
 
 fmt:
+    just fmt-toml
     cargo clippy --workspace --lib --bins -- -D warnings
     {{ python_cmd }} scripts/utils/enforce_use_groups.py
     cargo fmt --all
