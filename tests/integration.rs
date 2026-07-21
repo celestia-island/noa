@@ -986,9 +986,9 @@ async fn integration_multiple_merge_rounds() {
     assert!(names.contains(&"b.rs"));
 }
 
-// ============================================================
+// ------
 // Batch 1: Multi-branch lifecycle (Git t3200 patterns)
-// ============================================================
+// ------
 
 #[tokio::test]
 async fn branch_create_fails_on_duplicate() {
@@ -1170,9 +1170,9 @@ async fn branch_with_agent_id() {
     );
 }
 
-// ============================================================
+// ------
 // Batch 2: Merge conflict matrix (Git t7600/t7605 patterns)
-// ============================================================
+// ------
 
 fn te(name: &str, id: &str) -> libnoa::object::TreeEntry {
     make_entry(name, id)
@@ -1388,9 +1388,9 @@ fn merge_idempotent() {
     );
 }
 
-// ============================================================
+// ------
 // Batch 3: Snapshot, compaction, diff edge cases
-// ============================================================
+// ------
 
 #[tokio::test]
 async fn snapshot_empty_tree() {
