@@ -29,6 +29,6 @@
 
 ## ドキュメント
 
-アーキテクチャ、設計、ガイドは [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en) にあります。
+アーキテクチャ、設計、ガイドは [docs.celestia.world/ja/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/ja) にあります。
 
 ソース: [noa](https://github.com/celestia-island/noa)。

@@ -14,8 +14,8 @@
 <div align="center">
 
 [English](../en/intro.md) ·
-[简体中文](../zh-hans/intro.md) ·
-[繁體中文](../zh-hant/intro.md) ·
+[简体中文](../zhs/intro.md) ·
+[繁體中文](../zht/intro.md) ·
 [日本語](../ja/intro.md) ·
 [한국어](../ko/intro.md) ·
 [Français](../fr/intro.md) ·
@@ -29,6 +29,6 @@
 
 ## Документация
 
-Архитектура, дизайн и руководства находятся на [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en).
+Архитектура, дизайн и руководства находятся на [docs.celestia.world/ru/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/ru).
 
 Исходный код: [noa](https://github.com/celestia-island/noa).

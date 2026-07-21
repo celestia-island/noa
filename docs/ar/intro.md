@@ -29,6 +29,6 @@
 
 ## الوثائق
 
-تتواجد البنية المعمارية والتصميم والأدلة في [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en).
+تتواجد البنية المعمارية والتصميم والأدلة في [docs.celestia.world/ar/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/ar).
 
 المصدر: [noa](https://github.com/celestia-island/noa).

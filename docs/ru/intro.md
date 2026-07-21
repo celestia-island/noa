@@ -29,6 +29,6 @@
 
 ## Документация
 
-Архитектура, дизайн и руководства находятся на [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en).
+Архитектура, дизайн и руководства находятся на [docs.celestia.world/ru/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/ru).
 
 Исходный код: [noa](https://github.com/celestia-island/noa).
