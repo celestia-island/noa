@@ -1,6 +1,7 @@
 name: Test
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - '.github/workflows/test.yml'
@@ -14,7 +15,9 @@ on:
 jobs:
   test:
     name: Test (${{ matrix.toolchain }}, ${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'self-hosted' || matrix.os }}
+    if: github.event_name == 'workflow_dispatch' || matrix.os == 'ubuntu-latest'
+
     strategy:
       fail-fast: false
       matrix:
