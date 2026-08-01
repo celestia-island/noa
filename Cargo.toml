@@ -58,7 +58,7 @@ serde = { version = "^1", features = ["derive"] }
 serde_json = "^1"
 sha2 = "^0.10"
 subtle = "^2"
-suppaftp = { version = "^9", features = ["tokio"], optional = true }
+suppaftp = { version = "^10", features = ["tokio"], optional = true }
 thiserror = "^2"
 tokio = { version = "^1", features = ["full"] }
 # tokio-rustls + hyper-rustls: their DEFAULT features include aws_lc_rs 鈫?# rustls/aws_lc_rs 鈫?aws-lc-sys. aws-smithy-http-client's __rustls pulls them in
