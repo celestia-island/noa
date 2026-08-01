@@ -29,6 +29,6 @@ Aislamiento de espacio de trabajo por agente, registros JSONL de solo adición, 
 
 ## Documentación
 
-La arquitectura, el diseño y las guías se encuentran en [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en).
+La arquitectura, el diseño y las guías se encuentran en [docs.celestia.world/es/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/es).
 
 Fuente: [noa](https://github.com/celestia-island/noa).

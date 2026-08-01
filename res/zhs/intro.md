@@ -15,7 +15,7 @@
 
 [English](../en/intro.md) ·
 **简体中文** ·
-[繁體中文](../zh-hant/intro.md) ·
+[繁體中文](../zht/intro.md) ·
 [日本語](../ja/intro.md) ·
 [한국어](../ko/intro.md) ·
 [Français](../fr/intro.md) ·
@@ -29,6 +29,6 @@
 
 ## 文档
 
-架构、设计与指南位于 [docs.celestia.world/zh-hans/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/zh-hans)。
+架构、设计与指南位于 [docs.celestia.world/zhs/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/zhs)。
 
 源码：[noa](https://github.com/celestia-island/noa)。

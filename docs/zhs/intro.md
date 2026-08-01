@@ -29,6 +29,6 @@
 
 ## 文档
 
-架构、设计与指南位于 [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en)。
+架构、设计与指南位于 [docs.celestia.world/zhs/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/zhs)。
 
 源码：[noa](https://github.com/celestia-island/noa)。

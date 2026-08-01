@@ -29,6 +29,6 @@ Isolation de l'espace de travail par agent, journaux JSONL en ajout seule, histo
 
 ## Documentation
 
-L'architecture, la conception et les guides se trouvent sur [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en).
+L'architecture, la conception et les guides se trouvent sur [docs.celestia.world/fr/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/fr).
 
 Source : [noa](https://github.com/celestia-island/noa).

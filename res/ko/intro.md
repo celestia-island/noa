@@ -14,8 +14,8 @@
 <div align="center">
 
 [English](../en/intro.md) ·
-[简体中文](../zh-hans/intro.md) ·
-[繁體中文](../zh-hant/intro.md) ·
+[简体中文](../zhs/intro.md) ·
+[繁體中文](../zht/intro.md) ·
 [日本語](../ja/intro.md) ·
 **한국어** ·
 [Français](../fr/intro.md) ·
@@ -29,6 +29,6 @@
 
 ## 문서
 
-아키텍처, 설계 및 가이드는 [docs.celestia.world/en/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/en)에 있습니다.
+아키텍처, 설계 및 가이드는 [docs.celestia.world/ko/noa](https://github.com/celestia-island/docs.celestia.world/tree/master/docs/ko)에 있습니다.
 
 소스: [noa](https://github.com/celestia-island/noa).
