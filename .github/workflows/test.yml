@@ -46,7 +46,7 @@ jobs:
       matrix:
         os: [macos-latest]
         toolchain: [stable, nightly]
-      include:
+        include:
           - os: windows-latest
             toolchain: stable
 
