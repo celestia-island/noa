@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use redb::Database;
+use redb::{Database, ReadableDatabase};
 
 use super::{sha256_hex, BlobId, ObjectStore, TreeEntries, TreeId};
 use crate::error::{NoaError, Result};

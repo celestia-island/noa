@@ -28,7 +28,7 @@ const SESSION_TTL: Duration = Duration::from_secs(3600);
 fn generate_sync_token() -> Result<String> {
     use sha2::{Digest, Sha256};
     let mut buf = [0u8; 32];
-    getrandom::getrandom(&mut buf)
+    getrandom::fill(&mut buf)
         .map_err(|e| anyhow::anyhow!("failed to generate random sync token: {e}"))?;
     let hash = Sha256::digest(buf);
     Ok(hex::encode(hash))

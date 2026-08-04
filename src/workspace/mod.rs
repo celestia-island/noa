@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use redb::ReadableTable;
+use redb::{ReadableDatabase, ReadableTable};
 
 use crate::{
     error::{NoaError, Result},
