@@ -91,11 +91,13 @@ fn test_bitbucket_url_format_handling() {
         name: "bitbucket-ssh".to_string(),
         url: "git@bitbucket.org:workspace/repo.git".to_string(),
         protocol: libnoa::config::RemoteProtocol::Git,
+        pr: None,
     });
     repo.config.add_remote(libnoa::config::RemoteConfig {
         name: "bitbucket-https".to_string(),
         url: "https://user@bitbucket.org/workspace/repo.git".to_string(),
         protocol: libnoa::config::RemoteProtocol::Git,
+        pr: None,
     });
     repo.config.save_to_dir(&path.join(".noa")).unwrap();
 
@@ -123,16 +125,19 @@ fn test_multiple_remote_protocols() {
         name: "github".to_string(),
         url: "https://github.com/user/repo.git".to_string(),
         protocol: libnoa::config::RemoteProtocol::Git,
+        pr: None,
     });
     repo.config.add_remote(libnoa::config::RemoteConfig {
         name: "gitlab".to_string(),
         url: "git@gitlab.com:user/repo.git".to_string(),
         protocol: libnoa::config::RemoteProtocol::Git,
+        pr: None,
     });
     repo.config.add_remote(libnoa::config::RemoteConfig {
         name: "svn-origin".to_string(),
         url: "https://svn.example.com/repo/trunk".to_string(),
         protocol: libnoa::config::RemoteProtocol::Svn,
+        pr: None,
     });
     repo.config.save_to_dir(&path.join(".noa")).unwrap();
 

@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 use crate::error::Result;
+use crate::forge::ForgeConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -71,6 +72,9 @@ pub struct RemoteConfig {
     pub url: String,
     #[serde(default)]
     pub protocol: RemoteProtocol,
+    /// Optional per-remote PR/forge configuration (`[remote.<name>.pr]`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr: Option<ForgeConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -301,6 +305,7 @@ mod tests {
             name: "o".to_string(),
             url: "u".to_string(),
             protocol: RemoteProtocol::Git,
+            pr: None,
         });
         assert!(c.get_remote("o").is_some());
         c.remove_remote("o");
@@ -316,6 +321,7 @@ mod tests {
             name: "o".to_string(),
             url: "https://g.com/r.git".to_string(),
             protocol: RemoteProtocol::Git,
+            pr: None,
         });
         c.add_storage(StorageConfig::ipfs("i", Some("http://127.0.0.1:5001")));
         c.save_to_dir(&d).unwrap();
@@ -350,5 +356,35 @@ mod tests {
             StorageConfig::minio("a", Some("e"), "b").backend_type,
             StorageProtocol::Minio
         );
+    }
+
+    #[test]
+    fn test_remote_pr_config_roundtrip() {
+        let mut c = RepoConfig::default();
+        c.add_remote(RemoteConfig {
+            name: "origin".to_string(),
+            url: "git@github.com:celestia-island/noa.git".to_string(),
+            protocol: RemoteProtocol::Git,
+            pr: Some(crate::forge::ForgeConfig {
+                kind: crate::forge::ForgeKind::Github,
+                base_url: Some("https://api.github.com".to_string()),
+                token_env: Some("GH_TOKEN".to_string()),
+                repo: None,
+            }),
+        });
+        let s = c.to_toml().unwrap();
+        assert!(
+            s.contains("[[remotes]]"),
+            "toml missing remotes array:\n{s}"
+        );
+        assert!(
+            s.contains("kind = \"github\""),
+            "toml missing pr kind:\n{s}"
+        );
+        let parsed = RepoConfig::from_toml(&s).unwrap();
+        let pr = parsed.get_remote("origin").unwrap().pr.as_ref().unwrap();
+        assert_eq!(pr.kind, crate::forge::ForgeKind::Github);
+        assert_eq!(pr.base_url.as_deref(), Some("https://api.github.com"));
+        assert_eq!(pr.token_env.as_deref(), Some("GH_TOKEN"));
     }
 }

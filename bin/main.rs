@@ -106,6 +106,10 @@ enum Commands {
         #[command(subcommand)]
         cmd: StorageSub,
     },
+    Pr {
+        #[command(subcommand)]
+        cmd: PrSub,
+    },
 }
 
 #[derive(Subcommand)]
@@ -188,6 +192,51 @@ enum HookSub {
         repo: PathBuf,
         #[arg(long, default_value_t = false)]
         force: bool,
+    },
+}
+#[derive(Subcommand)]
+enum PrSub {
+    Create {
+        #[arg(short, long, default_value = "origin")]
+        remote: String,
+        #[arg(long)]
+        base: String,
+        #[arg(long)]
+        head: String,
+        #[arg(long)]
+        title: String,
+        #[arg(long)]
+        body: Option<String>,
+        #[arg(long = "for")]
+        forge: Option<String>,
+        #[arg(long)]
+        metadata: Option<String>,
+    },
+    List {
+        #[arg(short, long, default_value = "origin")]
+        remote: String,
+        #[arg(long)]
+        base: Option<String>,
+        #[arg(long)]
+        state: Option<String>,
+        #[arg(long = "for")]
+        forge: Option<String>,
+    },
+    Show {
+        #[arg(short, long, default_value = "origin")]
+        remote: String,
+        id: String,
+        #[arg(long = "for")]
+        forge: Option<String>,
+    },
+    Merge {
+        #[arg(short, long, default_value = "origin")]
+        remote: String,
+        id: String,
+        #[arg(long)]
+        squash: bool,
+        #[arg(long = "for")]
+        forge: Option<String>,
     },
 }
 #[derive(Subcommand)]
@@ -496,6 +545,73 @@ async fn main() -> anyhow::Result<()> {
             } => {
                 let repo = find_repo()?;
                 cli::storage_cmd::run_fetch(&repo, &target, &hash_or_cid).await?;
+            }
+        },
+        Some(Commands::Pr { cmd }) => match cmd {
+            PrSub::Create {
+                remote,
+                base,
+                head,
+                title,
+                body,
+                forge,
+                metadata,
+            } => {
+                let repo = find_repo()?;
+                cli::pr_cmd::run_create(
+                    &repo,
+                    &cli::pr_cmd::PrCreateArgs {
+                        remote,
+                        base,
+                        head,
+                        title,
+                        body,
+                        forge,
+                        metadata,
+                    },
+                )
+                .await?;
+            }
+            PrSub::List {
+                remote,
+                base,
+                state,
+                forge,
+            } => {
+                let repo = find_repo()?;
+                cli::pr_cmd::run_list(
+                    &repo,
+                    &cli::pr_cmd::PrListArgs {
+                        remote,
+                        base,
+                        state,
+                        forge,
+                    },
+                )
+                .await?;
+            }
+            PrSub::Show { remote, id, forge } => {
+                let repo = find_repo()?;
+                cli::pr_cmd::run_show(&repo, &cli::pr_cmd::PrShowArgs { remote, id, forge })
+                    .await?;
+            }
+            PrSub::Merge {
+                remote,
+                id,
+                squash,
+                forge,
+            } => {
+                let repo = find_repo()?;
+                cli::pr_cmd::run_merge(
+                    &repo,
+                    &cli::pr_cmd::PrMergeArgs {
+                        remote,
+                        id,
+                        squash,
+                        forge,
+                    },
+                )
+                .await?;
             }
         },
     }

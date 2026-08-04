@@ -2,6 +2,7 @@ pub mod coauthor_cmd;
 pub mod hook_cmd;
 pub mod init;
 pub mod log_cmd;
+pub mod pr_cmd;
 pub mod pushpull;
 pub mod remote_cmd;
 pub mod resolve_cmd;

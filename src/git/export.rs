@@ -278,6 +278,7 @@ pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
         name: "origin".to_string(),
         url: url_owned,
         protocol: crate::config::RemoteProtocol::Git,
+        pr: None,
     };
     let repo = crate::repo::Repository::init_with_remotes(&target, vec![config])?;
 
