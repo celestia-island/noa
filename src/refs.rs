@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use redb::ReadableTable;
+use redb::{ReadableDatabase, ReadableTable};
 
 use crate::{error::Result, snapshot::SnapshotId};
 
