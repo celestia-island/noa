@@ -1,4 +1,6 @@
 mod handlers;
+mod pr_handlers;
+pub mod pr_store;
 
 use std::{
     collections::HashMap,
@@ -147,6 +149,12 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/workspaces",
             get(handlers::list_workspaces).post(handlers::create_workspace),
         )
+        .route(
+            "/api/v1/prs",
+            get(pr_handlers::list_prs).post(pr_handlers::create_pr),
+        )
+        .route("/api/v1/prs/{number}", get(pr_handlers::get_pr))
+        .route("/api/v1/prs/{number}/merge", post(pr_handlers::merge_pr))
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

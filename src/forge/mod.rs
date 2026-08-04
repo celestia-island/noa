@@ -5,6 +5,7 @@
 //! v1 backend; self-hosted (noa-server), GitLab and Gitea follow.
 
 pub mod github;
+pub mod self_hosted;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -166,6 +167,7 @@ pub trait ForgeBackend: Send + Sync {
 pub fn create_forge_backend(kind: ForgeKind) -> Result<Box<dyn ForgeBackend>> {
     match kind {
         ForgeKind::Github => Ok(Box::new(github::GithubBackend::new())),
+        ForgeKind::SelfHosted => Ok(Box::new(self_hosted::SelfHostedBackend::new())),
         other => Err(NoaError::UnsupportedForge {
             kind: other.to_string(),
         }
@@ -183,7 +185,11 @@ mod tests {
             create_forge_backend(ForgeKind::Github).unwrap().kind(),
             ForgeKind::Github
         );
-        for kind in [ForgeKind::Gitlab, ForgeKind::Gitea, ForgeKind::SelfHosted] {
+        assert_eq!(
+            create_forge_backend(ForgeKind::SelfHosted).unwrap().kind(),
+            ForgeKind::SelfHosted
+        );
+        for kind in [ForgeKind::Gitlab, ForgeKind::Gitea] {
             let err = match create_forge_backend(kind) {
                 Ok(_) => panic!("expected UnsupportedForge for {kind}"),
                 Err(e) => e,

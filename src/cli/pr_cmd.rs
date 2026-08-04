@@ -101,6 +101,15 @@ fn resolve_config(
         if cfg.token_env.is_none() {
             cfg.token_env = Some("GH_TOKEN".to_string());
         }
+    } else if kind == ForgeKind::SelfHosted {
+        if cfg.base_url.is_none() {
+            return Err(anyhow::anyhow!(
+                "self-hosted forge requires base_url in [remotes.<name>.pr] pointing at a noa-server"
+            ));
+        }
+        if cfg.token_env.is_none() {
+            cfg.token_env = Some("NOA_API_TOKEN".to_string());
+        }
     }
     Ok(cfg)
 }
@@ -184,9 +193,60 @@ mod tests {
 
     #[test]
     fn test_resolve_flag_wins_over_url() {
-        let (repo, _tmp) = repo_with_remote("https://github.com/owner/repo.git");
+        let (mut repo, _tmp) = repo_with_remote("https://github.com/owner/repo.git");
+        repo.config.add_remote(RemoteConfig {
+            name: "origin".to_string(),
+            url: "https://github.com/owner/repo.git".to_string(),
+            protocol: RemoteProtocol::Git,
+            pr: Some(ForgeConfig {
+                kind: ForgeKind::Github,
+                base_url: Some("http://127.0.0.1:3000".to_string()),
+                token_env: None,
+                repo: None,
+            }),
+        });
         let cfg = resolve_config(&repo, "origin", Some("self-hosted")).unwrap();
         assert_eq!(cfg.kind, ForgeKind::SelfHosted);
+        assert_eq!(cfg.base_url.as_deref(), Some("http://127.0.0.1:3000"));
+        assert_eq!(cfg.token_env.as_deref(), Some("NOA_API_TOKEN"));
+    }
+
+    #[test]
+    fn test_resolve_self_hosted_requires_base_url() {
+        let (mut repo, _tmp) = repo_with_remote("https://github.com/owner/repo.git");
+        repo.config.add_remote(RemoteConfig {
+            name: "noa".to_string(),
+            url: "http://127.0.0.1:3000/workspace".to_string(),
+            protocol: RemoteProtocol::Git,
+            pr: Some(ForgeConfig {
+                kind: ForgeKind::SelfHosted,
+                base_url: Some("http://127.0.0.1:3000".to_string()),
+                token_env: None,
+                repo: None,
+            }),
+        });
+        let cfg = resolve_config(&repo, "noa", None).unwrap();
+        assert_eq!(cfg.kind, ForgeKind::SelfHosted);
+        assert_eq!(cfg.base_url.as_deref(), Some("http://127.0.0.1:3000"));
+        assert_eq!(cfg.token_env.as_deref(), Some("NOA_API_TOKEN"));
+    }
+
+    #[test]
+    fn test_resolve_self_hosted_missing_base_url_fails() {
+        let (mut repo, _tmp) = repo_with_remote("https://github.com/owner/repo.git");
+        repo.config.add_remote(RemoteConfig {
+            name: "noa".to_string(),
+            url: "http://127.0.0.1:3000/workspace".to_string(),
+            protocol: RemoteProtocol::Git,
+            pr: Some(ForgeConfig {
+                kind: ForgeKind::SelfHosted,
+                base_url: None,
+                token_env: None,
+                repo: None,
+            }),
+        });
+        let err = resolve_config(&repo, "noa", None).unwrap_err();
+        assert!(err.to_string().contains("requires base_url"), "got: {err}");
     }
 
     #[test]
