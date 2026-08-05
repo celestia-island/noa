@@ -1,2 +1,12 @@
+# Rust
+/target/
+Cargo.lock
+**/*.rs.bk
+
+# IDE
+.idea/
+.vscode/
+
+# Web UI
 node_modules/
 dist/
