@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "jsx": "preserve",
+    "jsxImportSource": "vue",
+    "types": ["vite/client"],
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "ignoreDeprecations": "6.0",
+    "baseUrl": ".",
+    "paths": {
+      "@": ["./src"],
+      "@/*": ["./src/*"],
+      "@celestia-island/hikari": ["../../../hikari/packages/vue/src"],
+      "@celestia-island/plana-ui": ["../../../plana/packages/ui/src"],
+      "@celestia-island/plana-rpc-client": ["../../../plana/packages/rpc_client/src"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue", "src/**/*.d.ts"]
+}

@@ -1,0 +1,31 @@
+{
+  "name": "@celestia-island/noa-webui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vue-tsc --noEmit && vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "lint": "eslint . --ext .vue,.ts,.tsx --fix",
+    "serve": "python3 -m http.server 5173 -d ../../dist/webui"
+  },
+  "dependencies": {
+    "@celestia-island/hikari": "link:../../../hikari/packages/vue",
+    "@celestia-island/plana-rpc-client": "link:../../../plana/packages/rpc_client",
+    "@celestia-island/plana-ui": "link:../../../plana/packages/ui",
+    "pinia": "^*",
+    "vue": "^*",
+    "vue-router": "^*"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^*",
+    "@vitejs/plugin-vue-jsx": "^*",
+    "@vue/test-utils": "^*",
+    "happy-dom": "^*",
+    "sass-embedded": "^1.100.0",
+    "typescript": "^*",
+    "vite": "^*",
+    "vitest": "^*",
+    "vue-tsc": "^*"
+  }
+}

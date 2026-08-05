@@ -1,0 +1,14 @@
+{
+  "name": "@celestia-island/noa",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm --filter @celestia-island/noa-webui build",
+    "typecheck": "pnpm --filter @celestia-island/noa-webui typecheck",
+    "lint": "pnpm --filter @celestia-island/noa-webui lint"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  }
+}
