@@ -136,6 +136,13 @@ fn truncate(s: &str) -> String {
     }
 }
 
+/// Workspace names on noa-server cannot contain `/`; git branch names can.
+/// Map branch-style names (`feat/x`) to flat workspace names (`feat-x`) so the
+/// self-hosted PR store can round-trip real branches.
+fn sanitize_workspace_name(name: &str) -> String {
+    name.replace('/', "-")
+}
+
 #[async_trait]
 impl ForgeBackend for SelfHostedBackend {
     fn kind(&self) -> ForgeKind {
@@ -158,8 +165,8 @@ impl ForgeBackend for SelfHostedBackend {
             .json(&CreatePrBody {
                 title: req.title.clone(),
                 body,
-                base: req.base.clone(),
-                head: req.head.clone(),
+                base: sanitize_workspace_name(&req.base),
+                head: sanitize_workspace_name(&req.head),
                 author: "noa".to_string(),
                 repo: Self::repo(cfg),
                 metadata: req.metadata.clone(),
@@ -197,7 +204,7 @@ impl ForgeBackend for SelfHostedBackend {
 
         let mut params: Vec<(&str, String)> = vec![("repo", Self::repo(cfg))];
         if let Some(b) = base {
-            params.push(("base", b.to_string()));
+            params.push(("base", sanitize_workspace_name(b)));
         }
         if let Some(s) = Self::state_param(state) {
             params.push(("state", s.to_string()));
@@ -408,9 +415,21 @@ mod tests {
         let sent = captured.lock().await[0].clone();
         assert_eq!(sent["title"], "✨ Add x.");
         assert_eq!(sent["repo"], "default");
+        assert_eq!(sent["base"], "master");
+        assert_eq!(sent["head"], "feat-x");
         let sent_body = sent["body"].as_str().unwrap();
         assert!(sent_body.contains("<!-- noa-pr-metadata -->"));
         assert!(sent_body.contains("input_tokens: 10"));
+    }
+
+    #[test]
+    fn test_sanitize_workspace_name_flattens_slashes() {
+        assert_eq!(sanitize_workspace_name("feat/x"), "feat-x");
+        assert_eq!(
+            sanitize_workspace_name("dogfood/pr-1"),
+            "dogfood-pr-1"
+        );
+        assert_eq!(sanitize_workspace_name("master"), "master");
     }
 
     #[tokio::test]
