@@ -1,0 +1,14 @@
+packages:
+  - packages/webui
+  - ../hikari/packages/vue
+  - ../plana/packages/ui
+  - ../plana/packages/rpc_client
+
+overrides:
+  typescript: ~6.0
+
+pnpm:
+  overrides:
+    "@celestia-island/hikari": link:../hikari/packages/vue
+    "@celestia-island/plana-ui": link:../plana/packages/ui
+    "@celestia-island/plana-rpc-client": link:../plana/packages/rpc_client

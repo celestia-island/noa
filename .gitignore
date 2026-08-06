@@ -6,38 +6,7 @@ Cargo.lock
 # IDE
 .idea/
 .vscode/
-*.swp
-*.swo
-*~
-*.bak
-*.tmp
 
-# Python
-__pycache__/
-*.pyc
-*.pyo
-
-# Environment variables
-.env
-.env.local
-
-# Logs
-*.log
-/logs/
-/tmp/
-
-# Operating system
-.DS_Store
-Thumbs.db
-
-# noa repository (for testing)
-.noa/
-
-# redb database files (should never be committed)
-*.redb
-
+# Web UI
+node_modules/
 dist/
-
-# celestia-devtools: staged-on-demand shared justfile recipes (just fetch)
-/.just/
-/celestia-devtools.just
