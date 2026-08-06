@@ -2,6 +2,7 @@ pub mod cli;
 pub mod coauthor;
 pub mod config;
 pub mod error;
+pub mod forge;
 pub mod git;
 pub mod ignore;
 pub mod log;

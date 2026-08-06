@@ -248,6 +248,7 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
         name: "svn-origin".to_string(),
         url: url.to_string(),
         protocol: crate::config::RemoteProtocol::Svn,
+        pr: None,
     };
     let repo = crate::repo::Repository::init_with_remotes(&target, vec![remote_config])?;
     let db = std::sync::Arc::clone(&repo.db);

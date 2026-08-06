@@ -34,6 +34,12 @@ pub enum NoaError {
 
     #[error("transport error ({backend}): {message}")]
     TransportError { backend: String, message: String },
+
+    #[error("unsupported forge: {kind}")]
+    UnsupportedForge { kind: String },
+
+    #[error("forge error ({backend}): {message}")]
+    ForgeError { backend: String, message: String },
 }
 
 pub fn is_object_not_found(e: &anyhow::Error) -> bool {
@@ -71,6 +77,14 @@ pub fn remote_err(backend: &str, message: impl std::fmt::Display) -> anyhow::Err
 
 pub fn transport_err(backend: &str, message: impl std::fmt::Display) -> anyhow::Error {
     NoaError::TransportError {
+        backend: backend.to_string(),
+        message: message.to_string(),
+    }
+    .into()
+}
+
+pub fn forge_err(backend: &str, message: impl std::fmt::Display) -> anyhow::Error {
+    NoaError::ForgeError {
         backend: backend.to_string(),
         message: message.to_string(),
     }

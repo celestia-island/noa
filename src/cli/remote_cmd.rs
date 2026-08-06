@@ -11,6 +11,7 @@ pub fn run_add(repo: &mut Repository, name: &str, url: &str) -> Result<()> {
         name: name.to_string(),
         url: url.to_string(),
         protocol: RemoteProtocol::Git,
+        pr: None,
     });
     repo.save_config()?;
     println!("Added remote '{name}' -> {url}");
