@@ -320,7 +320,6 @@ mod tests {
 
     use crate::server::{router, AppState};
     use crate::snapshot::content_addressed_snapshot_id_with_ts;
-    use crate::workspace::Workspace;
 
     const TOKEN: &str = "test-token-pr";
 
