@@ -425,10 +425,7 @@ mod tests {
     #[test]
     fn test_sanitize_workspace_name_flattens_slashes() {
         assert_eq!(sanitize_workspace_name("feat/x"), "feat-x");
-        assert_eq!(
-            sanitize_workspace_name("dogfood/pr-1"),
-            "dogfood-pr-1"
-        );
+        assert_eq!(sanitize_workspace_name("dogfood/pr-1"), "dogfood-pr-1");
         assert_eq!(sanitize_workspace_name("master"), "master");
     }
 

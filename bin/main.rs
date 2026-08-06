@@ -300,6 +300,9 @@ fn find_repo() -> anyhow::Result<libnoa::repo::Repository> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // reqwest is built with `rustls-tls-no-provider`; install the ring
+    // provider so HTTP clients (e.g. `noa pr` forge calls) can initialize TLS.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let _ = tracing_subscriber::fmt().try_init();
     let app = App::parse();
 
