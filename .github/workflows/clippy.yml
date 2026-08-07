@@ -24,7 +24,13 @@ jobs:
           - nightly
 
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout
+        uses: actions/checkout@v7
+        # Defensive mirror bypass: the runner env rewrites github.com/celestia-island/*
+        # to local bare mirrors, which cannot reliably advertise PR merge refs
+        # (GitHub advertises them sparsely), causing "not our ref" checkouts.
+        env:
+          GIT_CONFIG_COUNT: "0"
 
       - name: Setup toolchain
         uses: dtolnay/rust-toolchain@stable

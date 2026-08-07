@@ -22,6 +22,11 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v7
+      # Defensive mirror bypass: the runner env rewrites github.com/celestia-island/*
+      # to local bare mirrors, which cannot reliably advertise PR merge refs
+      # (GitHub advertises them sparsely), causing "not our ref" checkouts.
+      env:
+        GIT_CONFIG_COUNT: "0"
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
