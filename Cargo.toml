@@ -42,7 +42,7 @@ axum = "^0.8"
 base64 = "^0.22"
 chrono = "^0.4"
 clap = { version = "^4", features = ["derive"] }
-crossterm = "^0.28"
+crossterm = "^0.29"
 getrandom = "^0.4"
 gix = "^0.84"
 hex = "^0.4"
