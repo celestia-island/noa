@@ -48,7 +48,7 @@ gix = "^0.84"
 hex = "^0.4"
 hyper-rustls = { version = "^0.27", default-features = false, features = ["native-tokio", "http1", "tls12", "logging", "ring"] }
 ignore = "^0.4"
-ratatui = { version = "^0.29", features = ["crossterm"] }
+ratatui = { version = "^0.30", features = ["crossterm"] }
 redb = "^4"
 regex = "^1"
 reqwest = { version = "^0.12", default-features = false, features = ["rustls-tls", "json", "multipart"] }
