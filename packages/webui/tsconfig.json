@@ -17,7 +17,6 @@
       "@": ["./src"],
       "@/*": ["./src/*"],
       "@celestia-island/hikari": ["../../../hikari/packages/vue/src"],
-      "@celestia-island/plana-ui": ["../../../plana/packages/ui/src"],
       "@celestia-island/plana-rpc-client": ["../../../plana/packages/rpc_client/src"]
     }
   },

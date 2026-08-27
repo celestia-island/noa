@@ -17,7 +17,7 @@ export default function WorkspacesView() {
     <div class="workspaces-view">
       <h1>Workspaces</h1>
       {store.loading ? (
-        <HSpinner />
+        <HSpinner center />
       ) : rows.length === 0 ? (
         <HEmptyState title="No workspaces" description="Workspaces appear once agents start working on the server." />
       ) : (
