@@ -19,7 +19,7 @@ export default function SnapshotsView() {
     <div class="snapshots-view">
       <h1>Snapshots</h1>
       {store.loading ? (
-        <HSpinner />
+        <HSpinner center />
       ) : rows.length === 0 ? (
         <HEmptyState title="No snapshots" description="Snapshots are created when agents commit their work." />
       ) : (

@@ -84,7 +84,7 @@ export default function PullRequestsView() {
       )}
 
       {store.loading ? (
-        <HSpinner />
+        <HSpinner center />
       ) : rows.value.length === 0 ? (
         <HEmptyState title="No pull requests" description="Connect to a noa-server and create the first PR." />
       ) : (

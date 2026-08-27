@@ -12,7 +12,6 @@
   "dependencies": {
     "@celestia-island/hikari": "link:../../../hikari/packages/vue",
     "@celestia-island/plana-rpc-client": "link:../../../plana/packages/rpc_client",
-    "@celestia-island/plana-ui": "link:../../../plana/packages/ui",
     "pinia": "^*",
     "vue": "^*",
     "vue-router": "^*"

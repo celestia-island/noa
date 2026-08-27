@@ -45,7 +45,7 @@ export default function PullRequestDetailView() {
         ← Back
       </HButton>
       {error.value && <span class="err">{error.value}</span>}
-      {!pr.value && !error.value && <HSpinner />}
+      {!pr.value && !error.value && <HSpinner center />}
       {pr.value && (
         <HCard>
           <h1>
