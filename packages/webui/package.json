@@ -10,8 +10,7 @@
     "serve": "python3 -m http.server 5173 -d ../../dist/webui"
   },
   "dependencies": {
-    "@celestia-island/hikari": "link:../../../hikari/packages/vue",
-    "@celestia-island/plana-rpc-client": "link:../../../plana/packages/rpc_client",
+    "@celestia-island/hikari": "^*",
     "pinia": "^*",
     "vue": "^*",
     "vue-router": "^*"

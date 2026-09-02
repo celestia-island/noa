@@ -281,11 +281,12 @@ webuis):
 
 - Package at `packages/webui`, npm name `@celestia-island/noa-webui`
   (`"private": true`, `"type": "module"`).
-- Root `pnpm-workspace.yaml` listing `packages/webui` plus
-  `../hikari/packages/vue`, `../plana/packages/ui`, `../plana/packages/rpc_client`,
-  with `overrides: typescript: ~6.0`.
-- Deps on `@celestia-island/hikari` (H* root imports) and
-  `@celestia-island/plana-ui` (P* root imports); deep subpath imports are
+- Root `pnpm-workspace.yaml` listing `packages/webui`, with
+  `overrides: typescript: ~6.0`; family packages resolve from the npm registry
+  (`@celestia-island/hikari` `^*`, source-shipped with typed exports) — no
+  sibling-checkout wiring; local dev overlays use
+  `celestia-devtools link-npm-siblings`.
+- Deps on `@celestia-island/hikari` (H* root imports); deep subpath imports are
   `import type` only.
 - Directory names: lowercase words or underscores (no camelCase/kebab dirs).
 - `build` = `vue-tsc --noEmit && vite build`; outDir `../../dist/webui`.
