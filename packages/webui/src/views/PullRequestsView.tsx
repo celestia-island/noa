@@ -92,9 +92,15 @@ export default function PullRequestsView() {
           columns={columns}
           rows={rows.value}
           v-slots={{
-            "cell-title": ({ row }: { row: Record<string, unknown> }) => (
-              <a href={`#/prs/${row["number"] as string}`}>{row["title"] as string}</a>
-            ),
+            "cell-title": ({ row }: { row: Record<string, unknown> }) => {
+              // A malformed row without a number must not render the
+              // literal "undefined" into the hash route.
+              const num = row["number"];
+              if (typeof num !== "string" && typeof num !== "number") {
+                return <span>{String(row["title"] ?? "")}</span>;
+              }
+              return <a href={`#/prs/${num}`}>{String(row["title"] ?? "")}</a>;
+            },
           }}
         />
       )}
