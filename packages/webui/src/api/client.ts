@@ -47,11 +47,21 @@ export class NoaApiError extends Error {
 }
 
 function baseUrl(): string {
-  return (
-    localStorage.getItem("noa.server_base_url") ||
-    (import.meta.env.VITE_NOA_SERVER_URL as string | undefined) ||
-    "http://127.0.0.1:3000"
-  );
+  // Only accept a plausible absolute URL from storage/env. The `||` chain
+  // alone would happily pass through the literal string "undefined" (a
+  // legacy-poisoned localStorage value or an env var materialized from an
+  // unset shell variable), and `fetch("undefined/api/...")` then resolves
+  // against the page origin as `<origin>/undefined/...`.
+  const candidates = [
+    localStorage.getItem("noa.server_base_url"),
+    import.meta.env.VITE_NOA_SERVER_URL as string | undefined,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && /^https?:\/\//i.test(candidate)) {
+      return candidate.replace(/\/+$/, "");
+    }
+  }
+  return "http://127.0.0.1:3000";
 }
 
 function token(): string {
