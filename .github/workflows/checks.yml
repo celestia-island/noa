@@ -48,3 +48,33 @@ jobs:
 
     - name: Compile check
       run: cargo check --workspace --all-targets
+
+  webui:
+    name: WebUI checks
+    runs-on: [self-hosted, linux, x64, local]
+
+    env:
+      COREPACK_HOME: /mnt/work/corepack
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+      # Defensive mirror bypass: the runner env rewrites github.com/celestia-island/*
+      # to local bare mirrors, which cannot reliably advertise PR merge refs
+      # (GitHub advertises them sparsely), causing "not our ref" checkouts.
+      env:
+        GIT_CONFIG_COUNT: "0"
+
+    - name: Setup node
+      uses: actions/setup-node@v7
+      with:
+        node-version: 22
+
+    - name: Install frontend deps
+      run: corepack pnpm@11.18.0 install --frozen-lockfile
+
+    - name: WebUI typecheck
+      run: corepack pnpm@11.18.0 typecheck
+
+    - name: WebUI build
+      run: corepack pnpm@11.18.0 build
