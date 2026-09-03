@@ -74,7 +74,7 @@ jobs:
       run: corepack pnpm@11.18.0 install --frozen-lockfile
 
     - name: WebUI typecheck
-      run: corepack pnpm@11.18.0 typecheck
+      run: corepack pnpm@11.18.0 --filter @celestia-island/noa-webui typecheck
 
     - name: WebUI build
-      run: corepack pnpm@11.18.0 build
+      run: corepack pnpm@11.18.0 --filter @celestia-island/noa-webui build
