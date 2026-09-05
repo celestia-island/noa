@@ -102,11 +102,6 @@ pub async fn run_resolve(
     let obj_store = repo.object_store()?;
     let ws_mgr = repo.workspace_manager()?;
 
-    let current_ws = ws_mgr
-        .get(&current)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("workspace '{current}' not found"))?;
-
     let merge_snap_id = latest_merge
         .snapshot_id
         .as_deref()
@@ -195,22 +190,29 @@ pub async fn run_resolve(
             }
         }
     } else if merge_snap.parents.len() >= 2 {
-        let base_snap = snap_store.get(&current_ws.base).await?;
-        let base_tree = obj_store
-            .get_tree(&crate::object::TreeId(base_snap.tree_hash.clone()))
-            .await?;
-        let theirs_snap = snap_store
-            .get(
-                merge_snap
-                    .parents
-                    .get(1)
-                    .ok_or_else(|| anyhow::anyhow!("merge snapshot has fewer than 2 parents"))?,
-            )
-            .await?;
+        let ours_parent = merge_snap.parents.first().ok_or_else(|| {
+            anyhow::anyhow!("merge snapshot has fewer than 2 parents")
+        })?;
+        let theirs_id = merge_snap.parents.get(1).ok_or_else(|| {
+            anyhow::anyhow!("merge snapshot has fewer than 2 parents")
+        })?;
+        // Re-resolve against the DAG merge-base of the merge parents, not the
+        // workspace's mutable `base` field.
+        let merge_base_id =
+            crate::snapshot::find_merge_base(&snap_store, ours_parent, theirs_id).await?;
+        let base_tree = match &merge_base_id {
+            Some(id) => {
+                let base_snap = snap_store.get(id).await?;
+                obj_store
+                    .get_tree(&crate::object::TreeId(base_snap.tree_hash.clone()))
+                    .await?
+            }
+            None => crate::object::TreeEntries(vec![]),
+        };
+        let theirs_snap = snap_store.get(theirs_id).await?;
         let theirs_tree = obj_store
             .get_tree(&crate::object::TreeId(theirs_snap.tree_hash.clone()))
             .await?;
-
         let result = crate::merge::three_way_merge(&base_tree, &merge_tree, &theirs_tree)?;
         resolved_entries = result.into_tree_entries(&resolution).0;
     }

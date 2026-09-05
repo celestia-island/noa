@@ -122,13 +122,21 @@ pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<
 
     let empty_tree = crate::object::TreeEntries(vec![]);
 
-    let base_tree = if cur_ws.base.is_empty() {
-        empty_tree.clone()
-    } else {
-        let base_snap = snap_store.get(&cur_ws.base).await?;
-        obj_store
-            .get_tree(&crate::object::TreeId(base_snap.tree_hash))
-            .await?
+    // The merge base is the DAG common ancestor of the two heads, never the
+    // target workspace's mutable `base` field (stale once a merge from any
+    // other branch lands).
+    let merge_base_id =
+        crate::snapshot::find_merge_base(&snap_store, &cur_ws.head, &from_ws.head).await?;
+    let (base_tree, used_base_id) = match &merge_base_id {
+        Some(id) => {
+            let base_snap = snap_store.get(id).await?;
+            let tree = obj_store
+                .get_tree(&crate::object::TreeId(base_snap.tree_hash))
+                .await?;
+            (tree, id.clone())
+        }
+        // Unrelated histories: merge against the empty tree, as with git.
+        None => (empty_tree.clone(), crate::snapshot::empty_snapshot_id()),
     };
     let ours_tree = if cur_ws.head.is_empty() {
         empty_tree.clone()
@@ -232,8 +240,11 @@ pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<
         })
         .await?;
 
+    // Record the base actually used for this merge (the DAG merge-base), not
+    // the source head: the next merge from another branch must see the same
+    // ancestor, not a tree that branch never saw.
     ws_mgr
-        .update_head_seq_and_base(&current, &merge_snapshot.id, new_seq, &from_ws.head)
+        .update_head_seq_and_base(&current, &merge_snapshot.id, new_seq, &used_base_id)
         .await?;
 
     if conflicts.is_empty() {
@@ -249,4 +260,217 @@ pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::merge::ConflictResolution;
+    use crate::object::{EntryKind, ObjectStore, TreeEntries, TreeEntry};
+    use crate::snapshot::{Snapshot, SnapshotId, SnapshotStore};
+
+    async fn put_tree_with(
+        obj_store: &crate::object::RedbObjectStore,
+        files: &[(&str, &str)],
+    ) -> TreeEntries {
+        let mut entries = Vec::new();
+        for (name, content) in files {
+            let blob = obj_store.put_blob(content.as_bytes()).await.unwrap();
+            entries.push(TreeEntry {
+                name: (*name).to_string(),
+                kind: EntryKind::Blob,
+                id: blob.0,
+            });
+        }
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        TreeEntries(entries)
+    }
+
+    async fn put_snapshot_with(
+        snap_store: &crate::snapshot::RedbSnapshotStore,
+        obj_store: &crate::object::RedbObjectStore,
+        workspace: &str,
+        files: &[(&str, &str)],
+        parents: Vec<SnapshotId>,
+    ) -> SnapshotId {
+        let entries = put_tree_with(obj_store, files).await;
+        let tree_id = obj_store.put_tree(&entries).await.unwrap();
+        let now = crate::now_micros();
+        let id = content_addressed_snapshot_id_with_ts(
+            &tree_id.0,
+            &parents,
+            workspace,
+            "test",
+            "test snapshot",
+            now,
+        );
+        snap_store
+            .store(&Snapshot {
+                id: id.clone(),
+                tree_hash: tree_id.0,
+                parents,
+                workspace: workspace.to_string(),
+                author: "test".to_string(),
+                timestamp: now,
+                message: "test".to_string(),
+            })
+            .await
+            .unwrap();
+        id
+    }
+
+    fn sorted_names(entries: &TreeEntries) -> Vec<String> {
+        let mut names: Vec<String> =
+            entries.0.iter().map(|e| e.name.clone()).collect();
+        names.sort();
+        names
+    }
+
+    async fn blob_content(
+        obj_store: &crate::object::RedbObjectStore,
+        tree: &TreeEntries,
+        name: &str,
+    ) -> String {
+        let entry = tree.0.iter().find(|e| e.name == name).unwrap_or_else(|| {
+            panic!("file '{name}' missing from tree {:?}", sorted_names(tree))
+        });
+        String::from_utf8(
+            obj_store
+                .get_blob(&crate::object::BlobId(entry.id.clone()))
+                .await
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    /// Regression test for issue #69: merging C-into-B and then A-into-B must
+    /// keep `c.txt`. `run_merge` used to read the base from the mutable
+    /// `Workspace.base` field (overwritten with the source head after each
+    /// merge), so the second merge ran against a tree branch A never saw and
+    /// deleted the already-merged `c.txt`. The base must be the DAG common
+    /// ancestor of the two heads, and the recorded base must be the ancestor
+    /// actually used.
+    #[tokio::test]
+    async fn test_second_merge_from_other_branch_keeps_merged_files() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = crate::repo::Repository::init(tmp.path()).unwrap();
+        let snap_store = repo.snapshot_store().unwrap();
+        let obj_store = repo.object_store().unwrap();
+        let ws_mgr = repo.workspace_manager().unwrap();
+
+        // Base snapshot X, forked by A1/B1/C1 (all parented on X).
+        let x = put_snapshot_with(
+            &snap_store,
+            &obj_store,
+            "B",
+            &[("shared.txt", "base")],
+            vec![],
+        )
+        .await;
+        let a1 = put_snapshot_with(
+            &snap_store,
+            &obj_store,
+            "A",
+            &[("a.txt", "A"), ("shared.txt", "A")],
+            vec![x.clone()],
+        )
+        .await;
+        let b1 = put_snapshot_with(
+            &snap_store,
+            &obj_store,
+            "B",
+            &[("b.txt", "B"), ("shared.txt", "B")],
+            vec![x.clone()],
+        )
+        .await;
+        let c1 = put_snapshot_with(
+            &snap_store,
+            &obj_store,
+            "C",
+            &[("c.txt", "C"), ("shared.txt", "C")],
+            vec![x.clone()],
+        )
+        .await;
+
+        for (name, head) in [("A", &a1), ("B", &b1), ("C", &c1)] {
+            ws_mgr
+                .create(&crate::workspace::Workspace {
+                    name: name.to_string(),
+                    head: head.clone(),
+                    base: x.clone(),
+                    agent_id: None,
+                    last_seq: 0,
+                    created_at: 0,
+                    updated_at: 0,
+                })
+                .await
+                .unwrap();
+        }
+        repo.write_head("B").unwrap();
+
+        // Merge 1: C into B.
+        run_merge(&repo, "C", "ours").await.unwrap();
+        let b_ws = ws_mgr.get("B").await.unwrap().unwrap();
+        // The recorded base is the ancestor actually used (X), not C1.
+        assert_eq!(b_ws.base, x, "B.base must be the DAG merge-base X");
+        let m1 = b_ws.head.clone();
+        assert_ne!(m1, c1);
+
+        // Extra change on A, parented on A1.
+        let a2 = put_snapshot_with(
+            &snap_store,
+            &obj_store,
+            "A",
+            &[("a.txt", "A"), ("a2.txt", "A2-new"), ("shared.txt", "A")],
+            vec![a1.clone()],
+        )
+        .await;
+        ws_mgr.update_head("A", &a2).await.unwrap();
+
+        // Merge 2: A into B. c.txt must survive.
+        run_merge(&repo, "A", "ours").await.unwrap();
+        let b_ws = ws_mgr.get("B").await.unwrap().unwrap();
+        assert_eq!(b_ws.base, x, "B.base must still be the DAG merge-base X");
+        let m2 = snap_store.get(&b_ws.head).await.unwrap();
+        assert_eq!(m2.parents, vec![m1.clone(), a2.clone()]);
+        let m2_tree = obj_store
+            .get_tree(&crate::object::TreeId(m2.tree_hash.clone()))
+            .await
+            .unwrap();
+        assert_eq!(
+            sorted_names(&m2_tree),
+            vec!["a.txt", "a2.txt", "b.txt", "c.txt", "shared.txt"]
+        );
+        assert_eq!(blob_content(&obj_store, &m2_tree, "c.txt").await, "C");
+        assert_eq!(blob_content(&obj_store, &m2_tree, "a2.txt").await, "A2-new");
+        assert_eq!(blob_content(&obj_store, &m2_tree, "shared.txt").await, "B");
+
+        // M2 equals the reference merge computed on the DAG ancestor X.
+        let x_tree = obj_store
+            .get_tree(&crate::object::TreeId(
+                snap_store.get(&x).await.unwrap().tree_hash,
+            ))
+            .await
+            .unwrap();
+        let m1_tree = obj_store
+            .get_tree(&crate::object::TreeId(
+                snap_store.get(&m1).await.unwrap().tree_hash,
+            ))
+            .await
+            .unwrap();
+        let a2_tree = obj_store
+            .get_tree(&crate::object::TreeId(
+                snap_store.get(&a2).await.unwrap().tree_hash,
+            ))
+            .await
+            .unwrap();
+        let expected = crate::merge::three_way_merge(&x_tree, &m1_tree, &a2_tree)
+            .unwrap()
+            .into_tree_entries(&ConflictResolution::Ours);
+        let mut got = m2_tree.0.clone();
+        got.sort_by(|a, b| a.name.cmp(&b.name));
+        let mut want = expected.0.clone();
+        want.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(got, want);
+    }
 }
