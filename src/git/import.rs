@@ -106,10 +106,26 @@ pub fn is_lfs_pointer(content: &[u8]) -> bool {
     s.starts_with("version https://git-lfs.github.com/spec/")
 }
 
+/// One non-tree entry collected from the git object store.
+struct WalkedEntry {
+    path: String,
+    kind: EntryKind,
+    payload: WalkedPayload,
+}
+
+/// The body of a [`WalkedEntry`]: blob bytes exactly as git stores them for
+/// [`EntryKind::Blob`], [`EntryKind::Executable`] and [`EntryKind::Symlink`]
+/// (symlink bytes are the link-target path), or the referenced commit oid in
+/// hex for [`EntryKind::Gitlink`].
+enum WalkedPayload {
+    Blob(Vec<u8>),
+    Gitlink(String),
+}
+
 fn walk_tree(
     repo: &gix::Repository,
     tree_id: gix::hash::ObjectId,
-) -> Result<Vec<(String, Vec<u8>)>> {
+) -> Result<Vec<WalkedEntry>> {
     let mut stack = vec![(tree_id, String::new())];
     let mut results = Vec::new();
 
@@ -130,10 +146,30 @@ fn walk_tree(
 
             if mode.is_tree() {
                 stack.push((entry_id.to_owned(), full_name));
+            } else if mode.is_commit() {
+                // Gitlink (160000): a plain clone never fetches submodule
+                // objects, so there is nothing to look up. Record the
+                // referenced commit oid; export writes it back verbatim.
+                results.push(WalkedEntry {
+                    path: full_name,
+                    kind: EntryKind::Gitlink,
+                    payload: WalkedPayload::Gitlink(entry_id.to_string()),
+                });
             } else {
+                let kind = if mode.is_link() {
+                    EntryKind::Symlink
+                } else if mode.is_executable() {
+                    EntryKind::Executable
+                } else {
+                    EntryKind::from_git_mode(mode.value().into())
+                };
                 let blob_obj = repo.find_object(entry_id)?;
                 let blob = blob_obj.try_into_blob().with_context(|| "not a blob")?;
-                results.push((full_name, blob.data.clone()));
+                results.push(WalkedEntry {
+                    path: full_name,
+                    kind,
+                    payload: WalkedPayload::Blob(blob.data.clone()),
+                });
             }
         }
     }
@@ -156,13 +192,27 @@ async fn import_tree_recursive(
     .await??;
 
     let mut entries = Vec::with_capacity(file_contents.len());
-    for (name, content) in file_contents {
-        let blob_id = obj_store.put_blob(&content).await?;
-        entries.push(TreeEntry {
-            name,
-            kind: EntryKind::Blob,
-            id: blob_id.0,
-        });
+    for walked in file_contents {
+        match walked.payload {
+            WalkedPayload::Blob(content) => {
+                let blob_id = obj_store.put_blob(&content).await?;
+                entries.push(TreeEntry {
+                    name: walked.path,
+                    kind: walked.kind,
+                    id: blob_id.0,
+                });
+            }
+            WalkedPayload::Gitlink(oid_hex) => {
+                // No noa object exists for a gitlink: the oid names a commit
+                // in another repository. Keep the oid as the entry id so the
+                // reference survives the round trip (export restores it).
+                entries.push(TreeEntry {
+                    name: walked.path,
+                    kind: EntryKind::Gitlink,
+                    id: oid_hex,
+                });
+            }
+        }
     }
     Ok(entries)
 }
