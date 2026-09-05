@@ -36,7 +36,7 @@ fn compute_change(base_entry: Option<&TreeEntry>, side_entry: Option<&TreeEntry>
     match (base_entry, side_entry) {
         (None, None) => Change::Unchanged,
         (None, Some(o)) => Change::Modified((*o).clone()),
-        (Some(b), Some(o)) if b.id != o.id => Change::Modified((*o).clone()),
+        (Some(b), Some(o)) if b.id != o.id || b.kind != o.kind => Change::Modified((*o).clone()),
         (Some(_), Some(_)) => Change::Unchanged,
         (Some(_), None) => Change::Deleted,
     }

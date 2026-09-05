@@ -29,16 +29,16 @@ fn resolve_nested_entry<'a, O: ObjectStore + 'a>(
                 continue;
             }
             if is_leaf {
-                if target_entry.kind != EntryKind::Blob {
+                if !target_entry.kind.is_file_like() {
                     anyhow::bail!("'{}' is not a file", filter);
                 }
-                let source_id = source
+                let source_entry = source
                     .0
                     .iter()
                     .find(|e| e.name == first)
-                    .map(|e| e.id.clone())
                     .ok_or_else(|| anyhow::anyhow!("path '{}' not found in source tree", filter))?;
-                target_entry.id = source_id;
+                target_entry.id = source_entry.id.clone();
+                target_entry.kind = source_entry.kind;
                 return Ok(true);
             }
             if target_entry.kind != EntryKind::Tree {

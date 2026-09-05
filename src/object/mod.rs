@@ -57,10 +57,77 @@ pub struct TreeEntry {
     pub id: String,
 }
 
+/// The kind of a [`TreeEntry`], carrying the git file-mode/type that plain
+/// [`EntryKind::Blob`] cannot represent.
+///
+/// Git modes preserved across the git bridge (`src/git/import.rs`,
+/// `src/git/export.rs`):
+/// * `Executable` — mode `100755`.
+/// * `Symlink` — mode `120000`; the entry `id` is a blob id whose bytes are
+///   the link-target path (exactly as git stores it).
+/// * `Gitlink` — mode `160000` (submodule commit reference); the entry `id`
+///   is the referenced git commit oid in hex, NOT a noa object id, because a
+///   plain `git clone` never fetches submodule objects.
+///
+/// Compatibility: `Blob` and `Tree` keep their existing serde encodings
+/// (variant order unchanged), so trees containing only plain files and
+/// directories deserialize exactly as before and their content hashes are
+/// stable. Trees containing the new variants are forward-incompatible: an
+/// older binary cannot interpret them. That is inherent — the old model
+/// could not represent these modes at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EntryKind {
     Blob,
     Tree,
+    Executable,
+    Symlink,
+    Gitlink,
+}
+
+impl EntryKind {
+    /// Git tree-entry mode bits for this kind (`040000` for trees).
+    #[must_use]
+    pub const fn git_mode(self) -> u32 {
+        match self {
+            EntryKind::Blob => 0o100644,
+            EntryKind::Tree => 0o040000,
+            EntryKind::Executable => 0o100755,
+            EntryKind::Symlink => 0o120000,
+            EntryKind::Gitlink => 0o160000,
+        }
+    }
+
+    /// Map a git tree-entry mode to a kind. Any `0o100xxx` blob mode that is
+    /// not executable falls back to [`EntryKind::Blob`]; unknown modes also
+    /// fall back to `Blob` so import never fails on them.
+    #[must_use]
+    pub const fn from_git_mode(mode: u32) -> Self {
+        match mode {
+            0o040000 => EntryKind::Tree,
+            0o100755 => EntryKind::Executable,
+            0o120000 => EntryKind::Symlink,
+            0o160000 => EntryKind::Gitlink,
+            _ => EntryKind::Blob,
+        }
+    }
+
+    /// True for leaf entries that carry blob bytes in the noa object store
+    /// (`Blob`, `Executable`, `Symlink`). `Gitlink` ids are git oids, not
+    /// noa blob ids; `Tree` ids are tree ids.
+    #[must_use]
+    pub const fn has_blob_body(self) -> bool {
+        match self {
+            EntryKind::Blob | EntryKind::Executable | EntryKind::Symlink => true,
+            EntryKind::Tree | EntryKind::Gitlink => false,
+        }
+    }
+
+    /// True for opaque file-like leaves (everything but `Tree`): content is
+    /// compared and replaced by id without recursing.
+    #[must_use]
+    pub const fn is_file_like(self) -> bool {
+        !matches!(self, EntryKind::Tree)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
