@@ -18,7 +18,6 @@ pub struct SnapshotEngine<L: AgentLog, S: SnapshotStore, O: ObjectStore> {
     pub object_store: O,
     ignore_matcher: Option<IgnoreMatcher>,
     repo_root: Option<PathBuf>,
-    compact_on_snapshot: bool,
     conflict_resolution: ConflictResolution,
 }
 
@@ -30,7 +29,6 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
             object_store,
             ignore_matcher: None,
             repo_root: None,
-            compact_on_snapshot: false,
             conflict_resolution: ConflictResolution::Theirs,
         }
     }
@@ -45,17 +43,20 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
         self
     }
 
-    pub fn with_compact_on_snapshot(mut self) -> Self {
-        self.compact_on_snapshot = true;
-        self
-    }
-
     pub fn with_conflict_resolution(mut self, resolution: ConflictResolution) -> Self {
         self.conflict_resolution = resolution;
         self
     }
 
-    pub async fn compute(
+    /// Build phase (pure): fold log entries over the parent tree(s) and return
+    /// the snapshot value WITHOUT persisting it and WITHOUT compacting the log.
+    ///
+    /// Tree objects written here are content-addressed and idempotent, so a
+    /// discarded build leaves no observable residue. The snapshot object itself
+    /// is NOT stored: persisting it before the publication CAS wins would strand
+    /// an unreachable orphan on every CAS loss (issue #74). The commit path must
+    /// store the snapshot only after `cas()` returns `true`.
+    pub async fn build(
         &self,
         workspace: &str,
         parent_ids: Vec<SnapshotId>,
@@ -137,20 +138,40 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
             message: message.to_string(),
         };
 
-        self.snapshot_store.store(&snapshot).await?;
-
-        if self.compact_on_snapshot {
-            if let Ok(next) = self.log.next_seq().await {
-                let max_seq = next.saturating_sub(1);
-                if max_seq > 0 {
-                    if let Err(e) = self.log.compact_to(max_seq).await {
-                        tracing::warn!("log compaction failed (non-fatal): {}", e);
-                    }
-                }
-            }
-        }
-
         Ok(snapshot)
+    }
+
+    /// Build + persist the snapshot object, without compacting the log.
+    ///
+    /// Convenience for direct callers (tests, single-writer flows) that publish
+    /// without a competing CAS. The multi-writer commit path (`run_create`) must
+    /// use [`Self::build`] and store only after the publication CAS succeeds,
+    /// then compact via [`Self::compact_committed`].
+    pub async fn compute(
+        &self,
+        workspace: &str,
+        parent_ids: Vec<SnapshotId>,
+        since_seq: u64,
+        author: &str,
+        message: &str,
+    ) -> Result<Snapshot> {
+        let snapshot = self
+            .build(workspace, parent_ids, since_seq, author, message)
+            .await?;
+        self.snapshot_store.store(&snapshot).await?;
+        Ok(snapshot)
+    }
+
+    /// Commit-phase log compaction. Call ONLY on the CAS winner, after the
+    /// snapshot object is stored and the workspace head/seq advanced — and
+    /// always last: compaction is destructive, and running it before a
+    /// successful publication CAS destroys pending entries a retry can no
+    /// longer rebuild (issue #74).
+    pub async fn compact_committed(&self, up_to_seq: u64) -> Result<()> {
+        if up_to_seq == 0 {
+            return Ok(());
+        }
+        self.log.compact_to(up_to_seq).await
     }
 
     async fn build_tree_from_entries(&self, entries: &[LogEntry]) -> Result<TreeEntries> {
