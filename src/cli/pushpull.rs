@@ -103,24 +103,20 @@ pub async fn run_pull(remote_name: &str) -> Result<()> {
         .await?
         .map_or_else(crate::snapshot::empty_snapshot_id, |ws| ws.head.clone());
     drop(repo);
-    crate::git::import::import_git_to_noa(&root, db.clone()).await?;
-    let ref_store = crate::refs::RedbRefStore::new(db.clone())?;
-    let head_ref = crate::refs::RefStore::get(&ref_store, "HEAD")
-        .await
-        .ok()
-        .flatten();
-    if let Some(snap_id) = head_ref {
-        if snap_id != before_head {
-            let ws_mgr = crate::workspace::WorkspaceManager::new(db)?;
-            if let Err(e) = ws_mgr.update_head(&head_ws, &snap_id).await {
-                eprintln!("warning: failed to update workspace head '{head_ws}': {e}");
-            }
+    // Compare against the just-imported snapshot — not the HEAD ref — so the
+    // verdict reflects what this pull actually did (issue #70). The import
+    // itself advances both the HEAD ref and the workspace head.
+    let after_head = crate::git::import::import_git_to_noa(&root, db.clone()).await?;
+    match after_head {
+        Some(snap_id) if snap_id != before_head => {
             println!("Pulled from {remote_name} and re-imported");
-        } else {
+        }
+        Some(_) => {
             println!("Already up to date.");
         }
-    } else {
-        println!("Pulled from {remote_name} (no new changes)");
+        None => {
+            println!("Pulled from {remote_name} (no new changes)");
+        }
     }
     Ok(())
 }
@@ -252,14 +248,9 @@ pub async fn run_clone_svn(url: &str, path: &str) -> Result<()> {
     };
     let repo = crate::repo::Repository::init_with_remotes(&target, vec![remote_config])?;
     let db = std::sync::Arc::clone(&repo.db);
-    crate::git::import::import_git_to_noa(&target, std::sync::Arc::clone(&db)).await?;
-
-    let ref_store = crate::refs::RedbRefStore::new(std::sync::Arc::clone(&db))?;
-    let head_ref = crate::refs::RefStore::get(&ref_store, "HEAD")
-        .await
-        .ok()
-        .flatten();
-    let head_snap_id = head_ref.unwrap_or_else(crate::snapshot::empty_snapshot_id);
+    let head_snap_id = crate::git::import::import_git_to_noa(&target, std::sync::Arc::clone(&db))
+        .await?
+        .unwrap_or_else(crate::snapshot::empty_snapshot_id);
 
     // Update the existing default workspace's head (created by init_with_remotes)
     let ws_mgr = crate::workspace::WorkspaceManager::new(db)?;
