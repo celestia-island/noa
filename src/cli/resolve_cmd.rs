@@ -265,6 +265,8 @@ pub async fn run_resolve(
         resolved_conflict_ours_id: Some(ours_id.to_string()),
         resolved_conflict_theirs_id: Some(theirs_id.to_string()),
         snapshot_id: Some(new_snap_id.0),
+        remote_seq: None,
+        remote_sender: None,
         ts: now,
         message: Some(format!("resolve {resolved_path} with {strategy}")),
     })

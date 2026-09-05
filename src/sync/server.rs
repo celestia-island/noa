@@ -320,19 +320,17 @@ impl SyncServer {
                 }
 
                 let engine = EventSyncEngine::new(workspace_root, workspace_name);
-                let (applied, ok, _error_msg) =
-                    match engine.apply_pull_events(&sync_msg.events).await {
-                        Ok(n) => (n, true, None),
-                        Err(e) => {
-                            tracing::error!("event sync apply failed: {}", e);
-                            (0, false, Some(e.to_string()))
-                        }
-                    };
-                let ack = NoaEventSyncAck {
-                    workspace_id: sync_msg.workspace_id,
-                    applied,
-                    ok,
-                };
+                let ack = NoaEventSyncAck::from_apply_result(
+                    sync_msg.workspace_id,
+                    engine.apply_pull_events(&sync_msg.events).await,
+                );
+                if !ack.ok {
+                    tracing::error!(
+                        "event sync apply failed after {} applied: {}",
+                        ack.applied,
+                        ack.error.as_deref().unwrap_or("unknown error")
+                    );
+                }
                 Ok(JsonRpcMessage::response(id, serde_json::to_value(ack)?))
             }
             _ => Ok(JsonRpcMessage::error_response(
