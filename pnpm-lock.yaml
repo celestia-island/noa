@@ -15,7 +15,7 @@ importers:
     dependencies:
       '@celestia-island/hikari':
         specifier: ^*
-        version: 0.30.0(vue@3.5.42(typescript@6.0.3))
+        version: 0.40.13(vue@3.5.42(typescript@6.0.3))
       pinia:
         specifier: ^*
         version: 4.0.3(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.42(typescript@6.0.3))
@@ -176,8 +176,8 @@ packages:
   '@bufbuild/protobuf@2.14.1':
     resolution: {integrity: sha512-agRJn3+EJDUe8AvxTx/LnHA/GErvLE62pSaSk7+MwFOtOv8eWBu/qCq2qoZjBjVZ3C2aiFJCveuSs17KMkYGOw==}
 
-  '@celestia-island/hikari@0.30.0':
-    resolution: {integrity: sha512-e7DdDd82Obb9srsXLc6/OMeZHQliY9lBZ2CBqEuERvDIaAFdO3VpKlzDGaJ7zbXuPGvdz3QDyc5uACg6QaLOwA==}
+  '@celestia-island/hikari@0.40.13':
+    resolution: {integrity: sha512-j06lTsaZ1IaL0Fl6RzGCdujNWMQ9T3vSTgE+RzAMgwhC8YKO8IH7MG5UT2W6WxZ4bU1Fd3lCJ8AEz1rkxW9JGw==}
     peerDependencies:
       vue: ^*
 
@@ -1501,7 +1501,7 @@ snapshots:
 
   '@bufbuild/protobuf@2.14.1': {}
 
-  '@celestia-island/hikari@0.30.0(vue@3.5.42(typescript@6.0.3))':
+  '@celestia-island/hikari@0.40.13(vue@3.5.42(typescript@6.0.3))':
     dependencies:
       dompurify: 3.4.14
       echarts: 6.1.0
