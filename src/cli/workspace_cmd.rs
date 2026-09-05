@@ -38,6 +38,8 @@ pub async fn run_create(repo: &Repository, name: &str, agent: Option<&str>) -> R
         resolved_conflict_ours_id: None,
         resolved_conflict_theirs_id: None,
         snapshot_id: Some(base_snapshot.0.clone()),
+        remote_seq: None,
+        remote_sender: None,
         ts: now,
         message: Some(format!("workspace {name} created")),
     })
@@ -227,6 +229,8 @@ pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<
                 )
             },
             snapshot_id: Some(merge_snapshot.id.0.clone()),
+            remote_seq: None,
+            remote_sender: None,
             ts: now,
             message: Some(format!("merge {from} into {current}")),
         })
