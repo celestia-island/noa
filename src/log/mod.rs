@@ -48,6 +48,17 @@ pub struct LogEntry {
     pub resolved_conflict_theirs_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot_id: Option<String>,
+    /// Identity of the remote event this entry was synced from, if any.
+    /// Single source of truth for sync idempotency: receivers record the
+    /// sender's `(sender, seq)` here at commit time and skip re-applying
+    /// events whose identity is already present. Local (non-synced) entries
+    /// leave both as `None` and never match an incoming remote identity.
+    /// Optional + serde-defaulted so pre-existing log lines still parse and
+    /// old binaries ignore the unknown fields when reading new lines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_sender: Option<String>,
     /// Timestamp in microseconds since Unix epoch
     pub ts: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
