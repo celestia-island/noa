@@ -1,6 +1,8 @@
+use std::sync::Arc;
 use async_trait::async_trait;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
+use fs2::FileExt;
 use std::{
     fs::{File, OpenOptions},
     io::{BufRead, Read, Seek, SeekFrom, Write},
@@ -10,9 +12,22 @@ use std::{
 use super::{format, AgentLog, LogEntry};
 use crate::error::Result;
 
+/// Durable, cross-handle sequence allocator for a single JSONL agent log.
+///
+/// Source of truth for the next sequence number is the `<log>.seq` sidecar
+/// file holding the next value to allocate (decimal, e.g. `41\n` means the
+/// next `append` returns 41). It is updated — under an exclusive OS file
+/// lock on `<log>.lock` — *before* the entry itself is written, so a crash
+/// between the two leaves a (harmless) gap rather than a duplicate.
+/// The in-memory `next_seq` is only a fast-path cache: every allocation and
+/// every `next_seq()` re-reads the sidecar under/after the lock and takes
+/// the max, so compaction (which destroys the file evidence) and concurrent
+/// handles (same process or another) can never rewind or collide.
 pub struct FileAgentLog {
     path: PathBuf,
-    next_seq: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    seq_path: PathBuf,
+    lock_path: PathBuf,
+    next_seq: Arc<std::sync::atomic::AtomicU64>,
     compact_lock: tokio::sync::Mutex<()>,
 }
 
@@ -22,15 +37,22 @@ impl FileAgentLog {
             std::fs::create_dir_all(parent)?;
         }
         cleanup_stale_temp(path);
-        let mut opts = OpenOptions::new();
-        opts.create(true).append(true).read(true);
-        #[cfg(unix)]
-        opts.mode(0o600);
-        let mut file = opts.open(path)?;
-        let max_seq = compute_max_seq_from_file(&mut file)?;
+        let seq_path = seq_sidecar_path(path);
+        let lock_path = lock_file_path(path);
+        cleanup_stale_seq_temp(&seq_path);
+        {
+            let mut opts = OpenOptions::new();
+            opts.create(true).append(true).read(true);
+            #[cfg(unix)]
+            opts.mode(0o600);
+            opts.open(path)?;
+        }
+        let next = init_high_water(path, &seq_path, &lock_path)?;
         Ok(FileAgentLog {
             path: path.to_path_buf(),
-            next_seq: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(max_seq + 1)),
+            seq_path,
+            lock_path,
+            next_seq: Arc::new(std::sync::atomic::AtomicU64::new(next)),
             compact_lock: tokio::sync::Mutex::new(()),
         })
     }
@@ -40,14 +62,108 @@ impl FileAgentLog {
             anyhow::bail!("log file not found: {}", path.display());
         }
         cleanup_stale_temp(path);
-        let mut file = OpenOptions::new().append(true).read(true).open(path)?;
-        let max_seq = compute_max_seq_from_file(&mut file)?;
+        let seq_path = seq_sidecar_path(path);
+        let lock_path = lock_file_path(path);
+        cleanup_stale_seq_temp(&seq_path);
+        let next = init_high_water(path, &seq_path, &lock_path)?;
         Ok(FileAgentLog {
             path: path.to_path_buf(),
-            next_seq: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(max_seq + 1)),
+            seq_path,
+            lock_path,
+            next_seq: Arc::new(std::sync::atomic::AtomicU64::new(next)),
             compact_lock: tokio::sync::Mutex::new(()),
         })
     }
+}
+
+/// Sidecar holding the durable seq high-water mark: `<log>.seq`.
+fn seq_sidecar_path(log_path: &Path) -> PathBuf {
+    let mut s = log_path.as_os_str().to_owned();
+    s.push(".seq");
+    PathBuf::from(s)
+}
+
+/// Lock file serializing allocate-append across handles and processes.
+fn lock_file_path(log_path: &Path) -> PathBuf {
+    let mut s = log_path.as_os_str().to_owned();
+    s.push(".lock");
+    PathBuf::from(s)
+}
+
+fn read_seq_file(seq_path: &Path) -> Option<u64> {
+    let content = std::fs::read_to_string(seq_path).ok()?;
+    content.trim().parse::<u64>().ok()
+}
+
+/// Crash-safe sidecar write: temp file + fsync + atomic rename.
+fn write_seq_file(seq_path: &Path, next: u64) -> Result<()> {
+    if let Some(parent) = seq_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let mut tmp_os = seq_path.as_os_str().to_owned();
+    tmp_os.push(".tmp");
+    let tmp = PathBuf::from(tmp_os);
+    {
+        let mut f = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp)?;
+        write!(f, "{next}\n")?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp, seq_path)?;
+    Ok(())
+}
+
+fn cleanup_stale_seq_temp(seq_path: &Path) {
+    let mut tmp_os = seq_path.as_os_str().to_owned();
+    tmp_os.push(".tmp");
+    let tmp = PathBuf::from(tmp_os);
+    if tmp.exists() {
+        if let Err(e) = std::fs::remove_file(&tmp) {
+            tracing::warn!(
+                "failed to remove stale seq temp file {}: {e}",
+                tmp.display()
+            );
+        }
+    }
+}
+
+/// Blocking exclusive OS lock (threads *and* processes). Released on drop.
+fn acquire_exclusive(lock_path: &Path) -> Result<File> {
+    if let Some(parent) = lock_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let mut opts = OpenOptions::new();
+    opts.create(true).read(true).write(true);
+    #[cfg(unix)]
+    opts.mode(0o600);
+    let file = opts.open(lock_path)?;
+    file.lock_exclusive()?;
+    Ok(file)
+}
+
+/// Resolve the durable high-water mark: `max(sidecar, file_max + 1, 1)`,
+/// persisting it when the sidecar is missing or behind (first open of a
+/// pre-sidecar log, or a sidecar lost to external deletion). Runs under the
+/// exclusive lock so concurrent creates converge instead of racing.
+fn init_high_water(log_path: &Path, seq_path: &Path, lock_path: &Path) -> Result<u64> {
+    let _lock = acquire_exclusive(lock_path)?;
+    let file_max = {
+        let mut f = OpenOptions::new().read(true).open(log_path)?;
+        compute_max_seq_from_file(&mut f)?
+    };
+    let persisted = read_seq_file(seq_path).unwrap_or(0);
+    let next = persisted.max(file_max.saturating_add(1)).max(1);
+    if persisted < next {
+        write_seq_file(seq_path, next)?;
+    }
+    Ok(next)
 }
 
 fn compute_max_seq_from_file(file: &mut File) -> Result<u64> {
@@ -114,19 +230,42 @@ fn max_seq_from_lines<'a>(lines: impl DoubleEndedIterator<Item = &'a str>) -> Re
 impl AgentLog for FileAgentLog {
     async fn append(&self, entry: &LogEntry) -> Result<u64> {
         let _guard = self.compact_lock.lock().await;
-        let seq = self
-            .next_seq
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let mut assigned_entry = entry.clone();
-        assigned_entry.seq = seq;
-        let line = format::serialize_entry(&assigned_entry)?;
-        let mut record = line.into_bytes();
-        record.push(b'\n');
         let path = self.path.clone();
+        let seq_path = self.seq_path.clone();
+        let lock_path = self.lock_path.clone();
+        let cache = Arc::clone(&self.next_seq);
+        let template = entry.clone();
         tokio::task::spawn_blocking(move || {
-            let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
-            file.write_all(&record)?;
-            file.sync_all()?;
+            // Exclusive OS lock: serializes read-allocate-append across all
+            // handles in this process AND across processes.
+            let _lock = acquire_exclusive(&lock_path)?;
+            // Re-read durable state under the lock; self-heals against any
+            // entry written outside this protocol (max with file evidence).
+            let file_max = if path.exists() {
+                let mut f = OpenOptions::new().read(true).open(&path)?;
+                compute_max_seq_from_file(&mut f)?
+            } else {
+                0
+            };
+            let persisted = read_seq_file(&seq_path).unwrap_or(0);
+            let cached = cache.load(std::sync::atomic::Ordering::Acquire);
+            let seq = persisted.max(file_max.saturating_add(1)).max(cached).max(1);
+            let next = seq.saturating_add(1);
+            // Reserve `seq` durably BEFORE the entry is visible: a crash in
+            // between leaves a gap (monotonicity holds); the reverse order
+            // could duplicate `seq` on reopen.
+            write_seq_file(&seq_path, next)?;
+            let mut assigned_entry = template;
+            assigned_entry.seq = seq;
+            let line = format::serialize_entry(&assigned_entry)?;
+            let mut record = line.into_bytes();
+            record.push(b'\n');
+            {
+                let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+                file.write_all(&record)?;
+                file.sync_all()?;
+            }
+            cache.store(next, std::sync::atomic::Ordering::Release);
             Ok(seq)
         })
         .await?
@@ -160,14 +299,32 @@ impl AgentLog for FileAgentLog {
     }
 
     async fn next_seq(&self) -> Result<u64> {
-        Ok(self.next_seq.load(std::sync::atomic::Ordering::Acquire))
+        let cached = self.next_seq.load(std::sync::atomic::Ordering::Acquire);
+        // The sidecar is the source of truth: other handles (this process
+        // or another) may have advanced it since we cached.
+        match read_seq_file(&self.seq_path) {
+            Some(persisted) => {
+                let next = persisted.max(cached);
+                if next > cached {
+                    self.next_seq
+                        .store(next, std::sync::atomic::Ordering::Release);
+                }
+                Ok(next)
+            }
+            None => Ok(cached),
+        }
     }
 
     async fn compact_to(&self, up_to_seq: u64) -> Result<()> {
         let _guard = self.compact_lock.lock().await;
         let path = self.path.clone();
-        let next_seq = std::sync::Arc::clone(&self.next_seq);
+        let seq_path = self.seq_path.clone();
+        let lock_path = self.lock_path.clone();
+        let cache = Arc::clone(&self.next_seq);
         tokio::task::spawn_blocking(move || {
+            // Same exclusive lock as append: compaction must not interleave
+            // with an allocate-append on any handle.
+            let _lock = acquire_exclusive(&lock_path)?;
             cleanup_stale_temp(&path);
             if !path.exists() {
                 return Ok(());
@@ -218,9 +375,21 @@ impl AgentLog for FileAgentLog {
                 return Err(e.into());
             }
 
-            let current = next_seq.load(std::sync::atomic::Ordering::Acquire);
-            let new = current.max(max_remaining + 1);
-            next_seq.store(new, std::sync::atomic::Ordering::Release);
+            // The durable high-water mark never moves backwards: compaction
+            // destroys file evidence, so re-persist the max. The sidecar
+            // already holds every allocated seq, hence `persisted` dominates
+            // `max_remaining + 1` in the normal case; the max covers a
+            // missing/stale sidecar.
+            let cached = cache.load(std::sync::atomic::Ordering::Acquire);
+            let persisted = read_seq_file(&seq_path).unwrap_or(0);
+            let next = cached
+                .max(persisted)
+                .max(max_remaining.saturating_add(1))
+                .max(1);
+            if persisted < next {
+                write_seq_file(&seq_path, next)?;
+            }
+            cache.store(next, std::sync::atomic::Ordering::Release);
 
             Ok(())
         })
@@ -639,5 +808,84 @@ mod tests {
 
         let entries = reopened.read_all().await.unwrap();
         assert_eq!(entries.len() as u64, last_seq);
+    }
+
+    /// Issue #71 (Bugs 1+2): seq allocation must be durable and shared.
+    /// Part 1 mirrors the compact → reopen → append repro: after compacting
+    /// everything away, a reopened handle must stay monotonic and the new
+    /// entry must be visible to `read_since(prior_last_seq)`. Part 2 mirrors
+    /// the concurrent-handles repro: two handles opened on the same file
+    /// must allocate distinct seqs.
+    #[tokio::test]
+    async fn test_seq_allocator_durable_and_shared_across_handles() {
+        use crate::log::AgentLog;
+        let tmp = TempDir::new().unwrap();
+        let log_path = tmp.path().join("issue71.log");
+
+        // --- Bug 1: compact-all, drop, reopen, append stays monotonic ---
+        let e1_seq = {
+            let log = FileAgentLog::create(&log_path).unwrap();
+            let s = log
+                .append(&make_entry(0, OpType::Write, "e1.txt", 100))
+                .await
+                .unwrap();
+            let next = log.next_seq().await.unwrap();
+            log.compact_to(next.saturating_sub(1)).await.unwrap();
+            assert!(
+                log.read_all().await.unwrap().is_empty(),
+                "compact-all must empty the log"
+            );
+            s
+        };
+        assert_eq!(e1_seq, 1);
+        let reopened_next = FileAgentLog::create(&log_path)
+            .unwrap()
+            .next_seq()
+            .await
+            .unwrap();
+        assert_eq!(
+            reopened_next, 2,
+            "reopened next_seq must survive compaction (got {reopened_next})"
+        );
+        let log2 = FileAgentLog::create(&log_path).unwrap();
+        let e2_seq = log2
+            .append(&make_entry(0, OpType::Write, "e2.txt", 200))
+            .await
+            .unwrap();
+        assert!(e2_seq > e1_seq, "E2.seq ({e2_seq}) must exceed E1.seq ({e1_seq})");
+        let since: Vec<u64> = log2
+            .read_since(e1_seq)
+            .await
+            .unwrap()
+            .iter()
+            .map(|e| e.seq)
+            .collect();
+        assert!(
+            since.contains(&e2_seq),
+            "E2 (seq {e2_seq}) must be visible to read_since({e1_seq}), got {since:?}"
+        );
+
+        // --- Bug 2: two handles on the same file allocate distinct seqs ---
+        let log_b = FileAgentLog::create(&log_path).unwrap();
+        let ea = make_entry(0, OpType::Write, "a.txt", 300);
+        let eb = make_entry(0, OpType::Write, "b.txt", 400);
+        let (seq_a, seq_b) = tokio::join!(log2.append(&ea), log_b.append(&eb),);
+        let (seq_a, seq_b) = (seq_a.unwrap(), seq_b.unwrap());
+        assert_ne!(
+            seq_a, seq_b,
+            "concurrent handles must allocate distinct seqs (got {seq_a} and {seq_b})"
+        );
+        let mut seqs: Vec<u64> = log2
+            .read_all()
+            .await
+            .unwrap()
+            .iter()
+            .map(|e| e.seq)
+            .collect();
+        seqs.sort_unstable();
+        assert!(
+            seqs.windows(2).all(|w| w[0] != w[1]),
+            "read_all must contain no duplicate seqs, got {seqs:?}"
+        );
     }
 }

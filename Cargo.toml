@@ -60,6 +60,7 @@ sha2 = "^0.11"
 subtle = "^2"
 suppaftp = { version = "^10", features = ["tokio"], optional = true }
 thiserror = "^2"
+fs2 = "^0.4"
 tokio = { version = "^1", features = ["full"] }
 # tokio-rustls + hyper-rustls: their DEFAULT features include aws_lc_rs 鈫?# rustls/aws_lc_rs 鈫?aws-lc-sys. aws-smithy-http-client's __rustls pulls them in
 # via bare dep: (no feature spec) so their defaults apply. Pinning both here
