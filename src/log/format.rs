@@ -69,6 +69,8 @@ mod tests {
             resolved_conflict_ours_id: None,
             resolved_conflict_theirs_id: None,
             snapshot_id: None,
+            remote_seq: None,
+            remote_sender: None,
             ts: 1_717_592_400_000_000,
             message: None,
         };
