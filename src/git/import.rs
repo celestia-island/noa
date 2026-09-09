@@ -5,10 +5,16 @@ use crate::{
     error::Result,
     object::{EntryKind, ObjectStore, TreeEntries, TreeEntry},
     refs::{RedbRefStore, RefStore},
-    snapshot::{content_addressed_snapshot_id_with_ts, RedbSnapshotStore, Snapshot, SnapshotStore},
+    snapshot::{
+        SnapshotId, content_addressed_snapshot_id_with_ts, RedbSnapshotStore, Snapshot,
+        SnapshotStore,
+    },
 };
 
-pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Result<()> {
+pub async fn import_git_to_noa(
+    git_dir: &Path,
+    db: Arc<redb::Database>,
+) -> Result<Option<SnapshotId>> {
     let git_dir = git_dir.to_path_buf();
     let repo = tokio::task::spawn_blocking(move || gix::open(&git_dir).map_err(Box::new))
         .await?
@@ -23,7 +29,7 @@ pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Resul
         Ok(id) => id.detach(),
         Err(_) => {
             tracing::warn!("git repository has no HEAD (empty repo), skipping import");
-            return Ok(());
+            return Ok(None);
         }
     };
 
@@ -71,7 +77,20 @@ pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Resul
         message,
     };
     snap_store.store(&snapshot).await?;
-    ref_store.cas("HEAD", None, &snapshot.id).await?;
+    // Write-through: advance HEAD from its actual current value so repeated
+    // imports track the latest snapshot. The previous `cas("HEAD", None, ...)`
+    // only matched when the ref was absent, freezing HEAD at the clone-time
+    // snapshot forever (issue #70). Retry on races; only this import writes HEAD.
+    let mut current = ref_store.get("HEAD").await?;
+    loop {
+        if ref_store
+            .cas("HEAD", current.as_ref(), &snapshot.id)
+            .await?
+        {
+            break;
+        }
+        current = ref_store.get("HEAD").await?;
+    }
 
     let now = crate::now_micros();
     let ws = crate::workspace::Workspace {
@@ -92,7 +111,7 @@ pub async fn import_git_to_noa(git_dir: &Path, db: Arc<redb::Database>) -> Resul
         }
     }
 
-    Ok(())
+    Ok(Some(snapshot.id))
 }
 
 #[must_use]
