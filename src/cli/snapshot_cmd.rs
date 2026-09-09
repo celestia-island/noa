@@ -31,18 +31,20 @@ pub async fn run_create(repo: &Repository, message: &str, author: &str) -> Resul
     let matcher = IgnoreMatcher::from_repo_root(&repo.root);
     let engine = SnapshotEngine::new(agent_log, snap_store, obj_store)
         .with_ignore(matcher)
-        .with_repo_root(repo.root.clone())
-        .with_compact_on_snapshot();
+        .with_repo_root(repo.root.clone());
+    // Pure build: no snapshot-store write, no log compaction. Both happen
+    // only on the commit path below, after the publication CAS succeeds.
     let snapshot = engine
-        .compute(&head_ws, parent_ids, since_seq, author, message)
+        .build(&head_ws, parent_ids, since_seq, author, message)
         .await?;
 
     // Compute the new sequence number first so we fail early
     // if the log is unavailable. This avoids partial updates.
     let new_seq = crate::log::AgentLog::next_seq(&engine.log).await?;
-
-    // Update the ref store via CAS first. If this fails, nothing
-    // has been modified yet — the system is fully consistent.
+    // Publish via CAS. On `Ok(false)` nothing has been modified yet — the
+    // build above is side-effect free (content-addressed tree writes aside,
+    // which a retry deterministically reuses) — so the loser simply bails
+    // and retries from the still-intact log.
     let ref_store = repo.ref_store()?;
     let current_ref = ref_store.get(&head_ws).await?;
     match ref_store
@@ -60,12 +62,23 @@ pub async fn run_create(repo: &Repository, message: &str, author: &str) -> Resul
         }
     }
 
-    // Then update workspace head and seq. The ref has already been
-    // updated atomically by CAS; if this step fails the ref still
-    // points to the new snapshot, keeping the system consistent.
+    // Winner only, in this order: persist the snapshot before advancing the
+    // workspace so a crash never leaves the ref dangling at an unstored id;
+    // compact the log absolutely last so any earlier crash leaves pending
+    // entries intact for a retry. Orphan snapshots stranded by pre-fix builds
+    // are unreachable from refs/heads and safe to garbage-collect by
+    // reachability (`list_all` minus ref/head closure).
+    engine.snapshot_store.store(&snapshot).await?;
     ws_mgr
         .update_head_and_seq(&head_ws, &snapshot.id, new_seq)
         .await?;
+
+    let max_seq = new_seq.saturating_sub(1);
+    if max_seq > 0 {
+        if let Err(e) = engine.compact_committed(max_seq).await {
+            tracing::warn!("log compaction failed (non-fatal): {}", e);
+        }
+    }
 
     println!(
         "Created snapshot {} in workspace '{}'",

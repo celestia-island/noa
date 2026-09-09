@@ -649,13 +649,20 @@ async fn integration_log_compaction_after_snapshot() {
 
     assert_eq!(agent_log.read_all().await.unwrap().len(), 10);
 
-    let engine = SnapshotEngine::new(agent_log, snap_store.clone(), obj_store.clone())
-        .with_compact_on_snapshot();
+    // Winner-path commit ordering (issue #74): pure build, then store, then
+    // workspace update, with compaction absolutely last.
+    let engine = SnapshotEngine::new(agent_log, snap_store.clone(), obj_store.clone());
     let snap = engine
-        .compute("default", vec![], 0, "author", "compact me")
+        .build("default", vec![], 0, "author", "compact me")
         .await
         .unwrap();
+    let new_seq = engine.log.next_seq().await.unwrap();
+    engine.snapshot_store.store(&snap).await.unwrap();
     ws_mgr.update_head("default", &snap.id).await.unwrap();
+    engine
+        .compact_committed(new_seq.saturating_sub(1))
+        .await
+        .unwrap();
 
     let remaining = engine.log.read_all().await.unwrap();
     assert!(
@@ -2116,4 +2123,99 @@ async fn test_merge_log_records_all_conflict_ids() {
         "ours_ids should contain comma-separated IDs for both conflicts, got: '{}'",
         ours_ids
     );
+}
+
+// ------
+// Issue #74: snapshot must not compact the log before the publication CAS wins.
+// ------
+
+/// A failed publication CAS must leave the log and all stores observably
+/// untouched, and a retry from the intact log must rebuild the same data.
+/// Mirrors `run_create` ordering with a deterministic interleaving:
+/// build -> winner CAS -> loser CAS(stale) -> assertions -> retry.
+#[tokio::test]
+async fn integration_snapshot_failed_cas_leaves_log_and_stores_untouched() {
+    use libnoa::refs::RefStore;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = Repository::init(tmp.path()).unwrap();
+    let ws_mgr = repo.workspace_manager().unwrap();
+    let obj_store = repo.object_store().unwrap();
+    let snap_store = repo.snapshot_store().unwrap();
+    let ref_store = repo.ref_store().unwrap();
+    let agent_log = repo.agent_log("default").unwrap();
+
+    agent_log
+        .append(&make_log_entry(1, OpType::Write, "a.txt", Some("blob_a"), 100))
+        .await
+        .unwrap();
+    agent_log
+        .append(&make_log_entry(2, OpType::Write, "b.txt", Some("blob_b"), 200))
+        .await
+        .unwrap();
+
+    // Stale read, exactly like `run_create`'s pre-CAS `get`.
+    let stale = ref_store.get("default").await.unwrap();
+    assert!(stale.is_none());
+
+    // Pure build: must not touch the log or the snapshot store.
+    let engine = SnapshotEngine::new(agent_log, snap_store.clone(), obj_store.clone());
+    let loser = engine
+        .build("default", vec![], 0, "tester", "loser snapshot")
+        .await
+        .unwrap();
+    assert_eq!(engine.log.read_all().await.unwrap().len(), 2);
+    assert!(snap_store.list_all().await.unwrap().is_empty());
+
+    // A concurrent winner publishes first.
+    let winner_id = SnapshotId("noa_winner000000000000000000000001".to_string());
+    assert!(ref_store.cas("default", None, &winner_id).await.unwrap());
+
+    // Loser CAS with the stale expectation fails.
+    assert!(!ref_store.cas("default", stale.as_ref(), &loser.id).await.unwrap());
+    assert_eq!(
+        ref_store.get("default").await.unwrap(),
+        Some(winner_id.clone())
+    );
+
+    // Failed publication left the log and stores observably untouched.
+    let entries = engine.log.read_all().await.unwrap();
+    assert_eq!(entries.len(), 2, "loser must not compact pending entries");
+    assert_eq!(entries[0].seq, 1);
+    assert_eq!(entries[1].seq, 2);
+    assert_eq!(engine.log.next_seq().await.unwrap(), 3);
+    assert!(
+        snap_store.list_all().await.unwrap().is_empty(),
+        "loser must not leave an orphan snapshot object"
+    );
+
+    // Retry from the intact log on the winner path succeeds and preserves data.
+    let new_seq = engine.log.next_seq().await.unwrap();
+    let retry = engine
+        .build("default", vec![], 0, "tester", "retry snapshot")
+        .await
+        .unwrap();
+    let current = ref_store.get("default").await.unwrap();
+    assert!(ref_store.cas("default", current.as_ref(), &retry.id).await.unwrap());
+    engine.snapshot_store.store(&retry).await.unwrap();
+    ws_mgr
+        .update_head_and_seq("default", &retry.id, new_seq)
+        .await
+        .unwrap();
+    engine
+        .compact_committed(new_seq.saturating_sub(1))
+        .await
+        .unwrap();
+
+    let ws = ws_mgr.get("default").await.unwrap().unwrap();
+    assert_eq!(ws.head, retry.id);
+    assert_eq!(ws.last_seq, new_seq);
+    let tree = obj_store
+        .get_tree(&libnoa::object::TreeId(retry.tree_hash.clone()))
+        .await
+        .unwrap();
+    let names: Vec<&str> = tree.0.iter().map(|e| e.name.as_str()).collect();
+    assert!(names.contains(&"a.txt"), "retry tree must contain a.txt: {:?}", names);
+    assert!(names.contains(&"b.txt"), "retry tree must contain b.txt: {:?}", names);
+    assert!(snap_store.get(&retry.id).await.is_ok());
 }
