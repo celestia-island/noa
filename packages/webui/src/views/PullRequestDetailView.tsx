@@ -41,8 +41,8 @@ export default function PullRequestDetailView() {
 
   return (
     <div class="pr-detail">
-      <HButton size="sm" variant="ghost" onClick={() => router.push("/")}>
-        ← Back
+      <HButton size="sm" variant="ghost" icon="arrow-left" onClick={() => router.push("/")}>
+        Back
       </HButton>
       {error.value && <span class="err">{error.value}</span>}
       {!pr.value && !error.value && <HSpinner center />}
