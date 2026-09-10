@@ -349,7 +349,9 @@ async fn push_tree_recursive(
     remote.put_tree(&entries).await?;
     for entry in &entries.0 {
         match entry.kind {
-            crate::object::EntryKind::Blob => {
+            crate::object::EntryKind::Blob
+            | crate::object::EntryKind::Executable
+            | crate::object::EntryKind::Symlink => {
                 let blob_id = BlobId(entry.id.clone());
                 match remote.has_blob(&blob_id).await {
                     Ok(true) => continue,
@@ -369,6 +371,12 @@ async fn push_tree_recursive(
                     &TreeId(entry.id.clone()),
                 ))
                 .await?;
+            }
+            crate::object::EntryKind::Gitlink => {
+                // A gitlink id is a git commit oid from another repository,
+                // not a noa object: there is nothing to fetch or push. The
+                // reference itself already travelled inside the parent tree,
+                // which is synced above.
             }
         }
     }
