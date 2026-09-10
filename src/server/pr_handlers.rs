@@ -13,8 +13,8 @@ use crate::{
     object::{ObjectStore, TreeId},
     server::pr_store::{PrRecord, PrStore},
     snapshot::{
-        content_addressed_snapshot_id_with_ts, RedbSnapshotStore, Snapshot, SnapshotId,
-        SnapshotStore,
+        content_addressed_snapshot_id_with_ts, find_merge_base, RedbSnapshotStore, Snapshot,
+        SnapshotId, SnapshotStore,
     },
 };
 
@@ -190,18 +190,28 @@ pub async fn merge_pr(
     let snap_store: RedbSnapshotStore = state.snapshot_store().map_err(err_json)?;
     let object_store = state.object_store().map_err(err_json)?;
 
-    let base_snap = match snap_store
-        .get(&SnapshotId(record.base_snapshot.clone()))
+    // The merge base is the DAG common ancestor of the two current heads, not
+    // the snapshot pinned when the PR was created (stale once either head
+    // advances). Fall back to the pinned snapshot only when the heads share
+    // no DAG ancestor, preserving the previous behavior for such histories.
+    let merge_base_id = find_merge_base(&snap_store, &base_ws.head, &head_ws.head)
         .await
-    {
-        Ok(s) => s,
-        Err(e) if is_snapshot_not_found(&e) => {
-            return Err(not_found(format!(
-                "base snapshot not found: {}",
-                record.base_snapshot
-            )))
-        }
-        Err(e) => return Err(err_json(e)),
+        .map_err(err_json)?;
+    let base_snap = match merge_base_id {
+        Some(id) => snap_store.get(&id).await.map_err(err_json)?,
+        None => match snap_store
+            .get(&SnapshotId(record.base_snapshot.clone()))
+            .await
+        {
+            Ok(s) => s,
+            Err(e) if is_snapshot_not_found(&e) => {
+                return Err(not_found(format!(
+                    "base snapshot not found: {}",
+                    record.base_snapshot
+                )))
+            }
+            Err(e) => return Err(err_json(e)),
+        },
     };
     let ours_snap = match snap_store.get(&base_ws.head).await {
         Ok(s) => s,
