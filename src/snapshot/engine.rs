@@ -200,100 +200,126 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
     /// Build a hierarchical tree from a flat map.
     /// Decomposes into layers by depth (top-down), then rebuilds bottom-up, storing sub-trees.
     /// Uses a FIFO worklist during decomposition to ensure sibling directories at the same
-    /// depth are processed in order, and a position-based resolved list during assembly
-    /// so that sibling directories with same-named children do not collide.
+    /// depth are processed in order. Parent identity is preserved end-to-end: the work
+    /// queue carries each item's full path alongside its parent-stripped remainder, and
+    /// resolved subtrees are keyed by full path so same-named directories under different
+    /// parents never collide.
     async fn build_hierarchical_tree(
         &self,
         flat_map: &BTreeMap<String, TreeEntry>,
     ) -> Result<TreeEntries> {
-        type LayerEntry = (Vec<TreeEntry>, Vec<(String, Vec<TreeEntry>)>);
-        // Phase 1: decompose into layers (top-down, FIFO order)
+        // LayerEntry carries the full parent prefix so Phase 2 can key by full path.
+        // roots: (full_path, entry with bare name); subdirs: (full_dir_path, bare_dir_name,
+        // children as (full_child_path, entry with bare name)).
+        type LayerEntry = (
+            String,
+            Vec<(String, TreeEntry)>,
+            Vec<(String, String, Vec<(String, TreeEntry)>)>,
+        );
+        // Phase 1: decompose into layers (top-down, FIFO order). Each queue item keeps
+        // the full paths (source of truth) plus the prefix they are relative to, so
+        // `a/common/a.txt` and `b/common/b.txt` never degrade into bare `common/...`.
         let mut layers: Vec<LayerEntry> = Vec::new();
-        let mut work_queue: VecDeque<Vec<(String, TreeEntry)>> = VecDeque::new();
-        work_queue.push_back(
+        let mut work_queue: VecDeque<(String, Vec<(String, TreeEntry)>)> = VecDeque::new();
+        work_queue.push_back((
+            String::new(),
             flat_map
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
-        );
+        ));
 
-        while let Some(current) = work_queue.pop_front() {
-            let mut roots: Vec<TreeEntry> = Vec::new();
+        while let Some((prefix, current)) = work_queue.pop_front() {
+            let mut roots: Vec<(String, TreeEntry)> = Vec::new();
             let mut dirs: BTreeMap<String, Vec<(String, TreeEntry)>> = BTreeMap::new();
 
-            for (path, entry) in current {
-                if let Some((dir, rest)) = path.split_once('/') {
+            for (full_path, entry) in current {
+                let rel = if prefix.is_empty() {
+                    full_path.clone()
+                } else {
+                    match full_path.strip_prefix(&format!("{prefix}/")) {
+                        Some(r) => r.to_string(),
+                        None => full_path.clone(),
+                    }
+                };
+                if let Some((dir, rest)) = rel.split_once('/') {
                     let mut child = entry.clone();
                     child.name = rest.to_string();
                     dirs.entry(dir.to_string())
                         .or_default()
-                        .push((rest.to_string(), child));
+                        .push((full_path, child));
                 } else {
-                    roots.push(entry);
+                    roots.push((full_path, entry));
                 }
             }
 
-            let mut subdirs: Vec<(String, Vec<TreeEntry>)> = Vec::new();
+            let mut subdirs: Vec<(String, String, Vec<(String, TreeEntry)>)> = Vec::new();
             for (dir_name, children) in dirs {
+                let full_dir_path = if prefix.is_empty() {
+                    dir_name.clone()
+                } else {
+                    format!("{prefix}/{dir_name}")
+                };
                 let deep: Vec<_> = children
                     .iter()
-                    .filter(|(k, _)| k.contains('/'))
+                    .filter(|(_, e)| e.name.contains('/'))
                     .cloned()
                     .collect();
                 let leaf: Vec<_> = children
                     .iter()
-                    .filter(|(k, _)| !k.contains('/'))
+                    .filter(|(_, e)| !e.name.contains('/'))
                     .cloned()
                     .collect();
 
                 if !deep.is_empty() {
-                    work_queue.push_back(deep.clone());
+                    work_queue.push_back((full_dir_path.clone(), deep.clone()));
                 }
 
-                let mut entries: Vec<TreeEntry> = leaf.into_iter().map(|(_, e)| e).collect();
-                for (deep_path, _) in &deep {
-                    if let Some((immediate, _)) = deep_path.split_once('/') {
-                        if !entries.iter().any(|e| e.name == immediate) {
-                            entries.push(TreeEntry {
-                                name: immediate.to_string(),
-                                kind: EntryKind::Tree,
-                                id: String::new(),
-                            });
+                let mut entries: Vec<(String, TreeEntry)> =
+                    leaf.into_iter().map(|(full, e)| (full, e)).collect();
+                for (_, child) in &deep {
+                    if let Some((immediate, _)) = child.name.split_once('/') {
+                        if !entries.iter().any(|(_, e)| e.name == immediate) {
+                            entries.push((
+                                format!("{full_dir_path}/{immediate}"),
+                                TreeEntry {
+                                    name: immediate.to_string(),
+                                    kind: EntryKind::Tree,
+                                    id: String::new(),
+                                },
+                            ));
                         }
                     }
                 }
-                subdirs.push((dir_name, entries));
+                subdirs.push((full_dir_path, dir_name, entries));
             }
 
-            layers.push((roots, subdirs));
+            layers.push((prefix, roots, subdirs));
         }
 
-        // Phase 2: rebuild bottom-up, drain resolved into a name-indexed map so that
-        // sibling directories with same-named children each get the correct sub-tree.
+        // Phase 2: rebuild bottom-up, drain resolved into a full-path-indexed map so that
+        // same-named directories under different parents each get their own sub-tree.
         // Uses a HashMap for O(1) lookup + O(1) pop instead of O(n) position() + O(n) remove().
         let mut resolved: Vec<(String, TreeEntry)> = Vec::new();
 
-        for (roots, subdirs) in layers.into_iter().rev() {
-            let mut level_map = BTreeMap::new();
+        for (_prefix, roots, subdirs) in layers.into_iter().rev() {
+            let mut level_map: BTreeMap<String, TreeEntry> = BTreeMap::new();
 
-            for entry in roots {
-                level_map.insert(entry.name.clone(), entry);
+            for (full_path, entry) in roots {
+                level_map.insert(full_path, entry);
             }
 
-            let mut resolved_by_name: std::collections::HashMap<String, Vec<TreeEntry>> =
+            let mut resolved_by_path: std::collections::HashMap<String, Vec<TreeEntry>> =
                 std::collections::HashMap::new();
-            for (_, entry) in std::mem::take(&mut resolved) {
-                resolved_by_name
-                    .entry(entry.name.clone())
-                    .or_default()
-                    .push(entry);
+            for (full_path, entry) in std::mem::take(&mut resolved) {
+                resolved_by_path.entry(full_path).or_default().push(entry);
             }
 
-            for (dir_name, children) in subdirs {
+            for (full_dir_path, dir_name, children) in subdirs {
                 let mut sub_entries = Vec::new();
-                for entry in children {
+                for (full_child_path, entry) in children {
                     if entry.kind == EntryKind::Tree && entry.id.is_empty() {
-                        if let Some(entries) = resolved_by_name.get_mut(&entry.name) {
+                        if let Some(entries) = resolved_by_path.get_mut(&full_child_path) {
                             if let Some(resolved_entry) = entries.pop() {
                                 sub_entries.push(resolved_entry);
                             } else {
@@ -310,7 +336,7 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                                 dir_name
                             );
                         }
-                    } else if let Some(entries) = resolved_by_name.get_mut(&entry.name) {
+                    } else if let Some(entries) = resolved_by_path.get_mut(&full_child_path) {
                         if let Some(resolved_entry) = entries.pop() {
                             sub_entries.push(resolved_entry);
                         } else {
@@ -323,7 +349,7 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                 let sub_tree = TreeEntries(sub_entries);
                 let tree_id = self.object_store.put_tree(&sub_tree).await?;
                 level_map.insert(
-                    dir_name.clone(),
+                    full_dir_path,
                     TreeEntry {
                         name: dir_name,
                         kind: EntryKind::Tree,
@@ -332,9 +358,11 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                 );
             }
 
-            let remaining: Vec<(String, TreeEntry)> = resolved_by_name
-                .into_values()
-                .flat_map(|entries| entries.into_iter().map(|e| (e.name.clone(), e)))
+            let remaining: Vec<(String, TreeEntry)> = resolved_by_path
+                .into_iter()
+                .flat_map(|(full_path, entries)| {
+                    entries.into_iter().map(move |e| (full_path.clone(), e))
+                })
                 .collect();
             let mut new_resolved: Vec<(String, TreeEntry)> = level_map.into_iter().collect();
             new_resolved.extend(remaining);
@@ -1195,5 +1223,87 @@ mod tests {
         assert_eq!(b_tree.0.len(), 1);
         assert_eq!(b_tree.0[0].name, "main.rs");
         assert_eq!(b_tree.0[0].id, "hash_b");
+    }
+
+    #[tokio::test]
+    async fn test_same_named_subdirs_keep_parent_identity() {
+        // Regression test for #75: `a/common/` and `b/common/` must not swap
+        // children. Covers the 2-level repro plus 3-level nesting.
+        let (_tmp, engine) = make_engine().await;
+        engine
+            .log
+            .append(&write_entry(1, "a/common/a.txt", "hash_a", 100))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&write_entry(2, "b/common/b.txt", "hash_b", 200))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&write_entry(3, "a/common/deep/da.txt", "hash_da", 300))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&write_entry(4, "b/common/deep/db.txt", "hash_db", 400))
+            .await
+            .unwrap();
+
+        let snap = engine
+            .compute("default", vec![], 0, "test", "bug5")
+            .await
+            .unwrap();
+        let tree = engine
+            .object_store
+            .get_tree(&crate::object::TreeId(snap.tree_hash))
+            .await
+            .unwrap();
+        assert_eq!(tree.0.len(), 2);
+        let a_entry = tree.0.iter().find(|e| e.name == "a").unwrap();
+        let b_entry = tree.0.iter().find(|e| e.name == "b").unwrap();
+        assert_eq!(a_entry.kind, crate::object::EntryKind::Tree);
+        assert_eq!(b_entry.kind, crate::object::EntryKind::Tree);
+
+        async fn get(
+            engine: &SnapshotEngine<FileAgentLog, RedbSnapshotStore, RedbObjectStore>,
+            id: &str,
+        ) -> TreeEntries {
+            engine
+                .object_store
+                .get_tree(&TreeId(id.to_string()))
+                .await
+                .unwrap()
+        }
+        let a_tree = get(&engine, &a_entry.id).await;
+        let b_tree = get(&engine, &b_entry.id).await;
+        let a_common = a_tree.0.iter().find(|e| e.name == "common").unwrap();
+        let b_common = b_tree.0.iter().find(|e| e.name == "common").unwrap();
+        assert_eq!(a_common.kind, crate::object::EntryKind::Tree);
+        assert_eq!(b_common.kind, crate::object::EntryKind::Tree);
+
+        let a_common_tree = get(&engine, &a_common.id).await;
+        let b_common_tree = get(&engine, &b_common.id).await;
+        let a_file = a_common_tree.0.iter().find(|e| e.name == "a.txt").unwrap();
+        assert_eq!(a_file.kind, crate::object::EntryKind::Blob);
+        assert_eq!(a_file.id, "hash_a");
+        let b_file = b_common_tree.0.iter().find(|e| e.name == "b.txt").unwrap();
+        assert_eq!(b_file.kind, crate::object::EntryKind::Blob);
+        assert_eq!(b_file.id, "hash_b");
+
+        let a_deep = a_common_tree.0.iter().find(|e| e.name == "deep").unwrap();
+        let b_deep = b_common_tree.0.iter().find(|e| e.name == "deep").unwrap();
+        assert_eq!(a_deep.kind, crate::object::EntryKind::Tree);
+        assert_eq!(b_deep.kind, crate::object::EntryKind::Tree);
+        let a_deep_tree = get(&engine, &a_deep.id).await;
+        let b_deep_tree = get(&engine, &b_deep.id).await;
+        let da = a_deep_tree.0.iter().find(|e| e.name == "da.txt").unwrap();
+        assert_eq!(da.id, "hash_da");
+        let db = b_deep_tree.0.iter().find(|e| e.name == "db.txt").unwrap();
+        assert_eq!(db.id, "hash_db");
+        // No cross-parent leakage: each `common` holds exactly its own files.
+        assert!(a_common_tree.0.iter().all(|e| e.name != "b.txt" && e.name != "db.txt"));
+        assert!(b_common_tree.0.iter().all(|e| e.name != "a.txt" && e.name != "da.txt"));
     }
 }
