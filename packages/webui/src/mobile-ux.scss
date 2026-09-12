@@ -6,3 +6,43 @@ html {
   -webkit-tap-highlight-color: transparent;
   tap-highlight-color: transparent;
 }
+
+/* Same-level size foundation (2026-09-12 normalization wave).
+ *
+ * This app never imports hikari's foundation theme, so components still
+ * reading the legacy --hi-* token family (HkTable, HkEmptyState, ...) fell
+ * back to their raw literals (1rem body text) and rendered a full step
+ * larger than the new-token controls (HkButton/HkInput at --text-base).
+ * Alias the legacy family onto the live scale so every co-level element
+ * shares one type/spacing scale. */
+:root {
+  --hi-text-xs: var(--text-xs, 0.75rem);
+  --hi-text-sm: var(--text-sm, 0.8125rem);
+  --hi-text-base: var(--text-base, 0.875rem);
+  --hi-space-2: var(--space-2, 2px);
+  --hi-space-4: var(--space-4, 4px);
+  --hi-space-6: var(--space-6, 6px);
+  --hi-space-8: var(--space-8, 8px);
+  --hi-space-10: var(--space-10, 10px);
+  --hi-space-12: var(--space-12, 12px);
+  --hi-space-16: var(--space-16, 16px);
+  --hi-space-24: var(--space-24, 24px);
+  --hi-radius-sm: var(--radius-sm, 4px);
+  --hi-radius-md: var(--radius-md, 8px);
+}
+
+/* Page titles: one authored scale on every view instead of the UA default
+   (32px) whose default margins also stacked on flex gaps and made the
+   header→content distance differ per page. */
+h1 {
+  font-size: 1.5rem;
+  line-height: 1.2;
+  margin: 0;
+}
+
+/* Shared inline API-error line: one role, one size on every surface
+   (previously 12px on two views and an inherited 16px on the detail page). */
+.err {
+  color: #f33;
+  font-size: var(--text-xs, 0.75rem);
+}

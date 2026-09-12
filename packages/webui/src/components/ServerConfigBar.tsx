@@ -36,13 +36,15 @@ export function ServerConfigBar() {
     <div class="server-config-form">
       <HInput v-model={base.value} placeholder="http://127.0.0.1:3000" label="Server URL" />
       <HInput v-model={apiToken.value} type="password" placeholder="NOA_API_TOKEN" label="API token" />
-      <HButton size="sm" onClick={save}>
+      <HButton onClick={save}>
         Connect
       </HButton>
       {store.error && <span class="err">{store.error}</span>}
       <style>{`
-        .server-config-form { display: flex; align-items: flex-end; gap: 8px; }
-        .err { color: #f33; font-size: 12px; }
+        /* Default (md) button height matches the sibling inputs' 40px box; the
+           compact sm "Server" chip in the closed header state stays a deliberate
+           header affordance. */
+        .server-config-form { display: flex; align-items: flex-end; gap: var(--space-8, 8px); }
       `}</style>
     </div>
   );

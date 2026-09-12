@@ -77,13 +77,12 @@ export default function PullRequestDetailView() {
         </HCard>
       )}
       <style>{`
-        .pr-detail { display: flex; flex-direction: column; gap: 16px; max-width: 720px; }
-        .err { color: #f33; }
-        dl { display: grid; grid-template-columns: 120px 1fr; gap: 8px; }
+        .pr-detail { display: flex; flex-direction: column; gap: var(--space-16, 16px); max-width: 720px; }
+        dl { display: grid; grid-template-columns: 120px 1fr; gap: var(--space-8, 8px); }
         dt { font-weight: 600; }
-        pre.meta { background: #111; padding: 12px; border-radius: 8px; overflow: auto; }
+        pre.meta { background: #111; padding: var(--space-12, 12px); border-radius: var(--radius-md, 8px); overflow: auto; }
         .body { white-space: pre-wrap; }
-        .actions { display: flex; gap: 8px; }
+        .actions { display: flex; gap: var(--space-8, 8px); }
       `}</style>
     </div>
   );

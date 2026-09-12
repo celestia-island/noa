@@ -36,7 +36,7 @@ export default function SnapshotsView() {
 />
         </HCard>
       )}
-      <style>{`.snapshots-view { display: flex; flex-direction: column; gap: 16px; }`}</style>
+      <style>{`.snapshots-view { display: flex; flex-direction: column; gap: var(--space-16, 16px); }`}</style>
     </div>
   );
 }
