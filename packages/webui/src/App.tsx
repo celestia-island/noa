@@ -26,8 +26,8 @@ export default function App() {
         .noa-app { min-height: 100vh; display: flex; flex-direction: column; }
         .noa-header { display: flex; align-items: center; gap: 24px; padding: 12px 24px; border-bottom: 1px solid var(--noa-border, #333); }
         .brand { display: flex; align-items: baseline; gap: 8px; }
-        .brand strong { font-size: 20px; }
-        .brand span { font-size: 12px; opacity: 0.6; }
+        .brand strong { font-size: var(--text-lg, 1.125rem); }
+        .brand span { font-size: var(--text-xs, 0.75rem); opacity: 0.6; }
         .noa-nav { display: flex; gap: 16px; flex: 1; }
         .noa-nav a { color: inherit; text-decoration: none; }
         .noa-nav a.router-link-active { font-weight: 600; }

@@ -34,7 +34,7 @@ export default function WorkspacesView() {
 />
         </HCard>
       )}
-      <style>{`.workspaces-view { display: flex; flex-direction: column; gap: 16px; }`}</style>
+      <style>{`.workspaces-view { display: flex; flex-direction: column; gap: var(--space-16, 16px); }`}</style>
     </div>
   );
 }

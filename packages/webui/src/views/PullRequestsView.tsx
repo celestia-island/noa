@@ -105,10 +105,12 @@ export default function PullRequestsView() {
         />
       )}
       <style>{`
-        .prs-view { display: flex; flex-direction: column; gap: 16px; }
+        .prs-view { display: flex; flex-direction: column; gap: var(--space-16, 16px); }
         .row { display: flex; align-items: center; justify-content: space-between; }
-        .create-card { display: flex; flex-direction: column; gap: 12px; max-width: 480px; }
-        .err { color: #f33; font-size: 12px; }
+        /* HCard wraps slot content in a single .hk-card-body, so a gap on the
+           card root has one child and never applies — style the body instead. */
+        .create-card .hk-card-body { display: flex; flex-direction: column; gap: var(--space-12, 12px); }
+        .create-card { max-width: 480px; }
       `}</style>
     </div>
   );
