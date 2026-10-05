@@ -6,6 +6,17 @@ on:
   merge_group:
     types: [checks_requested]
 
+permissions:
+  # A called workflow cannot grant itself a permission the caller withholds —
+  # the mismatch reads as startup_failure. The org default token permissions
+  # were tightened on 2026-10-02 and this caller was missed, so the single
+  # required check stopped reporting entirely: every pull request in this
+  # repository became unmergeable (enforce_admins is on, so `--admin` cannot
+  # bypass a check that never ran). Grant exactly what the reusable lint
+  # declares and nothing more.
+  contents: read
+  pull-requests: read
+
 jobs:
   lint-commits:
     uses: celestia-island/celestia-devtools/.github/workflows/commit-msg-lint.yml@master
