@@ -2146,11 +2146,23 @@ async fn integration_snapshot_failed_cas_leaves_log_and_stores_untouched() {
     let agent_log = repo.agent_log("default").unwrap();
 
     agent_log
-        .append(&make_log_entry(1, OpType::Write, "a.txt", Some("blob_a"), 100))
+        .append(&make_log_entry(
+            1,
+            OpType::Write,
+            "a.txt",
+            Some("blob_a"),
+            100,
+        ))
         .await
         .unwrap();
     agent_log
-        .append(&make_log_entry(2, OpType::Write, "b.txt", Some("blob_b"), 200))
+        .append(&make_log_entry(
+            2,
+            OpType::Write,
+            "b.txt",
+            Some("blob_b"),
+            200,
+        ))
         .await
         .unwrap();
 
@@ -2172,7 +2184,10 @@ async fn integration_snapshot_failed_cas_leaves_log_and_stores_untouched() {
     assert!(ref_store.cas("default", None, &winner_id).await.unwrap());
 
     // Loser CAS with the stale expectation fails.
-    assert!(!ref_store.cas("default", stale.as_ref(), &loser.id).await.unwrap());
+    assert!(!ref_store
+        .cas("default", stale.as_ref(), &loser.id)
+        .await
+        .unwrap());
     assert_eq!(
         ref_store.get("default").await.unwrap(),
         Some(winner_id.clone())
@@ -2196,7 +2211,10 @@ async fn integration_snapshot_failed_cas_leaves_log_and_stores_untouched() {
         .await
         .unwrap();
     let current = ref_store.get("default").await.unwrap();
-    assert!(ref_store.cas("default", current.as_ref(), &retry.id).await.unwrap());
+    assert!(ref_store
+        .cas("default", current.as_ref(), &retry.id)
+        .await
+        .unwrap());
     engine.snapshot_store.store(&retry).await.unwrap();
     ws_mgr
         .update_head_and_seq("default", &retry.id, new_seq)
@@ -2215,7 +2233,15 @@ async fn integration_snapshot_failed_cas_leaves_log_and_stores_untouched() {
         .await
         .unwrap();
     let names: Vec<&str> = tree.0.iter().map(|e| e.name.as_str()).collect();
-    assert!(names.contains(&"a.txt"), "retry tree must contain a.txt: {:?}", names);
-    assert!(names.contains(&"b.txt"), "retry tree must contain b.txt: {:?}", names);
+    assert!(
+        names.contains(&"a.txt"),
+        "retry tree must contain a.txt: {:?}",
+        names
+    );
+    assert!(
+        names.contains(&"b.txt"),
+        "retry tree must contain b.txt: {:?}",
+        names
+    );
     assert!(snap_store.get(&retry.id).await.is_ok());
 }
