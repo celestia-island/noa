@@ -476,11 +476,19 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                             tracing::warn!("skipping path traversal in log entry: {}", path);
                             continue;
                         }
-                        let previous = tree_map.get(path).map(|e| e.kind);
-                        let (kind, body) = self.workdir_kind_and_body(path, previous).await;
-                        let blob_id = match body {
-                            Some(content) => self.object_store.put_blob(&content).await?.0,
-                            None => {
+                        let previous = tree_map.get(path).cloned();
+                        let (kind, body) = self
+                            .workdir_kind_and_body(path, previous.as_ref().map(|e| e.kind))
+                            .await;
+                        let blob_id = match (body, previous.as_ref()) {
+                            (Some(content), _) => self.object_store.put_blob(&content).await?.0,
+                            // A gitlink carries a git oid, not a blob id: rewriting it
+                            // from the log would leave the export writing a submodule
+                            // pointer that no repository can resolve.
+                            (None, Some(prev)) if prev.kind == EntryKind::Gitlink => {
+                                prev.id.clone()
+                            }
+                            (None, _) => {
                                 tracing::warn!(
                                     "no readable workdir body for {}, keeping previous blob",
                                     path
@@ -557,6 +565,99 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
         }
 
         self.build_hierarchical_tree(&tree_map).await
+    }
+}
+
+#[cfg(test)]
+mod workdir_kind_tests {
+    use super::*;
+    use crate::log::FileAgentLog;
+    use crate::object::RedbObjectStore;
+    use crate::snapshot::RedbSnapshotStore;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    async fn engine_with_root() -> (
+        TempDir,
+        SnapshotEngine<FileAgentLog, RedbSnapshotStore, RedbObjectStore>,
+    ) {
+        let tmp = TempDir::new().unwrap();
+        let db = Arc::new(
+            redb::Database::builder()
+                .create(tmp.path().join("test.redb"))
+                .unwrap(),
+        );
+        let log = FileAgentLog::create(&tmp.path().join("test.log")).unwrap();
+        let snapshot_store = RedbSnapshotStore::new(Arc::clone(&db)).unwrap();
+        let object_store = RedbObjectStore::new(db).unwrap();
+        let engine = SnapshotEngine::new(log, snapshot_store, object_store)
+            .with_repo_root(tmp.path().to_path_buf());
+        (tmp, engine)
+    }
+
+    /// The two branches a mode regression would go through silently: a symlink
+    /// must contribute its target as the blob body (never the target's
+    /// contents), an executable must keep its bit, and a gitlink must keep both
+    /// its kind and its git oid because it has no workdir body at all.
+    #[tokio::test]
+    async fn workdir_kind_and_body_covers_symlink_executable_and_gitlink() {
+        let (tmp, engine) = engine_with_root().await;
+
+        let script = tmp.path().join("run.sh");
+        std::fs::write(&script, b"#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script, perms).unwrap();
+        }
+        let (kind, body) = engine.workdir_kind_and_body("run.sh", None).await;
+        #[cfg(unix)]
+        assert_eq!(kind, EntryKind::Executable);
+        assert_eq!(body.as_deref(), Some(&b"#!/bin/sh\n"[..]));
+
+        #[cfg(unix)]
+        {
+            std::fs::write(tmp.path().join("target.txt"), b"precious\n").unwrap();
+            std::os::unix::fs::symlink("target.txt", tmp.path().join("link.txt")).unwrap();
+            let (kind, body) = engine.workdir_kind_and_body("link.txt", None).await;
+            assert_eq!(kind, EntryKind::Symlink);
+            assert_eq!(
+                body.as_deref(),
+                Some(&b"target.txt"[..]),
+                "a symlink's body must be the link target, not the target's contents"
+            );
+        }
+
+        // Something readable sitting where a gitlink is recorded — an empty
+        // submodule checkout, or a file a peer's write left there — must not
+        // downgrade it: a gitlink's id is a git oid, and replacing it with a
+        // blob id makes the export write a submodule pointer nothing resolves.
+        std::fs::write(tmp.path().join("vendor"), b"peer file\n").unwrap();
+        let (kind, body) = engine
+            .workdir_kind_and_body("vendor", Some(EntryKind::Gitlink))
+            .await;
+        assert_eq!(kind, EntryKind::Gitlink);
+        assert!(body.is_none(), "a gitlink has no workdir body");
+    }
+
+    /// An unknown path falls back to the previous kind instead of inventing one.
+    #[tokio::test]
+    async fn workdir_kind_falls_back_to_previous_when_missing() {
+        let (_tmp, engine) = engine_with_root().await;
+        let (kind, body) = engine.workdir_kind_and_body("gone.txt", None).await;
+        assert_eq!(kind, EntryKind::Blob);
+        assert!(body.is_none());
+
+        let (kind, _) = engine
+            .workdir_kind_and_body("gone.txt", Some(EntryKind::Executable))
+            .await;
+        assert_eq!(
+            kind,
+            EntryKind::Executable,
+            "the previous kind must survive"
+        );
     }
 }
 

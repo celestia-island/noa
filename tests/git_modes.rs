@@ -148,6 +148,32 @@ async fn head_tree_entries(db: &Arc<redb::Database>) -> Vec<libnoa::object::Tree
         .0
 }
 
+/// Entries of the tree the **workspace row** points at.
+///
+/// `head_tree_entries` reads the `HEAD` ref, which only the git import writes:
+/// `noa create` advances ref `default` and the workspace head, so a test that
+/// asserts on `HEAD` is looking at the clone-time tree and would still pass if
+/// `create` flattened every kind. Same parse as `git::export_noa_to_git`.
+async fn workspace_head_tree_entries(
+    db: &Arc<redb::Database>,
+    workspace: &str,
+) -> Vec<libnoa::object::TreeEntry> {
+    let ws_mgr = libnoa::workspace::WorkspaceManager::new(Arc::clone(db)).unwrap();
+    let ws = ws_mgr
+        .get(workspace)
+        .await
+        .unwrap()
+        .unwrap_or_else(|| panic!("workspace {workspace} missing"));
+    let snap_store = RedbSnapshotStore::new(Arc::clone(db)).unwrap();
+    let obj_store = libnoa::object::RedbObjectStore::new(Arc::clone(db)).unwrap();
+    let snap = snap_store.get(&ws.head).await.unwrap();
+    obj_store
+        .get_tree(&TreeId(snap.tree_hash.clone()))
+        .await
+        .unwrap()
+        .0
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_submodule_clone_succeeds_and_roundtrips() {
     let tmp = tempfile::TempDir::new().unwrap();
@@ -287,7 +313,10 @@ async fn test_create_then_export_preserves_imported_modes() {
             .await
             .unwrap();
 
-        let entries = head_tree_entries(&repo.db).await;
+        // Asserting on the workspace head, not the `HEAD` ref: `run_create` does
+        // not touch `HEAD`, so reading it here would inspect the clone-time tree
+        // and pass even when `create` flattened every kind.
+        let entries = workspace_head_tree_entries(&repo.db, "default").await;
         let kind_of = |name: &str| {
             entries
                 .iter()
