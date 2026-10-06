@@ -12,6 +12,10 @@ use crate::{
     snapshot::{content_addressed_snapshot_id_with_ts, Snapshot, SnapshotId, SnapshotStore},
 };
 
+/// One directory awaiting hierarchical assembly: its full path, its bare
+/// directory name, and the entries that belong directly to it.
+type SubdirWork = (String, String, Vec<(String, TreeEntry)>);
+
 pub struct SnapshotEngine<L: AgentLog, S: SnapshotStore, O: ObjectStore> {
     pub log: L,
     pub snapshot_store: S,
@@ -253,7 +257,7 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                 }
             }
 
-            let mut subdirs: Vec<(String, String, Vec<(String, TreeEntry)>)> = Vec::new();
+            let mut subdirs: Vec<SubdirWork> = Vec::new();
             for (dir_name, children) in dirs {
                 let full_dir_path = if prefix.is_empty() {
                     dir_name.clone()
@@ -275,8 +279,7 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                     work_queue.push_back((full_dir_path.clone(), deep.clone()));
                 }
 
-                let mut entries: Vec<(String, TreeEntry)> =
-                    leaf.into_iter().map(|(full, e)| (full, e)).collect();
+                let mut entries: Vec<(String, TreeEntry)> = leaf;
                 for (_, child) in &deep {
                     if let Some((immediate, _)) = child.name.split_once('/') {
                         if !entries.iter().any(|(_, e)| e.name == immediate) {
@@ -1303,7 +1306,13 @@ mod tests {
         let db = b_deep_tree.0.iter().find(|e| e.name == "db.txt").unwrap();
         assert_eq!(db.id, "hash_db");
         // No cross-parent leakage: each `common` holds exactly its own files.
-        assert!(a_common_tree.0.iter().all(|e| e.name != "b.txt" && e.name != "db.txt"));
-        assert!(b_common_tree.0.iter().all(|e| e.name != "a.txt" && e.name != "da.txt"));
+        assert!(a_common_tree
+            .0
+            .iter()
+            .all(|e| e.name != "b.txt" && e.name != "db.txt"));
+        assert!(b_common_tree
+            .0
+            .iter()
+            .all(|e| e.name != "a.txt" && e.name != "da.txt"));
     }
 }
