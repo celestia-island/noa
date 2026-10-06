@@ -283,11 +283,11 @@ pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
     let repo = crate::repo::Repository::init_with_remotes(&target, vec![config])?;
 
     let db = Arc::clone(&repo.db);
-    super::import::import_git_to_noa(&target, Arc::clone(&db)).await?;
-
-    let ref_store = crate::refs::RedbRefStore::new(Arc::clone(&db))?;
-    let head_ref = ref_store.get("HEAD").await?;
-    let head_snap_id = head_ref.unwrap_or_else(crate::snapshot::empty_snapshot_id);
+    // Use the just-imported snapshot directly (issue #70); the import already
+    // advanced the HEAD ref write-through.
+    let head_snap_id = super::import::import_git_to_noa(&target, Arc::clone(&db))
+        .await?
+        .unwrap_or_else(crate::snapshot::empty_snapshot_id);
 
     let ws_mgr = crate::workspace::WorkspaceManager::new(Arc::clone(&db))?;
     let now = crate::now_micros();
