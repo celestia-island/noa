@@ -155,7 +155,8 @@ impl ObjectStore for FtpObjectStore {
                     .read_to_end(&mut buf)
                     .await
                     .map_err(|e| remote_err("ftp", format!("read stream: {e}")))?;
-                ftp.finalize_retr_stream(stream)
+                stream
+                    .finish()
                     .await
                     .map_err(|e| Self::ftp_err("finalize_retr", e))?;
                 Ok(buf)
@@ -216,7 +217,8 @@ impl ObjectStore for FtpObjectStore {
                     .read_to_end(&mut buf)
                     .await
                     .map_err(|e| remote_err("ftp", format!("read stream: {e}")))?;
-                ftp.finalize_retr_stream(stream)
+                stream
+                    .finish()
                     .await
                     .map_err(|e| Self::ftp_err("finalize_retr", e))?;
                 Ok(rmp_serde::from_slice::<TreeEntries>(&buf)?)
