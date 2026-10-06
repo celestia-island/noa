@@ -1,8 +1,8 @@
-use std::sync::Arc;
 use async_trait::async_trait;
+use fs2::FileExt;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
-use fs2::FileExt;
+use std::sync::Arc;
 use std::{
     fs::{File, OpenOptions},
     io::{BufRead, Read, Seek, SeekFrom, Write},
@@ -852,7 +852,10 @@ mod tests {
             .append(&make_entry(0, OpType::Write, "e2.txt", 200))
             .await
             .unwrap();
-        assert!(e2_seq > e1_seq, "E2.seq ({e2_seq}) must exceed E1.seq ({e1_seq})");
+        assert!(
+            e2_seq > e1_seq,
+            "E2.seq ({e2_seq}) must exceed E1.seq ({e1_seq})"
+        );
         let since: Vec<u64> = log2
             .read_since(e1_seq)
             .await
