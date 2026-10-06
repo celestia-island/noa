@@ -5,9 +5,9 @@ on:
     types: [opened, edited, reopened, ready_for_review, synchronize]
   merge_group:
     types: [checks_requested]
-  # Fallback entry for an operator: dispatch this workflow on the pull request's
-  # head branch so the single required check is served by a lane that can
-  # actually run. See the devtools callee for the lane rules.
+  # Fallback entry for the CNB lane (or an operator): dispatch this workflow on
+  # the pull request's head branch, so the single required check is served by
+  # the lane that can actually run. See the devtools callee for the lane rules.
   workflow_dispatch:
     inputs:
       pr:
@@ -29,13 +29,11 @@ jobs:
   lint-commits:
     uses: celestia-island/celestia-devtools/.github/workflows/commit-msg-lint.yml@master
     with:
-      # Pinned to the org's self-hosted fleet on purpose. The hosted lane went
-      # dark org-wide on 2026-09-24 (account payments) and a job sent there now
-      # sits fifteen minutes with no runner before being cancelled, which is
-      # indistinguishable from "the required check never reports" — the very
-      # failure this caller is being fixed for. This repository already runs
-      # six jobs on these labels. Clear the pair to fall back to hosted once
-      # the quota is healthy again.
-      runner: '["self-hosted","linux","x64","local"]'
-      lane: 'farm'
+      # Lane switch without touching this tree: the repository variables are set
+      # to the org's self-hosted fleet while the hosted lane is down org-wide
+      # (2026-09-24 account payments: a job sent there sits fifteen minutes with
+      # no runner before being cancelled, which is indistinguishable from "the
+      # required check never reports"). Clear the pair to go back to hosted.
+      runner: ${{ vars.LINT_RUNNER || '["ubuntu-latest"]' }}
+      lane: ${{ vars.LINT_LANE || 'hosted' }}
       pr: ${{ inputs.pr }}
