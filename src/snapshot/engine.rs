@@ -16,6 +16,19 @@ use crate::{
 /// directory name, and the entries that belong directly to it.
 type SubdirWork = (String, String, Vec<(String, TreeEntry)>);
 
+/// Whether a workdir file carries an executable bit. Windows has no such bit,
+/// so nothing there is reported executable.
+#[cfg(unix)]
+fn is_executable(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(_metadata: &std::fs::Metadata) -> bool {
+    false
+}
+
 pub struct SnapshotEngine<L: AgentLog, S: SnapshotStore, O: ObjectStore> {
     pub log: L,
     pub snapshot_store: S,
@@ -192,6 +205,51 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
         true
     }
 
+    /// The kind a workdir path must be recorded with, and the blob body that
+    /// represents it.
+    ///
+    /// Symlinks are stored the way git stores them — the link target as the blob
+    /// body, never the target's contents. A `Gitlink` has no workdir body at all
+    /// (its id is a git oid, not a noa blob id) and is therefore never rewritten
+    /// as a `Blob`; doing that is what made `clone -> create -> push` drop file
+    /// modes and, with a submodule present, fail the export outright.
+    /// `previous` is the kind already recorded for this path, used whenever the
+    /// workdir cannot be inspected.
+    async fn workdir_kind_and_body(
+        &self,
+        path: &str,
+        previous: Option<EntryKind>,
+    ) -> (EntryKind, Option<Vec<u8>>) {
+        if previous == Some(EntryKind::Gitlink) {
+            return (EntryKind::Gitlink, None);
+        }
+        let Some(repo_root) = self.repo_root.as_ref() else {
+            return (previous.unwrap_or(EntryKind::Blob), None);
+        };
+        let file_path = repo_root.join(path);
+        let Ok(metadata) = tokio::fs::symlink_metadata(&file_path).await else {
+            return (previous.unwrap_or(EntryKind::Blob), None);
+        };
+        if metadata.file_type().is_symlink() {
+            let body = tokio::fs::read_link(&file_path)
+                .await
+                .ok()
+                .map(|target| target.to_string_lossy().into_owned().into_bytes());
+            return (EntryKind::Symlink, body);
+        }
+        match tokio::fs::read(&file_path).await {
+            Ok(content) => {
+                let kind = if is_executable(&metadata) {
+                    EntryKind::Executable
+                } else {
+                    EntryKind::Blob
+                };
+                (kind, Some(content))
+            }
+            Err(_) => (previous.unwrap_or(EntryKind::Blob), None),
+        }
+    }
+
     async fn flatten_base_entries(
         &self,
         base: &[TreeEntry],
@@ -213,7 +271,7 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                     path.clone(),
                     TreeEntry {
                         name: path,
-                        kind: EntryKind::Blob,
+                        kind,
                         id,
                     },
                 );
@@ -418,27 +476,23 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                             tracing::warn!("skipping path traversal in log entry: {}", path);
                             continue;
                         }
-                        let blob_id = if let Some(ref repo_root) = self.repo_root {
-                            let file_path = repo_root.join(path);
-                            let blob_id = match tokio::fs::read(&file_path).await {
-                                Ok(content) => self.object_store.put_blob(&content).await?.0,
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "failed to read {}, keeping previous blob: {e}",
-                                        path
-                                    );
-                                    log_blob_id.clone()
-                                }
-                            };
-                            blob_id
-                        } else {
-                            log_blob_id.clone()
+                        let previous = tree_map.get(path).map(|e| e.kind);
+                        let (kind, body) = self.workdir_kind_and_body(path, previous).await;
+                        let blob_id = match body {
+                            Some(content) => self.object_store.put_blob(&content).await?.0,
+                            None => {
+                                tracing::warn!(
+                                    "no readable workdir body for {}, keeping previous blob",
+                                    path
+                                );
+                                log_blob_id.clone()
+                            }
                         };
                         tree_map.insert(
                             path.clone(),
                             TreeEntry {
                                 name: path.clone(),
-                                kind: EntryKind::Blob,
+                                kind,
                                 id: blob_id,
                             },
                         );
@@ -482,11 +536,18 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                             tracing::warn!("skipping path traversal in resolve: {}", path);
                             continue;
                         }
+                        // A resolved entry keeps the kind already recorded for
+                        // this path; only a brand-new path defaults to a blob.
+                        // Downgrading here would turn a gitlink's git oid into a
+                        // blob id that no store can resolve.
+                        let kind = tree_map
+                            .get(path)
+                            .map_or(EntryKind::Blob, |existing| existing.kind);
                         tree_map.insert(
                             path.clone(),
                             TreeEntry {
                                 name: path.clone(),
-                                kind: EntryKind::Blob,
+                                kind,
                                 id: blob_id.clone(),
                             },
                         );

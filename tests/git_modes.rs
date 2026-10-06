@@ -257,3 +257,73 @@ fn test_entry_kind_git_mode_mapping() {
     // Unknown blob-ish modes degrade to plain files, never fail import.
     assert_eq!(EntryKind::from_git_mode(0o100664), EntryKind::Blob);
 }
+
+/// `noa create` must carry the imported modes forward instead of flattening
+/// every non-tree entry back into a plain blob.
+///
+/// The bridge learned to import and export 100755/120000/160000 entries, but
+/// the snapshot engine rebuilt each of them as `Blob`. The modes therefore
+/// survived the clone and were gone by the time anything was pushed back —
+/// and with a submodule present the export failed outright, because a gitlink's
+/// id is a git oid that no blob store can resolve. Review caught this on
+/// 2026-10-06; the scenario below is the one it reported.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_create_then_export_preserves_imported_modes() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let (upstream, sub_oid) = make_upstream(tmp.path(), "upstream", true);
+    let work = tmp.path().join("work");
+
+    libnoa::git::clone_git_to_noa(&upstream.to_string_lossy(), &work)
+        .await
+        .unwrap();
+    let before = ls_tree(&work);
+    assert!(before.contains("160000 commit"));
+
+    {
+        let repo = libnoa::repo::Repository::open(&work).unwrap();
+
+        // `noa create` — the step that used to drop every non-blob kind.
+        libnoa::cli::snapshot_cmd::run_create(&repo, "modes survive create", "tester")
+            .await
+            .unwrap();
+
+        let entries = head_tree_entries(&repo.db).await;
+        let kind_of = |name: &str| {
+            entries
+                .iter()
+                .find(|e| e.name == name)
+                .unwrap_or_else(|| panic!("{name} missing from the tree"))
+                .kind
+        };
+        assert_eq!(
+            kind_of("run.sh"),
+            EntryKind::Executable,
+            "create flattened the executable bit"
+        );
+        assert_eq!(
+            kind_of("link.txt"),
+            EntryKind::Symlink,
+            "create flattened the symlink"
+        );
+        assert_eq!(
+            kind_of("vendor"),
+            EntryKind::Gitlink,
+            "create flattened the gitlink"
+        );
+
+        let db = Arc::clone(&repo.db);
+        drop(repo);
+        libnoa::git::export_noa_to_git(&work, db).await.unwrap();
+    }
+
+    let after = ls_tree(&work);
+    for line in before.lines() {
+        assert!(
+            after.lines().any(|l| l == line),
+            "export changed ls-tree line after create: {line}\nbefore:\n{before}\nafter:\n{after}"
+        );
+    }
+    assert!(ls_line(&work, "vendor").starts_with(&format!("160000 commit {sub_oid}")));
+    assert!(ls_line(&work, "link.txt").starts_with("120000 blob "));
+    assert!(ls_line(&work, "run.sh").starts_with("100755 blob "));
+}
