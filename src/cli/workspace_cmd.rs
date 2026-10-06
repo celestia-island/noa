@@ -320,8 +320,7 @@ mod tests {
     }
 
     fn sorted_names(entries: &TreeEntries) -> Vec<String> {
-        let mut names: Vec<String> =
-            entries.0.iter().map(|e| e.name.clone()).collect();
+        let mut names: Vec<String> = entries.0.iter().map(|e| e.name.clone()).collect();
         names.sort();
         names
     }
@@ -331,9 +330,10 @@ mod tests {
         tree: &TreeEntries,
         name: &str,
     ) -> String {
-        let entry = tree.0.iter().find(|e| e.name == name).unwrap_or_else(|| {
-            panic!("file '{name}' missing from tree {:?}", sorted_names(tree))
-        });
+        let entry =
+            tree.0.iter().find(|e| e.name == name).unwrap_or_else(|| {
+                panic!("file '{name}' missing from tree {:?}", sorted_names(tree))
+            });
         String::from_utf8(
             obj_store
                 .get_blob(&crate::object::BlobId(entry.id.clone()))

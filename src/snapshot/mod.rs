@@ -263,12 +263,27 @@ mod tests {
         let b1 = put(&store, "noa_b1", &["noa_x"]).await;
         let m1 = put(&store, "noa_m1", &["noa_a1", "noa_b1"]).await;
 
-        assert_eq!(find_merge_base(&store, &a1, &b1).await.unwrap(), Some(x.clone()));
-        assert_eq!(find_merge_base(&store, &m1, &a1).await.unwrap(), Some(a1.clone()));
-        assert_eq!(find_merge_base(&store, &m1, &b1).await.unwrap(), Some(b1.clone()));
-        assert_eq!(find_merge_base(&store, &m1, &m1).await.unwrap(), Some(m1.clone()));
+        assert_eq!(
+            find_merge_base(&store, &a1, &b1).await.unwrap(),
+            Some(x.clone())
+        );
+        assert_eq!(
+            find_merge_base(&store, &m1, &a1).await.unwrap(),
+            Some(a1.clone())
+        );
+        assert_eq!(
+            find_merge_base(&store, &m1, &b1).await.unwrap(),
+            Some(b1.clone())
+        );
+        assert_eq!(
+            find_merge_base(&store, &m1, &m1).await.unwrap(),
+            Some(m1.clone())
+        );
         // Order of the two heads must not matter.
-        assert_eq!(find_merge_base(&store, &b1, &a1).await.unwrap(), Some(x.clone()));
+        assert_eq!(
+            find_merge_base(&store, &b1, &a1).await.unwrap(),
+            Some(x.clone())
+        );
     }
 
     #[tokio::test]

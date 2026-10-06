@@ -190,12 +190,14 @@ pub async fn run_resolve(
             }
         }
     } else if merge_snap.parents.len() >= 2 {
-        let ours_parent = merge_snap.parents.first().ok_or_else(|| {
-            anyhow::anyhow!("merge snapshot has fewer than 2 parents")
-        })?;
-        let theirs_id = merge_snap.parents.get(1).ok_or_else(|| {
-            anyhow::anyhow!("merge snapshot has fewer than 2 parents")
-        })?;
+        let ours_parent = merge_snap
+            .parents
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("merge snapshot has fewer than 2 parents"))?;
+        let theirs_id = merge_snap
+            .parents
+            .get(1)
+            .ok_or_else(|| anyhow::anyhow!("merge snapshot has fewer than 2 parents"))?;
         // Re-resolve against the DAG merge-base of the merge parents, not the
         // workspace's mutable `base` field.
         let merge_base_id =
