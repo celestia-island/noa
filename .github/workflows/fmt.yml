@@ -15,6 +15,14 @@ on:
 
 jobs:
   format:
+    # Fork pull requests pay for their own CI: this job is heavy (it compiles,
+    # builds or audits on the org's self-hosted fleet), and a fork's run would
+    # spend shared runner time on untrusted content. The two required checks
+    # (commit lint, PR title) are the deliberate exception: they are
+    # sub-minute, execute no pull request code, and hold no secrets.
+    # A contributor who wants this suite can run it in their own fork, on
+    # their own minutes.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Format
     runs-on: [self-hosted, linux, x64, local]
 
