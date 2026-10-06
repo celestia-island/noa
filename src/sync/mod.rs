@@ -72,10 +72,12 @@ pub struct NoaEventSyncAck {
 }
 
 impl NoaEventSyncAck {
-    /// Build an ACK from an apply outcome, reporting the committed prefix
-    /// accurately: the full count with `ok=true` on success, the
-    /// committed-prefix count with `ok=false` and the error text on partial
-    /// failure (never `applied=0` when a prefix was durably committed).
+    /// Build an ACK from an apply outcome, reporting how far the batch actually
+    /// got: `applied` counts the events whose effect took hold, with `ok=true`
+    /// on a clean run, or that same count with `ok=false` and the error text on
+    /// a partial failure (never `applied=0` when a prefix was durably
+    /// committed). Events whose effect was skipped are deliberately excluded, so
+    /// the sender's resume re-attempts them rather than losing them.
     #[must_use]
     pub fn from_apply_result(
         workspace_id: String,

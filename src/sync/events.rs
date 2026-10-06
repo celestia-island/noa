@@ -97,13 +97,15 @@ impl From<&LogEntry> for SyncEvent {
 /// Failure from [`EventSyncEngine::apply_pull_events`] that preserves the
 /// committed-prefix count.
 ///
-/// Events applied before the failure are durable (fs + log) and are reported
-/// via `applied`, so the sender resumes after the committed prefix instead of
-/// replaying it. The ACK layer maps this to `applied=<prefix>, ok=false` plus
-/// the error text.
+/// Events that took effect before the failure are durable (fs + log) and are
+/// reported via `applied`, so the sender can resume instead of replaying them.
+/// An event whose effect was skipped — a blob that has not arrived yet, say — is
+/// neither counted nor recorded as applied, so a resumed batch re-attempts it.
+/// The ACK layer maps this to `applied=<count>, ok=false` plus the error text.
 #[derive(Debug)]
 pub struct ApplyPullError {
-    /// Number of events durably committed before the failure.
+    /// Events whose effect took hold before the failure. Skipped effects are
+    /// excluded on purpose, so resuming still re-attempts them.
     pub applied: u64,
     /// The underlying failure.
     pub source: anyhow::Error,
@@ -161,9 +163,17 @@ impl EventSyncEngine {
             .read_all()
             .await
             .map_err(|source| ApplyPullError { applied: 0, source })?;
+        // Only a *complete* identity counts as applied: a peer name AND a
+        // sequence. An entry carrying a sequence but no sender (a legacy peer,
+        // or an effect that was skipped — see the commit point) must not enter
+        // the set, or it would shadow the same sequence number from a different
+        // peer and quietly drop that peer's event.
         let mut seen: HashSet<(Option<String>, u64)> = existing
             .iter()
-            .filter_map(|e| e.remote_seq.map(|seq| (e.remote_sender.clone(), seq)))
+            .filter_map(|e| match (&e.remote_sender, e.remote_seq) {
+                (Some(sender), Some(seq)) => Some((Some(sender.clone()), seq)),
+                _ => None,
+            })
             .collect();
         let mut applied: u64 = 0;
         // Helper: every fallible step maps its error into ApplyPullError
@@ -174,8 +184,13 @@ impl EventSyncEngine {
             // Idempotency gate: consult the recorded remote identity BEFORE
             // mutating the fs or the log. Already-seen events are a no-op and
             // are NOT recounted, so identical-batch retries change nothing.
+            // The gate only fires for an identified sender. Without one the
+            // key degenerates to (None, seq), and every peer's first event
+            // shares seq 1 — deduping on that would silently drop the second
+            // peer's event while still ACKing success. An unidentified event is
+            // therefore re-applied, which is what the pre-change code did.
             let key = (event.sender.clone(), event.seq);
-            if seen.contains(&key) {
+            if event.sender.is_some() && seen.contains(&key) {
                 tracing::debug!(
                     "skipping already-applied event (sender {:?}, remote seq {})",
                     event.sender,
@@ -352,8 +367,14 @@ impl EventSyncEngine {
                 resolved_conflict_ours_id: None,
                 resolved_conflict_theirs_id: None,
                 snapshot_id: None,
-                remote_seq: Some(event.seq),
-                remote_sender: event.sender.clone(),
+                // Stamped only when this event actually took effect. A skipped
+                // effect (a blob that has not arrived yet, a rename whose source
+                // was rejected) is a retryable state, not an applied one:
+                // stamping it would make the gate skip the event forever while
+                // the ACK still reported success. Before this change the next
+                // attempt recovered; with an unconditional stamp it never could.
+                remote_seq: counts.then_some(event.seq),
+                remote_sender: if counts { event.sender.clone() } else { None },
                 ts: event.ts,
                 message: event.message.clone(),
             };
@@ -365,8 +386,10 @@ impl EventSyncEngine {
                 );
                 failed(applied, e)
             })?;
-            seen.insert(key);
             if counts {
+                if event.sender.is_some() {
+                    seen.insert(key);
+                }
                 applied += 1;
             }
         }
@@ -646,5 +669,125 @@ mod tests {
         .unwrap();
         assert_eq!(ev.seq, 1);
         assert_eq!(ev.sender, None);
+    }
+
+    fn event(
+        seq: u64,
+        op: &str,
+        path: &str,
+        blob_id: Option<&str>,
+        sender: Option<&str>,
+    ) -> SyncEvent {
+        SyncEvent {
+            seq,
+            op: op.to_string(),
+            path: Some(path.to_string()),
+            blob_id: blob_id.map(std::string::ToString::to_string),
+            from_path: None,
+            ts: 100,
+            message: None,
+            sender: sender.map(std::string::ToString::to_string),
+        }
+    }
+
+    /// Two peers whose first events both carry sequence 1 must both land.
+    ///
+    /// An unidentified event cannot be deduped: the key degenerates to
+    /// `(None, 1)`, which every peer's first event shares, so the second peer's
+    /// event would be skipped while the ACK still reported success. Review found
+    /// this on 2026-10-06 by driving the batch through `collect_push_events`,
+    /// which never fills `sender`.
+    #[tokio::test]
+    async fn test_unidentified_events_are_never_deduped() {
+        let tmp = setup_repo();
+        {
+            let repo = Repository::open(tmp.path()).unwrap();
+            let log = repo.agent_log("default").unwrap();
+            log.append(&LogEntry {
+                seq: 1,
+                op: OpType::Write,
+                path: Some("first.txt".to_string()),
+                blob_id: Some("h1".to_string()),
+                from_path: None,
+                resolved_conflict_ours_id: None,
+                resolved_conflict_theirs_id: None,
+                snapshot_id: None,
+                remote_seq: None,
+                remote_sender: None,
+                ts: 100,
+                message: None,
+            })
+            .await
+            .unwrap();
+        }
+
+        let engine = EventSyncEngine::new(tmp.path(), "default");
+        let applied = engine
+            .apply_pull_events(&[
+                event(1, "delete", "peer-a.txt", None, None),
+                event(1, "delete", "peer-b.txt", None, None),
+            ])
+            .await
+            .unwrap();
+        assert_eq!(
+            applied, 2,
+            "both peers' seq-1 events must apply; an unidentified event must \
+             never be treated as already seen"
+        );
+    }
+
+    /// An effect that was skipped because its blob had not arrived yet must not
+    /// be stamped as applied, or the retry can never take effect.
+    ///
+    /// This is the data-loss half of the same review: the commit point used to
+    /// record the remote identity unconditionally, so a write whose blob was
+    /// still in flight was marked as applied while the ACK reported success —
+    /// the file never appeared. Before that change the next attempt recovered.
+    #[tokio::test]
+    async fn test_event_whose_blob_is_missing_is_retried_not_sealed() {
+        let tmp = setup_repo();
+        let engine = EventSyncEngine::new(tmp.path(), "default");
+
+        // First attempt: the event names a blob this store has never seen — the
+        // normal state while the content transfer is still in flight.
+        let first = event(
+            7,
+            "write",
+            "awaited.txt",
+            Some("noa_not_yet"),
+            Some("peer-a"),
+        );
+        let applied = engine.apply_pull_events(&[first]).await.unwrap();
+        assert_eq!(applied, 0, "an event with no blob has not been applied");
+
+        // The blob arrives with the next transfer step. The retry keeps the same
+        // identity — `(peer-a, 7)` — which is the whole point: had the skipped
+        // attempt recorded that identity, the gate would skip this retry too.
+        let blob_id = {
+            let repo = Repository::open(tmp.path()).unwrap();
+            repo.object_store()
+                .unwrap()
+                .put_blob(b"arrived\n")
+                .await
+                .unwrap()
+                .0
+        };
+        let retry = event(
+            7,
+            "write",
+            "awaited.txt",
+            Some(blob_id.as_str()),
+            Some("peer-a"),
+        );
+        let applied = engine.apply_pull_events(&[retry]).await.unwrap();
+        assert_eq!(
+            applied, 1,
+            "the retry must apply once the blob exists; the first attempt must \
+             not have sealed the event as already applied"
+        );
+        assert!(
+            tmp.path().join("awaited.txt").exists(),
+            "the file must exist after the retry"
+        );
     }
 }
