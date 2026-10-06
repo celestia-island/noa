@@ -84,6 +84,31 @@ fn workspace_head(work: &Path) -> String {
     panic!("default workspace head not found in:\n{stdout}");
 }
 
+/// Extract the `HEAD` ref id from `noa status` output — the `Refs:` block lists
+/// `HEAD -> noa_<hex>`. `None` means the ref is absent.
+///
+/// The workspace head alone is not enough to pin this bug: the pre-fix code
+/// froze the ref on the first import while the workspace head kept moving, and
+/// a regression that restored only the frozen CAS would still satisfy every
+/// workspace-head assertion below. The ref itself has to be asserted.
+fn head_ref(work: &Path) -> Option<String> {
+    let out = noa_bin()
+        .args(["status"])
+        .current_dir(work)
+        .output()
+        .expect("failed to run noa status");
+    assert!(
+        out.status.success(),
+        "noa status failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    stdout
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("HEAD -> "))
+        .map(|id| id.trim().to_string())
+}
+
 fn noa_pull(work: &Path) -> String {
     let out = noa_bin()
         .arg("pull")
@@ -141,6 +166,12 @@ fn test_repeated_pull_keeps_head_stable() {
         head_after_pull1, head_v1,
         "pull 1 must advance the workspace head past v1"
     );
+    assert_eq!(
+        head_ref(&work).as_deref(),
+        Some(head_after_pull1.as_str()),
+        "pull 1 must advance the HEAD ref to the imported snapshot (a frozen ref \
+         is what made the next pull roll the head back)"
+    );
 
     // Pull 2: no remote changes. Head must not move (previously rolled back
     // to the stale v1 snapshot) and the message must say so.
@@ -153,6 +184,11 @@ fn test_repeated_pull_keeps_head_stable() {
     assert_eq!(
         head_after_pull2, head_after_pull1,
         "pull 2 with no remote changes must leave HEAD at the v2 snapshot"
+    );
+    assert_eq!(
+        head_ref(&work).as_deref(),
+        Some(head_after_pull2.as_str()),
+        "pull 2 must leave the HEAD ref on the v2 snapshot"
     );
 
     // Pull 3: oscillation check — must stay put again.

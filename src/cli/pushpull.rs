@@ -105,7 +105,8 @@ pub async fn run_pull(remote_name: &str) -> Result<()> {
     drop(repo);
     // Compare against the just-imported snapshot — not the HEAD ref — so the
     // verdict reflects what this pull actually did (issue #70). The import
-    // itself advances both the HEAD ref and the workspace head.
+    // advances the HEAD ref, and with it the `default` workspace head; any
+    // other workspace keeps its own head and is deliberately left alone.
     let after_head = crate::git::import::import_git_to_noa(&root, db.clone()).await?;
     match after_head {
         Some(snap_id) if snap_id != before_head => {
