@@ -111,7 +111,7 @@ fn write_seq_file(seq_path: &Path, next: u64) -> Result<()> {
             .write(true)
             .truncate(true)
             .open(&tmp)?;
-        write!(f, "{next}\n")?;
+        writeln!(f, "{next}")?;
         f.sync_all()?;
     }
     std::fs::rename(&tmp, seq_path)?;
