@@ -141,10 +141,7 @@ enum WalkedPayload {
     Gitlink(String),
 }
 
-fn walk_tree(
-    repo: &gix::Repository,
-    tree_id: gix::hash::ObjectId,
-) -> Result<Vec<WalkedEntry>> {
+fn walk_tree(repo: &gix::Repository, tree_id: gix::hash::ObjectId) -> Result<Vec<WalkedEntry>> {
     let mut stack = vec![(tree_id, String::new())];
     let mut results = Vec::new();
 

@@ -32,11 +32,10 @@ fn resolve_nested_entry<'a, O: ObjectStore + 'a>(
                 if !target_entry.kind.is_file_like() {
                     anyhow::bail!("'{}' is not a file", filter);
                 }
-                let source_entry = source
-                    .0
-                    .iter()
-                    .find(|e| e.name == first)
-                    .ok_or_else(|| anyhow::anyhow!("path '{}' not found in source tree", filter))?;
+                let source_entry =
+                    source.0.iter().find(|e| e.name == first).ok_or_else(|| {
+                        anyhow::anyhow!("path '{}' not found in source tree", filter)
+                    })?;
                 target_entry.id = source_entry.id.clone();
                 target_entry.kind = source_entry.kind;
                 return Ok(true);

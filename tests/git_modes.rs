@@ -135,9 +135,7 @@ fn ls_line(dir: &Path, path: &str) -> String {
         .to_string()
 }
 
-async fn head_tree_entries(
-    db: &Arc<redb::Database>,
-) -> Vec<libnoa::object::TreeEntry> {
+async fn head_tree_entries(db: &Arc<redb::Database>) -> Vec<libnoa::object::TreeEntry> {
     let ref_store = RedbRefStore::new(Arc::clone(db)).unwrap();
     let snap_store = RedbSnapshotStore::new(Arc::clone(db)).unwrap();
     let obj_store = libnoa::object::RedbObjectStore::new(Arc::clone(db)).unwrap();

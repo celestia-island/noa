@@ -137,10 +137,8 @@ async fn remove_symlink_obstacles(repo_root: &Path, rel: &str) {
         }
         let abs = repo_root.join(&p);
         if let Ok(md) = tokio::fs::symlink_metadata(&abs).await {
-            if md.file_type().is_symlink() {
-                if tokio::fs::remove_file(&abs).await.is_ok() {
-                    tracing::debug!("export removed stale symlink {}", abs.display());
-                }
+            if md.file_type().is_symlink() && tokio::fs::remove_file(&abs).await.is_ok() {
+                tracing::debug!("export removed stale symlink {}", abs.display());
             }
         }
         current = p.parent().map(Path::to_path_buf);
@@ -299,10 +297,7 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
     let mut pending: Vec<(String, crate::object::TreeId)> = Vec::new();
     for entry in &tree.0 {
         if entry.kind == EntryKind::Tree {
-            pending.push((
-                entry.name.clone(),
-                crate::object::TreeId(entry.id.clone()),
-            ));
+            pending.push((entry.name.clone(), crate::object::TreeId(entry.id.clone())));
         } else {
             flat.push((entry.name.clone(), entry.clone()));
         }
@@ -351,17 +346,11 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
         if let Some(parent) = file_path.parent() {
             if let Ok(canonical_parent) = parent.canonicalize() {
                 if !canonical_parent.starts_with(&canonical_root) {
-                    tracing::warn!(
-                        "skipping path traversal in export tree entry: {}",
-                        rel
-                    );
+                    tracing::warn!("skipping path traversal in export tree entry: {}", rel);
                     continue;
                 }
             } else if parent.exists() {
-                tracing::warn!(
-                    "skipping export entry with unresolvable parent: {}",
-                    rel
-                );
+                tracing::warn!("skipping export entry with unresolvable parent: {}", rel);
                 continue;
             } else if rel.contains("..") {
                 tracing::warn!(
@@ -527,9 +516,7 @@ pub async fn export_noa_to_git(repo_root: &Path, db: Arc<redb::Database>) -> Res
             for (rel, target) in &symlink_infos {
                 match git_hash_stdin(&repo_root_clone, target) {
                     Ok(oid) => {
-                        if let Err(e) =
-                            git_cacheinfo(&repo_root_clone, "120000", &oid, rel)
-                        {
+                        if let Err(e) = git_cacheinfo(&repo_root_clone, "120000", &oid, rel) {
                             tracing::warn!("symlink fixup failed for {rel}: {e:#}");
                         }
                     }
