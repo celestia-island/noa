@@ -6,7 +6,7 @@ use crate::{
     object::{EntryKind, ObjectStore, TreeEntries, TreeEntry},
     refs::{RedbRefStore, RefStore},
     snapshot::{
-        SnapshotId, content_addressed_snapshot_id_with_ts, RedbSnapshotStore, Snapshot,
+        content_addressed_snapshot_id_with_ts, RedbSnapshotStore, Snapshot, SnapshotId,
         SnapshotStore,
     },
 };
