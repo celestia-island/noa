@@ -5,18 +5,37 @@ on:
     types: [opened, edited, reopened, ready_for_review, synchronize]
   merge_group:
     types: [checks_requested]
+  # Fallback entry for an operator: dispatch this workflow on the pull request's
+  # head branch so the single required check is served by a lane that can
+  # actually run. See the devtools callee for the lane rules.
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Pull request number to lint"
+        required: true
+        type: string
 
 permissions:
   # A called workflow cannot grant itself a permission the caller withholds —
   # the mismatch reads as startup_failure. The org default token permissions
   # were tightened on 2026-10-02 and this caller was missed, so the single
-  # required check stopped reporting entirely: every pull request in this
-  # repository became unmergeable (enforce_admins is on, so `--admin` cannot
-  # bypass a check that never ran). Grant exactly what the reusable lint
-  # declares and nothing more.
+  # required check stopped reporting entirely: with enforce_admins on, no pull
+  # request in this repository was mergeable. Grant exactly what the reusable
+  # lint declares and nothing more.
   contents: read
   pull-requests: read
 
 jobs:
   lint-commits:
     uses: celestia-island/celestia-devtools/.github/workflows/commit-msg-lint.yml@master
+    with:
+      # Pinned to the org's self-hosted fleet on purpose. The hosted lane went
+      # dark org-wide on 2026-09-24 (account payments) and a job sent there now
+      # sits fifteen minutes with no runner before being cancelled, which is
+      # indistinguishable from "the required check never reports" — the very
+      # failure this caller is being fixed for. This repository already runs
+      # six jobs on these labels. Clear the pair to fall back to hosted once
+      # the quota is healthy again.
+      runner: '["self-hosted","linux","x64","local"]'
+      lane: 'farm'
+      pr: ${{ inputs.pr }}
