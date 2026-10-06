@@ -35,6 +35,8 @@ fn make_log_entry(seq: u64, op: OpType, path: &str, blob_id: Option<&str>, ts: u
         resolved_conflict_ours_id: None,
         resolved_conflict_theirs_id: None,
         snapshot_id: None,
+        remote_seq: None,
+        remote_sender: None,
         ts,
         message: None,
     }

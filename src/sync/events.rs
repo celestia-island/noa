@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::path::{Component, Path, PathBuf};
 use std::collections::HashSet;
+use std::path::{Component, Path, PathBuf};
 
 use crate::{
     error::{is_object_not_found, Result},
@@ -534,20 +534,14 @@ mod tests {
         assert!(tmp.path().join("blockdir").is_dir());
         {
             let repo = Repository::open(tmp.path()).unwrap();
-            let entries = repo
-                .agent_log("default")
-                .unwrap()
-                .read_all()
-                .await
-                .unwrap();
+            let entries = repo.agent_log("default").unwrap().read_all().await.unwrap();
             assert_eq!(entries.len(), 1);
             assert_eq!(entries[0].path, Some("victim.txt".to_string()));
             assert_eq!(entries[0].remote_seq, Some(1));
         }
 
         // The ACK layer reports the prefix accurately instead of disowning it.
-        let ack =
-            crate::sync::NoaEventSyncAck::from_apply_result("ws".to_string(), Err(err));
+        let ack = crate::sync::NoaEventSyncAck::from_apply_result("ws".to_string(), Err(err));
         assert_eq!(ack.applied, 1);
         assert!(!ack.ok);
         assert!(ack.error.is_some());
@@ -590,19 +584,11 @@ mod tests {
 
         {
             let repo = Repository::open(tmp.path()).unwrap();
-            let entries = repo
-                .agent_log("default")
-                .unwrap()
-                .read_all()
-                .await
-                .unwrap();
+            let entries = repo.agent_log("default").unwrap().read_all().await.unwrap();
             assert_eq!(entries.len(), 2);
             assert_eq!(entries[0].remote_seq, Some(1));
             assert_eq!(entries[1].remote_seq, Some(2));
-            assert_eq!(
-                entries[0].remote_sender,
-                Some("remote-1".to_string())
-            );
+            assert_eq!(entries[0].remote_sender, Some("remote-1".to_string()));
         }
         assert!(!tmp.path().join("r1.txt").exists());
         assert!(!tmp.path().join("r2.txt").exists());
@@ -640,12 +626,7 @@ mod tests {
         assert_eq!(engine.apply_pull_events(&batch_b).await.unwrap(), 1);
 
         let repo = Repository::open(tmp.path()).unwrap();
-        let entries = repo
-            .agent_log("default")
-            .unwrap()
-            .read_all()
-            .await
-            .unwrap();
+        let entries = repo.agent_log("default").unwrap().read_all().await.unwrap();
         assert_eq!(entries.len(), 2);
     }
 
