@@ -16,6 +16,8 @@ fn make_log_entry(seq: u64, op: OpType, path: &str, blob_id: Option<&str>, ts: u
         resolved_conflict_ours_id: None,
         resolved_conflict_theirs_id: None,
         snapshot_id: None,
+        remote_seq: None,
+        remote_sender: None,
         ts,
         message: None,
     }
@@ -1487,6 +1489,8 @@ async fn snapshot_rename() {
             resolved_conflict_ours_id: None,
             resolved_conflict_theirs_id: None,
             snapshot_id: None,
+            remote_seq: None,
+            remote_sender: None,
             ts: 200,
             message: None,
         })
@@ -2094,6 +2098,8 @@ async fn test_merge_log_records_all_conflict_ids() {
                 )
             },
             snapshot_id: Some(merge_snap.id.0.clone()),
+            remote_seq: None,
+            remote_sender: None,
             ts: 800,
             message: Some("merge feature into default".to_string()),
         })

@@ -434,6 +434,8 @@ mod tests {
             resolved_conflict_ours_id: None,
             resolved_conflict_theirs_id: None,
             snapshot_id: None,
+            remote_seq: None,
+            remote_sender: None,
             ts,
             message: None,
         }
@@ -712,6 +714,8 @@ mod tests {
             resolved_conflict_ours_id: Some("ours1".to_string()),
             resolved_conflict_theirs_id: Some("theirs1".to_string()),
             snapshot_id: Some("noa_snap1".to_string()),
+            remote_seq: Some(77),
+            remote_sender: Some("peer-a".to_string()),
             ts: 12345,
             message: Some("merge conflict resolved".to_string()),
         };
@@ -725,6 +729,8 @@ mod tests {
             entries[0].message,
             Some("merge conflict resolved".to_string())
         );
+        assert_eq!(entries[0].remote_seq, Some(77));
+        assert_eq!(entries[0].remote_sender, Some("peer-a".to_string()));
     }
 
     #[tokio::test]
@@ -786,6 +792,8 @@ mod tests {
                 resolved_conflict_ours_id: None,
                 resolved_conflict_theirs_id: None,
                 snapshot_id: Some(format!("noa_snapshot_{}", i)),
+                remote_seq: None,
+                remote_sender: None,
                 ts: i * 1000,
                 message: Some(format!(
                     "commit message number {} that is fairly long to increase file size",
