@@ -104,7 +104,7 @@ pub async fn diff_snapshots_recursive<O: ObjectStore>(
                     });
                 }
             }
-            Some(old) if old.id != entry.id => {
+            Some(old) if old.id != entry.id || old.kind != entry.kind => {
                 if entry.kind == EntryKind::Tree && old.kind == EntryKind::Tree {
                     if let (Ok(old_sub), Ok(new_sub)) = (
                         object_store.get_tree(&TreeId(old.id.clone())).await,
