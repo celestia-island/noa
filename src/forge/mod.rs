@@ -149,6 +149,11 @@ pub struct CreatePrRequest {
     pub metadata: Option<PrMetadata>,
 }
 
+// rust-clippy 1.99 re-ignited `double_must_use` on async_trait's
+// expansion (the macro adds its own #[must_use]; the Result returns
+// are already must_use) — 26 CI errors from this one trait. A
+// toolchain-compat allow, zero behavior (frozen-repo maintenance).
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait ForgeBackend: Send + Sync {
     fn kind(&self) -> ForgeKind;
