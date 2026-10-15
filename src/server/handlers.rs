@@ -25,6 +25,9 @@ pub struct AppState {
     pub db: Arc<redb::Database>,
     pub api_token: String,
     pub rate_limiter: RateLimiter,
+    /// GitHub App token broker (optional — unconfigured until the App
+    /// key lands; routes answer the explicit disconnected shape).
+    pub github_broker: Option<crate::server::github_broker::GithubBroker>,
 }
 
 impl AppState {
@@ -34,7 +37,17 @@ impl AppState {
             db,
             api_token: String::new(),
             rate_limiter: RateLimiter::new(1000, 60),
+            github_broker: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_github_broker(
+        mut self,
+        broker: Option<crate::server::github_broker::GithubBroker>,
+    ) -> Self {
+        self.github_broker = broker;
+        self
     }
 
     #[must_use]
