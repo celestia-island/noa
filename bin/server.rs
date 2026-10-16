@@ -1,6 +1,7 @@
 use clap::Parser;
 use std::sync::Arc;
 
+use libnoa::server::github_broker::GithubBroker;
 use libnoa::server::{router, AppState};
 
 static VERSION_TEXT: &str = concat!(
@@ -57,7 +58,13 @@ async fn main() -> anyhow::Result<()> {
     let api_token =
         std::env::var("NOA_API_TOKEN").map_err(|_| anyhow::anyhow!("NOA_API_TOKEN environment variable is required. The server will not start without authentication configured."))?;
 
-    let state = AppState::new(db).with_api_token(api_token);
+    let github_broker = GithubBroker::from_env().unwrap_or_else(|e| {
+        eprintln!("github broker misconfigured (routes stay disabled): {e}");
+        None
+    });
+    let state = AppState::new(db)
+        .with_api_token(api_token)
+        .with_github_broker(github_broker);
     let router = router(state);
 
     let addr = format!("{}:{}", app.host, app.port)

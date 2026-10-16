@@ -18,6 +18,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+pub mod github_broker;
 pub use handlers::AppState;
 
 #[derive(Clone)]
@@ -155,6 +156,8 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/prs/{number}", get(pr_handlers::get_pr))
         .route("/api/v1/prs/{number}/merge", post(pr_handlers::merge_pr))
+        .route("/api/v1/github/config", get(github_broker::config))
+        .route("/api/v1/github/token", post(github_broker::issue_token))
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
