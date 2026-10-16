@@ -58,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
     let api_token =
         std::env::var("NOA_API_TOKEN").map_err(|_| anyhow::anyhow!("NOA_API_TOKEN environment variable is required. The server will not start without authentication configured."))?;
 
-    let github_broker = github_broker::GithubBroker::from_env().unwrap_or_else(|e| {
+    let github_broker = GithubBroker::from_env().unwrap_or_else(|e| {
         eprintln!("github broker misconfigured (routes stay disabled): {e}");
         None
     });

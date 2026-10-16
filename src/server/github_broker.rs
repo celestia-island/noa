@@ -54,7 +54,7 @@ struct CachedToken {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct BrokerEnv {
+pub struct BrokerEnv {
     pub app_id: String,
     pub key_pem: String,
     pub installation_id: Option<u64>,
@@ -110,7 +110,7 @@ impl GithubBroker {
     }
 
     /// JWT claims per GitHub's App auth: issued now, valid ~10 minutes.
-    fn jwt_claims(app_id: &str, now: u64) -> (u64, u64) {
+    fn jwt_claims(_app_id: &str, now: u64) -> (u64, u64) {
         (now.saturating_sub(60), now + 600) // (iat, exp)
     }
 
