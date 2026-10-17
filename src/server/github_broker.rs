@@ -29,6 +29,13 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+fn now_unix() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
 use crate::server::AppState;
 
 const GITHUB_API: &str = "https://api.github.com";
@@ -44,13 +51,13 @@ pub struct GithubBroker {
     key_pem: Arc<String>,
     installation_id: Option<u64>,
     http: reqwest::Client,
-    cache: Arc<Mutex<Option<CachedToken>>>,
+    /// Per-installation token cache (multi-installation safe).
+    cache: Arc<Mutex<std::collections::HashMap<u64, CachedToken>>>,
 }
 
 struct CachedToken {
     token: String,
     expires_at: u64,
-    installation_id: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,7 +108,7 @@ impl GithubBroker {
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(15))
                 .build()?,
-            cache: Arc::new(Mutex::new(None)),
+            cache: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }))
     }
 
@@ -126,41 +133,31 @@ impl GithubBroker {
         .map_err(|e| anyhow::anyhow!("jwt sign failed: {e}"))
     }
 
-    async fn installation_id(&self, jwt: &str) -> anyhow::Result<u64> {
-        if let Some(id) = self.installation_id {
-            return Ok(id);
-        }
-        let resp: Value = self
-            .http
-            .get(format!("{GITHUB_API}/app/installations?per_page=1"))
-            .bearer_auth(jwt)
-            .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "noa-server-broker")
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        resp.as_array()
-            .and_then(|a| a.first())
-            .and_then(|i| i.get("id"))
-            .and_then(|v| v.as_u64())
-            .ok_or_else(|| anyhow::anyhow!("no installation found for this app"))
+    /// Mint (or serve cached) the DEFAULT installation's token.
+    pub async fn token(&self) -> anyhow::Result<(String, u64, u64)> {
+        let installation = match self.installation_id {
+            Some(id) => id,
+            None => {
+                let jwt = self.sign_jwt(now_unix())?;
+                self.discover_installation(&jwt).await?
+            }
+        };
+        self.token_for(installation).await
     }
 
-    /// Mint (or serve cached) an installation token.
-    pub async fn token(&self) -> anyhow::Result<(String, u64, u64)> {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    /// Mint (or serve cached) a SPECIFIC installation's token — the
+    /// multi-installation path (each user's repos get their own token).
+    pub async fn token_for(&self, installation: u64) -> anyhow::Result<(String, u64, u64)> {
+        let now = now_unix();
         {
             let cache = self.cache.lock().unwrap();
-            if let Some(c) = cache.as_ref() {
+            if let Some(c) = cache.get(&installation) {
                 if now + REFRESH_MARGIN.as_secs() < c.expires_at {
-                    return Ok((c.token.clone(), c.expires_at, c.installation_id));
+                    return Ok((c.token.clone(), c.expires_at, installation));
                 }
             }
         }
         let jwt = self.sign_jwt(now)?;
-        let installation = self.installation_id(&jwt).await?;
         let resp: Value = self
             .http
             .post(format!(
@@ -184,12 +181,50 @@ impl GithubBroker {
             .and_then(|e| e.as_str())
             .and_then(parse_iso8601_to_unix)
             .unwrap_or(now + TOKEN_TTL.as_secs());
-        *self.cache.lock().unwrap() = Some(CachedToken {
-            token: token.clone(),
-            expires_at,
-            installation_id: installation,
-        });
+        self.cache.lock().unwrap().insert(
+            installation,
+            CachedToken {
+                token: token.clone(),
+                expires_at,
+            },
+        );
         Ok((token, expires_at, installation))
+    }
+
+    /// List all installations of this App (for admin/picker surfaces).
+    pub async fn list_installations(&self) -> anyhow::Result<Value> {
+        let jwt = self.sign_jwt(now_unix())?;
+        let resp: Value = self
+            .http
+            .get(format!("{GITHUB_API}/app/installations"))
+            .bearer_auth(jwt)
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "noa-server-broker")
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        Ok(resp)
+    }
+
+    async fn discover_installation(&self, jwt: &str) -> anyhow::Result<u64> {
+        let resp: Value = self
+            .http
+            .get(format!("{GITHUB_API}/app/installations?per_page=1"))
+            .bearer_auth(jwt)
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "noa-server-broker")
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        resp.as_array()
+            .and_then(|a| a.first())
+            .and_then(|i| i.get("id"))
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow::anyhow!("no installation found for this app"))
     }
 }
 
@@ -222,15 +257,37 @@ pub(crate) fn parse_iso8601_to_unix(s: &str) -> Option<u64> {
 
 // ── HTTP handlers ───────────────────────────────────────────────────
 
+pub async fn installations(State(state): State<AppState>) -> Result<Json<Value>, StatusCode> {
+    let Some(broker) = state.github_broker.as_ref() else {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    };
+    match broker.list_installations().await {
+        Ok(list) => Ok(Json(list)),
+        Err(e) => {
+            tracing::warn!(error = %e, "github installations list failed");
+            Err(StatusCode::BAD_GATEWAY)
+        }
+    }
+}
+
 pub async fn config(State(state): State<AppState>) -> Json<Value> {
     Json(json!({ "configured": state.github_broker.is_some() }))
 }
 
-pub async fn issue_token(State(state): State<AppState>) -> Result<Json<Value>, StatusCode> {
+pub async fn issue_token(
+    State(state): State<AppState>,
+    axum::Json(body): axum::Json<Value>,
+) -> Result<Json<Value>, StatusCode> {
     let Some(broker) = state.github_broker.as_ref() else {
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     };
-    match broker.token().await {
+    // Multi-installation: pass {"installation_id": N} to scope the token
+    // to a specific user/org's repos; omit (or null) for the default.
+    let result = match body.get("installation_id").and_then(|v| v.as_u64()) {
+        Some(id) => broker.token_for(id).await,
+        None => broker.token().await,
+    };
+    match result {
         Ok((token, expires_at, installation_id)) => Ok(Json(json!({
             "token": token,
             "expires_at": expires_at,
