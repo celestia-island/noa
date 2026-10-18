@@ -1,4 +1,4 @@
-import { HCard, HEmptyState, HSpinner, HTable } from "@celestia-island/hikari";
+import { HCard, HEmptyState, HSpinner, HkTable } from "@celestia-island/hikari";
 
 import { useServerStore } from "@/stores/server";
 
@@ -22,7 +22,7 @@ export default function WorkspacesView() {
         <HEmptyState title="No workspaces" description="Workspaces appear once agents start working on the server." />
       ) : (
         <HCard>
-          <HTable
+          <HkTable
   columns={[
     { key: "name", title: "Name" },
     { key: "head", title: "Head" },

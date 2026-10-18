@@ -1,7 +1,7 @@
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 
-import { HButton, HCard, HEmptyState, HInput, HSpinner, HTable } from "@celestia-island/hikari";
+import { HButton, HCard, HEmptyState, HInput, HSpinner, HkTable } from "@celestia-island/hikari";
 
 import { api } from "@/api/client";
 import { useServerStore } from "@/stores/server";
@@ -88,7 +88,7 @@ export default function PullRequestsView() {
       ) : rows.value.length === 0 ? (
         <HEmptyState title="No pull requests" description="Connect to a noa-server and create the first PR." />
       ) : (
-        <HTable
+        <HkTable
           columns={columns}
           rows={rows.value}
           v-slots={{

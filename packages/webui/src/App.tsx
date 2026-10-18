@@ -1,3 +1,5 @@
+import { HkToast } from "@celestia-island/hikari";
+
 import { ServerConfigBar } from "@/components/ServerConfigBar";
 import { useServerStore } from "@/stores/server";
 
@@ -22,6 +24,11 @@ export default function App() {
       <main class="noa-main">
         <router-view />
       </main>
+      {/* Toast host: hikari's useToast state is module-level reactive and
+          only HkToast renders it (teleported to the self-created overlay
+          root). Without a mounted host the HkTable copy layer writes the
+          clipboard but the "Copied" toast stays invisible. */}
+      <HkToast />
       <style>{`
         .noa-app { min-height: 100vh; display: flex; flex-direction: column; }
         .noa-header { display: flex; align-items: center; gap: 24px; padding: 12px 24px; border-bottom: 1px solid var(--noa-border, #333); }
