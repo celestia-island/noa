@@ -1,6 +1,11 @@
 import { mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
+import { defineComponent, h, nextTick } from "vue";
+
+import { HkToast, useToast as useToastHost } from "@celestia-island/hikari";
+
+import appSource from "../App.tsx?raw";
 
 import WorkspacesView from "./WorkspacesView";
 import SnapshotsView from "./SnapshotsView";
@@ -22,6 +27,13 @@ import { useServerStore } from "@/stores/server";
 describe("roster views on hikari 0.55.x", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
+  });
+
+  afterEach(() => {
+    // hikari's toast state is module-level reactive — drain it so a
+    // toast from one test never leaks into the next assertion.
+    
+    useToastHost().toasts.splice(0);
   });
 
   it("WorkspacesView: copy layer on, hint on default cells", () => {
@@ -83,5 +95,51 @@ describe("roster views on hikari 0.55.x", () => {
   it("empty stores paint the standard empty state", () => {
     const w = mount(WorkspacesView);
     expect(w.find(".hk-empty-state").exists()).toBe(true);
+  });
+
+  it("copying a cell surfaces the visible toast through the host", async () => {
+    // happy-dom ships no navigator.clipboard — install a stub (house
+    // pattern, hikari's own suite) and restore after.
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const original = navigator.clipboard;
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    try {
+      const store = useServerStore();
+      store.workspaces = [
+        {
+          name: "celestia",
+          head: "a1b2c3d",
+          base: "main",
+          last_seq: 42,
+          updated_at: 1760000000,
+        } as never,
+      ];
+      // The App-level host shape: HkToast beside the view. Without a
+      // mounted host the copy lands on the clipboard but the toast state
+      // never renders anywhere.
+      const Host = defineComponent({
+        render: () => h("div", [h(HkToast), h(WorkspacesView)]),
+      });
+      const w = mount(Host);
+      const td = w.findAll("tbody td.hk-table-cell")[0]!;
+      (td.element as HTMLElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await nextTick();
+      expect(writeText).toHaveBeenCalledWith("celestia");
+      expect(document.body.textContent).toContain("Copied");
+    } finally {
+      Object.defineProperty(navigator, "clipboard", {
+        value: original,
+        configurable: true,
+      });
+    }
+  });
+
+  it("App mounts the toast host (source contract)", () => {
+    expect(appSource).toContain("<HkToast");
   });
 });
