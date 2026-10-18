@@ -140,6 +140,9 @@ describe("roster views on hikari 0.55.x", () => {
   });
 
   it("App mounts the toast host (source contract)", () => {
-    expect(appSource).toContain("<HkToast");
+    // Strip JSX comments first — a commented-out host must not satisfy
+    // the contract.
+    const live = appSource.replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+    expect(live).toContain("<HkToast");
   });
 });
