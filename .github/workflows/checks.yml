@@ -92,5 +92,8 @@ jobs:
     - name: WebUI typecheck
       run: corepack pnpm@11.18.0 --filter @celestia-island/noa-webui typecheck
 
+    - name: WebUI test
+      run: corepack pnpm@11.18.0 --filter @celestia-island/noa-webui test
+
     - name: WebUI build
       run: corepack pnpm@11.18.0 --filter @celestia-island/noa-webui build

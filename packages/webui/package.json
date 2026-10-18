@@ -1,11 +1,12 @@
 {
   "name": "@celestia-island/noa-webui",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "vue-tsc --noEmit && vite build",
     "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run",
     "lint": "eslint . --ext .vue,.ts,.tsx --fix",
     "serve": "python3 -m http.server 5173 -d ../../dist/webui"
   },

@@ -12,6 +12,8 @@ allowBuilds:
 minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
   - '@celestia-island/hikari'
+  # hikari 0.55.186+ rides the unified tairitsu-transport ^0.2 (2026-10-17).
+  - '@celestia-island/tairitsu-transport'
 
 overrides:
   typescript: ~6.0

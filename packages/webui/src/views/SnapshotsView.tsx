@@ -1,4 +1,4 @@
-import { HCard, HEmptyState, HSpinner, HTable } from "@celestia-island/hikari";
+import { HCard, HEmptyState, HSpinner, HkTable } from "@celestia-island/hikari";
 
 import { useServerStore } from "@/stores/server";
 
@@ -24,7 +24,7 @@ export default function SnapshotsView() {
         <HEmptyState title="No snapshots" description="Snapshots are created when agents commit their work." />
       ) : (
         <HCard>
-          <HTable
+          <HkTable
   columns={[
     { key: "id", title: "ID" },
     { key: "workspace", title: "Workspace" },
