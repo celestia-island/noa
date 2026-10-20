@@ -25,6 +25,7 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Test (${{ matrix.toolchain }}, ${{ matrix.os }})
     runs-on: [self-hosted, linux, x64, local]
+    timeout-minutes: 30
 
     strategy:
       fail-fast: false

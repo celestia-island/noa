@@ -27,6 +27,7 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Code Checks
     runs-on: [self-hosted, linux, x64, local]
+    timeout-minutes: 30
 
     steps:
     - name: Checkout code
@@ -68,6 +69,7 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: WebUI checks
     runs-on: [self-hosted, linux, x64, local]
+    timeout-minutes: 30
 
     env:
       COREPACK_HOME: /mnt/work/corepack
