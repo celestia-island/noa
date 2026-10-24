@@ -31,10 +31,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Full history: `git merge-base --is-ancestor` cannot see past a
+          # shallow boundary, so a depth-1 clone would reject every tag that is
+          # not exactly the branch tip.
+          fetch-depth: 0
 
       - name: Ensure tag is on master
         run: |
-          git fetch origin master --depth=1
+          git fetch origin master
           if ! git merge-base --is-ancestor HEAD origin/master; then
             echo "::error::Tag must be on master branch to publish"
             exit 1
@@ -53,7 +58,9 @@ jobs:
             exit 78
           fi
         env:
-          CRATE: noa
+          # The crate is `libnoa`; querying `noa` always 404s, so a rerun of an
+          # already-published tag would fall through to `cargo publish` and fail.
+          CRATE: libnoa
 
       - name: Publish libnoa to crates.io
         env:
