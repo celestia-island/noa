@@ -156,6 +156,44 @@ pub async fn get_pr(State(state): State<AppState>, Path(number): Path<u64>) -> A
     }
 }
 
+/// Close (revoke) a PR without merging: `open` → `closed`.
+///
+/// The DevOps plane treats an open PR as a pending approval ticket; close
+/// is the withdrawal lane — the proposer (or an operator) retires the
+/// proposal instead of landing it. A merged record is immutable history
+/// (its `merge_snapshot` stays pinned) and refuses the close; re-closing
+/// an already-closed ticket is IDEMPOTENT — it answers the unchanged
+/// closed record with 200, because a revoke that already stands is the
+/// desired state, not a client error (panel retries and reconcile loops
+/// re-issue revocations; they must converge, not 400).
+pub async fn close_pr(
+    State(state): State<AppState>,
+    Path(number): Path<u64>,
+) -> ApiResult<PrRecord> {
+    let store = pr_store(&state).map_err(err_json)?;
+    let record = store
+        .get(number)
+        .await
+        .map_err(err_json)?
+        .ok_or_else(|| not_found(format!("PR not found: #{number}")))?;
+
+    if record.state == "merged" {
+        return Err(bad_request(format!(
+            "PR #{number} is merged — merged history is immutable and cannot be closed",
+        )));
+    }
+    if record.state == "closed" {
+        // Idempotent revoke: the desired state already stands.
+        return Ok(Json(record));
+    }
+
+    let mut updated = record;
+    updated.state = "closed".to_string();
+    store.put(&updated).await.map_err(err_json)?;
+
+    Ok(Json(updated))
+}
+
 pub async fn merge_pr(
     State(state): State<AppState>,
     Path(number): Path<u64>,
@@ -659,5 +697,194 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// Seeds the minimal two-workspace topology and creates one open PR,
+    /// returning its number — the fixture every close test starts from.
+    async fn seed_open_pr(app: &Router) -> u64 {
+        let base_tree = upload_tree(app, tree_entries("a.txt", "111")).await;
+        let head_tree = upload_tree(
+            app,
+            serde_json::json!([
+                {"name": "a.txt", "id": "111", "kind": "Blob"},
+                {"name": "b.txt", "id": "222", "kind": "Blob"}
+            ]),
+        )
+        .await;
+        seed_workspace(app, "master", &base_tree, "lab", "base", 1000).await;
+        seed_workspace(app, "feat-x", &head_tree, "lab", "head", 1000).await;
+
+        let create_body = serde_json::json!({
+            "title": "✨ Withdraw me.",
+            "body": "",
+            "base": "master",
+            "head": "feat-x",
+            "author": "lab"
+        })
+        .to_string();
+        let resp = app
+            .clone()
+            .oneshot(request(Method::POST, "/api/v1/prs", Some(create_body)))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let created: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        created["number"].as_u64().unwrap()
+    }
+
+    async fn body_json(resp: axum::response::Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_close_pr_open_to_closed_and_visible_in_list() {
+        let (_tmp, _db, app) = make_app().await;
+        let number = seed_open_pr(&app).await;
+
+        // Positive: close answers the updated record, state now closed…
+        let resp = app
+            .clone()
+            .oneshot(request(Method::POST, "/api/v1/prs/1/close", None))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let closed = body_json(resp).await;
+        assert_eq!(closed["number"], number);
+        assert_eq!(closed["state"], "closed");
+        // …nothing merged: the merge lane stays untouched.
+        assert!(closed["merge_snapshot"].is_null());
+
+        // The store agrees (get), and the state filter finds it.
+        let resp = app
+            .clone()
+            .oneshot(request(Method::GET, "/api/v1/prs/1", None))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(body_json(resp).await["state"], "closed");
+
+        let resp = app
+            .clone()
+            .oneshot(request(Method::GET, "/api/v1/prs?state=closed", None))
+            .await
+            .unwrap();
+        let listed = body_json(resp).await;
+        assert_eq!(listed.as_array().unwrap().len(), 1);
+        assert_eq!(listed[0]["state"], "closed");
+    }
+
+    #[tokio::test]
+    async fn test_close_pr_negative_shapes() {
+        let (_tmp, _db, app) = make_app().await;
+        // Unknown ticket: 404, never a silent create.
+        let resp = app
+            .clone()
+            .oneshot(request(Method::POST, "/api/v1/prs/99/close", None))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        let number = seed_open_pr(&app).await;
+        // Close is idempotent for closed tickets: a revoke that
+        // already stands is the desired state, so a re-close answers
+        // 200 with the UNCHANGED record — panel retries and reconcile
+        // loops converge instead of surfacing 400s.
+        let resp = app
+            .clone()
+            .oneshot(request(Method::POST, "/api/v1/prs/1/close", None))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let first_close = body_json(resp).await;
+        let resp = app
+            .clone()
+            .oneshot(request(Method::POST, "/api/v1/prs/1/close", None))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(body_json(resp).await, first_close);
+
+        // A closed ticket can no longer be merged.
+        let resp = app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/api/v1/prs/1/merge",
+                Some(r#"{"squash": true}"#.to_string()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(number, 1);
+    }
+
+    #[tokio::test]
+    async fn test_close_pr_refuses_unauthenticated_callers() {
+        // The bearer-token gate fronts the whole router; the close
+        // lane inherits it. A request without credentials — or with
+        // the wrong ones — must never reach the handler: 401 for
+        // both, and the ticket stays open.
+        let (_tmp, _db, app) = make_app().await;
+        let number = seed_open_pr(&app).await;
+
+        for header in [None, Some("Bearer wrong-token"), Some("Basic dXNlcjpwYXNz")] {
+            let mut builder = Request::builder()
+                .method(Method::POST)
+                .uri("/api/v1/prs/1/close");
+            if let Some(value) = header {
+                builder = builder.header("Authorization", value);
+            }
+            let req = builder.body(Body::empty()).unwrap();
+            let resp = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "header={header:?}");
+        }
+
+        let resp = app
+            .clone()
+            .oneshot(request(Method::GET, "/api/v1/prs/1", None))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(body_json(resp).await["state"], "open");
+        assert_eq!(number, 1);
+    }
+
+    #[tokio::test]
+    async fn test_close_pr_refuses_merged_ticket() {
+        let (_tmp, _db, app) = make_app().await;
+        let number = seed_open_pr(&app).await;
+        let resp = app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/api/v1/prs/1/merge",
+                Some(r#"{"squash": true}"#.to_string()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Merged is immutable history: close must not rewrite it.
+        let resp = app
+            .clone()
+            .oneshot(request(Method::POST, "/api/v1/prs/1/close", None))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let resp = app
+            .clone()
+            .oneshot(request(Method::GET, "/api/v1/prs/1", None))
+            .await
+            .unwrap();
+        let record = body_json(resp).await;
+        assert_eq!(record["state"], "merged");
+        assert!(record["merge_snapshot"].is_string());
+        assert_eq!(number, 1);
     }
 }
