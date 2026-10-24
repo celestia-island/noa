@@ -19,8 +19,7 @@ permissions:
   # A called workflow cannot grant itself a permission the caller withholds —
   # the mismatch reads as startup_failure. The org default token permissions
   # were tightened on 2026-10-02 and this caller was missed, so the single
-  # required check stopped reporting entirely: with enforce_admins on, no pull
-  # request in this repository was mergeable. Grant exactly what the reusable
+  # required check stopped reporting entirely. Grant exactly what the reusable
   # lint declares and nothing more.
   contents: read
   pull-requests: read
@@ -29,11 +28,10 @@ jobs:
   lint-commits:
     uses: celestia-island/celestia-devtools/.github/workflows/commit-msg-lint.yml@master
     with:
-      # Lane switch without touching this tree: the repository variables are set
-      # to the org's self-hosted fleet while the hosted lane is down org-wide
-      # (2026-09-24 account payments: a job sent there sits fifteen minutes with
-      # no runner before being cancelled, which is indistinguishable from "the
-      # required check never reports"). Clear the pair to go back to hosted.
+      # Lane switch without touching this tree: the org variables resolve to the
+      # self-hosted fleet while the hosted lane is down (2026-09-24 account
+      # payments: a job sent there sits fifteen minutes with no runner before
+      # being cancelled, indistinguishable from "the check never reports").
       runner: ${{ vars.LINT_RUNNER || '["ubuntu-latest"]' }}
       lane: ${{ vars.LINT_LANE || 'hosted' }}
       pr: ${{ inputs.pr }}
