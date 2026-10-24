@@ -156,6 +156,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/prs/{number}", get(pr_handlers::get_pr))
         .route("/api/v1/prs/{number}/merge", post(pr_handlers::merge_pr))
+        .route("/api/v1/prs/{number}/close", post(pr_handlers::close_pr))
         .route("/api/v1/github/config", get(github_broker::config))
         .route("/api/v1/github/token", post(github_broker::issue_token))
         .route(
