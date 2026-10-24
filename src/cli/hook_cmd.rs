@@ -270,13 +270,16 @@ pub struct InstallActionArgs {
 }
 
 const PR_TITLE_CHECK_YML: &str = include_str!("../../assets/pr-title-check.yml");
-const SQUASH_MSG_CLEAN_YML: &str = include_str!("../../assets/squash-msg-clean.yml");
 
-/// Install noa's GitHub Action workflows into `.github/workflows/`.
+/// Install noa's GitHub Action workflow into `.github/workflows/`.
 ///
-/// Writes two workflow files:
-/// - `pr-title-check.yml` 鈥?validates PR titles on open/edit/sync.
-/// - `squash-msg-clean.yml` 鈥?amends squash-merge bodies to 1 line on push to master.
+/// Writes one workflow file:
+/// - `pr-title-check.yml` - validates PR titles on open/edit/sync.
+///
+/// The read-only title check is the only workflow noa ships. Anything that
+/// rewrites commits on `master` is out of scope: the workspace forbids force
+/// pushing `master`, so noa must never install a workflow that amends and
+/// force-pushes it.
 ///
 /// Refuses to overwrite existing files unless `--force` is used.
 pub fn install_action(args: InstallActionArgs) -> Result<()> {
@@ -288,12 +291,6 @@ pub fn install_action(args: InstallActionArgs) -> Result<()> {
         &workflows_dir,
         "pr-title-check.yml",
         PR_TITLE_CHECK_YML,
-        args.force,
-    )?;
-    install_workflow(
-        &workflows_dir,
-        "squash-msg-clean.yml",
-        SQUASH_MSG_CLEAN_YML,
         args.force,
     )?;
 
