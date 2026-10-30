@@ -11,7 +11,12 @@ allowBuilds:
 # (published by our own OIDC pipelines; entries must be exact names).
 minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
+  # Bare-name entries do not gate-exempt in pnpm 11 — the exact version pin
+  # is the working form (same lesson as chest/erp's lists).
   - '@celestia-island/hikari'
+  # 0.55.241 same-day pickup: the shared lucide number stepper column and
+  # everything since 0.55.188 (family contract sweeps).
+  - '@celestia-island/hikari@0.55.241'
   # hikari 0.55.186+ rides the unified tairitsu-transport ^0.2 (2026-10-17).
   - '@celestia-island/tairitsu-transport'
 
