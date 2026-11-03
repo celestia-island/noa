@@ -40,6 +40,7 @@ pub async fn run_create(repo: &Repository, name: &str, agent: Option<&str>) -> R
         snapshot_id: Some(base_snapshot.0.clone()),
         remote_seq: None,
         remote_sender: None,
+        verify: None,
         ts: now,
         message: Some(format!("workspace {name} created")),
     })
@@ -239,6 +240,7 @@ pub async fn run_merge(repo: &Repository, from: &str, strategy: &str) -> Result<
             snapshot_id: Some(merge_snapshot.id.0.clone()),
             remote_seq: None,
             remote_sender: None,
+            verify: None,
             ts: now,
             message: Some(format!("merge {from} into {current}")),
         })

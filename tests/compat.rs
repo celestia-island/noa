@@ -525,3 +525,139 @@ async fn test_git_import_no_deadlock_on_single_thread_runtime() {
 
     assert!(root.join(".noa/noa.redb").exists());
 }
+
+// ---- verify.run/1 ledger entries (OpType::Verify) ----------------------
+//
+// Compatibility contract of the first verify-ledger cut:
+//   * old log lines (no `verify` field) keep parsing, payload == None;
+//   * new lines carrying a full verify payload roundtrip losslessly;
+//   * old binaries reading new lines only ever drop data gracefully
+//     (unknown field ignored; verify-op line skipped by the reader's
+//     corrupted-line path) — pinned at unit level in src/log/format.rs.
+
+#[tokio::test]
+async fn test_verify_entry_appended_to_old_format_log() {
+    use libnoa::log::{
+        AgentLog, FileAgentLog, LogEntry, OpType, VerifyCommand, VerifyEnv, VerifyKind,
+        VerifyNotRun, VerifyRecord,
+    };
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let log_path = tmp.path().join("default.log");
+
+    // A pre-change log file on disk: two hand-written old-format lines.
+    std::fs::write(
+        &log_path,
+        concat!(
+            r#"{"seq":1,"op":"write","path":"a.rs","blob_id":"hash-a","ts":100}"#,
+            "\n",
+            r#"{"seq":2,"op":"snapshot","snapshot_id":"snap-1","ts":200}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+
+    let log = FileAgentLog::create(&log_path).unwrap();
+
+    let record = VerifyRecord {
+        schema: "verify.run/1".to_string(),
+        kind: VerifyKind::Partial,
+        repo: "celestia-island/noa".to_string(),
+        head: "0123456789abcdef0123456789abcdef01234567".to_string(),
+        tree_clean: false,
+        env: VerifyEnv {
+            toolchain: "stable 1.82.0".to_string(),
+            platform: "x86_64-unknown-linux-gnu".to_string(),
+            lock_hash: Some("deadbeef".to_string()),
+            offline: true,
+        },
+        commands: vec![VerifyCommand {
+            argv: vec![
+                "cargo".to_string(),
+                "check".to_string(),
+                "--offline".to_string(),
+                "--locked".to_string(),
+                "--quiet".to_string(),
+            ],
+            exit_code: Some(0),
+            duration_ms: Some(42_000),
+            summary: Some("cargo check clean".to_string()),
+        }],
+        not_run: vec![
+            VerifyNotRun {
+                what: "--all-features".to_string(),
+                reason: Some("feature graph not wired on this runner".to_string()),
+            },
+            VerifyNotRun {
+                what: "tests/webui".to_string(),
+                reason: None,
+            },
+        ],
+        outputs: Vec::new(),
+        agent: "verify-impl".to_string(),
+        ts: 1_736_000_000_000_000,
+    };
+
+    let entry = LogEntry {
+        // append() reassigns seq from durable state; the old file tops at 2.
+        seq: 0,
+        op: OpType::Verify,
+        path: None,
+        blob_id: None,
+        from_path: None,
+        resolved_conflict_ours_id: None,
+        resolved_conflict_theirs_id: None,
+        snapshot_id: None,
+        remote_seq: None,
+        remote_sender: None,
+        verify: Some(record),
+        ts: 300,
+        message: Some("verify.run ledger entry".to_string()),
+    };
+
+    let assigned = log.append(&entry).await.unwrap();
+    assert_eq!(assigned, 3);
+
+    let all = log.read_all().await.unwrap();
+    assert_eq!(all.len(), 3);
+    // Old lines parse with no payload.
+    assert_eq!(all[0].op, OpType::Write);
+    assert_eq!(all[0].verify, None);
+    assert_eq!(all[1].op, OpType::Snapshot);
+    assert_eq!(all[1].verify, None);
+    // New line roundtrips through the file with its payload intact.
+    assert_eq!(all[2].op, OpType::Verify);
+    assert_eq!(all[2].seq, 3);
+    let v = all[2].verify.as_ref().unwrap();
+    assert_eq!(v.schema, "verify.run/1");
+    assert_eq!(v.kind, VerifyKind::Partial);
+    assert!(!v.tree_clean);
+    assert!(v.env.offline);
+    assert_eq!(v.env.lock_hash.as_deref(), Some("deadbeef"));
+    assert_eq!(v.commands.len(), 1);
+    assert_eq!(v.commands[0].exit_code, Some(0));
+    assert_eq!(
+        v.commands[0].argv,
+        ["cargo", "check", "--offline", "--locked", "--quiet"]
+    );
+    assert_eq!(v.not_run.len(), 2);
+    assert_eq!(v.not_run[0].what, "--all-features");
+    assert_eq!(
+        v.not_run[0].reason.as_deref(),
+        Some("feature graph not wired on this runner")
+    );
+    assert_eq!(v.not_run[1].what, "tests/webui");
+    assert_eq!(v.not_run[1].reason, None);
+    assert!(v.outputs.is_empty());
+
+    // Seq allocation mechanics are untouched by the new op type.
+    assert_eq!(log.next_seq().await.unwrap(), 4);
+
+    // The serialized line pins the wire shape end to end: op "verify" plus
+    // the payload flattened into the JSONL line.
+    let raw = std::fs::read_to_string(&log_path).unwrap();
+    let verify_line = raw.lines().last().unwrap();
+    assert!(verify_line.contains(r#""op":"verify""#));
+    assert!(verify_line.contains(r#""schema":"verify.run/1""#));
+    assert!(verify_line.contains(r#""not_run":[{"what":"--all-features""#));
+}

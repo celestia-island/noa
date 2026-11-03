@@ -538,6 +538,8 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                     }
                 }
                 OpType::Snapshot | OpType::Merge => {}
+                // Verify entries carry ledger metadata only: no tree effect.
+                OpType::Verify => {}
                 OpType::Resolve => {
                     if let (Some(path), Some(blob_id)) = (&entry.path, &entry.blob_id) {
                         if !Self::is_path_within_root(PathBuf::from(path).as_path()) {
@@ -701,6 +703,7 @@ mod tests {
             snapshot_id: None,
             remote_seq: None,
             remote_sender: None,
+            verify: None,
             ts,
             message: None,
         }
@@ -717,6 +720,7 @@ mod tests {
             resolved_conflict_theirs_id: None,
             remote_seq: None,
             remote_sender: None,
+            verify: None,
             snapshot_id: None,
             ts,
             message: None,
@@ -1118,6 +1122,7 @@ mod tests {
             snapshot_id: None,
             remote_seq: None,
             remote_sender: None,
+            verify: None,
             ts: 200,
             message: None,
         };
@@ -1133,6 +1138,7 @@ mod tests {
             resolved_conflict_theirs_id: None,
             remote_seq: None,
             remote_sender: None,
+            verify: None,
             snapshot_id: None,
             ts: 300,
             message: None,
@@ -1258,6 +1264,7 @@ mod tests {
             snapshot_id: None,
             remote_seq: None,
             remote_sender: None,
+            verify: None,
             ts: 200,
             message: None,
         };
@@ -1507,5 +1514,67 @@ mod tests {
             .0
             .iter()
             .all(|e| e.name != "a.txt" && e.name != "da.txt"));
+    }
+
+    /// Verify entries are log-only ledger records: replaying a log that
+    /// contains one must not change the materialized tree.
+    #[tokio::test]
+    async fn test_verify_entries_have_no_tree_effect() {
+        let (_tmp, engine) = make_engine().await;
+
+        engine
+            .log
+            .append(&write_entry(1, "main.rs", "h1", 100))
+            .await
+            .unwrap();
+        engine
+            .log
+            .append(&LogEntry {
+                seq: 2,
+                op: OpType::Verify,
+                path: None,
+                blob_id: None,
+                from_path: None,
+                resolved_conflict_ours_id: None,
+                resolved_conflict_theirs_id: None,
+                snapshot_id: None,
+                remote_seq: None,
+                remote_sender: None,
+                verify: Some(crate::log::VerifyRecord {
+                    schema: "verify.run/1".to_string(),
+                    kind: crate::log::VerifyKind::Full,
+                    repo: "celestia-island/noa".to_string(),
+                    head: "0123456789abcdef".to_string(),
+                    tree_clean: true,
+                    env: crate::log::VerifyEnv {
+                        toolchain: "stable 1.82.0".to_string(),
+                        platform: "x86_64-unknown-linux-gnu".to_string(),
+                        lock_hash: None,
+                        offline: true,
+                    },
+                    commands: Vec::new(),
+                    not_run: Vec::new(),
+                    outputs: Vec::new(),
+                    agent: "verify-impl".to_string(),
+                    ts: 200,
+                }),
+                ts: 200,
+                message: None,
+            })
+            .await
+            .unwrap();
+
+        let snap = engine
+            .compute("default", vec![], 0, "test", "verify-ledger")
+            .await
+            .unwrap();
+        let tree = engine
+            .object_store
+            .get_tree(&crate::object::TreeId(snap.tree_hash))
+            .await
+            .unwrap();
+        // Only the write is materialized; the verify entry is metadata-only.
+        assert_eq!(tree.0.len(), 1);
+        assert_eq!(tree.0[0].name, "main.rs");
     }
 }

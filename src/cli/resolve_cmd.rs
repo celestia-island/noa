@@ -270,6 +270,7 @@ pub async fn run_resolve(
         snapshot_id: Some(new_snap_id.0),
         remote_seq: None,
         remote_sender: None,
+        verify: None,
         ts: now,
         message: Some(format!("resolve {resolved_path} with {strategy}")),
     })
