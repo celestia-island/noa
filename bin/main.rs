@@ -95,6 +95,10 @@ enum Commands {
         #[command(subcommand)]
         cmd: HookSub,
     },
+    Verify {
+        #[command(subcommand)]
+        cmd: VerifySub,
+    },
     #[cfg(unix)]
     Sync {
         #[arg(short, long, default_value = "/tmp/noa-sync.sock")]
@@ -168,6 +172,20 @@ enum CoauthorSub {
         lookback_secs: u64,
     },
 }
+
+#[derive(Subcommand)]
+enum VerifySub {
+    /// Append a verify.run/1 record (stdin or --file) to the workspace log.
+    Append {
+        /// Read the record from this file instead of stdin.
+        #[arg(long)]
+        file: Option<String>,
+        /// Target workspace (defaults to the repository head).
+        #[arg(short, long)]
+        workspace: Option<String>,
+    },
+}
+
 #[derive(Subcommand)]
 enum HookSub {
     Install {
@@ -435,6 +453,11 @@ async fn main() -> anyhow::Result<()> {
                     aporia_config,
                     lookback_secs,
                 })?;
+            }
+        },
+        Some(Commands::Verify { cmd }) => match cmd {
+            VerifySub::Append { file, workspace } => {
+                cli::verify_cmd::run_append(file.as_deref(), workspace.as_deref()).await?
             }
         },
         Some(Commands::Hook { cmd }) => match cmd {

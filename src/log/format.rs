@@ -176,6 +176,7 @@ also not valid {json
                 sha256: "cafebabe".to_string(),
             }],
             agent: "verify-impl".to_string(),
+            prev: None,
             ts: 1_736_000_000_000_000,
         }
     }
@@ -338,6 +339,29 @@ also not valid {json
             ["path", "sha256"],
             "output key set drifted: {out_keys:?}"
         );
+    }
+
+    /// `prev` (the tamper-evidence chain link) is optional on the wire:
+    /// absent on chain-head and pre-chain records, present and exact when the
+    /// writer carries a chain. Both shapes must be pinned (second cut).
+    #[test]
+    fn test_prev_optional_on_wire_both_shapes() {
+        let mut record = sample_verify_record();
+        let without: serde_json::Value = serde_json::to_value(&record).unwrap();
+        assert!(
+            without.get("prev").is_none(),
+            "prev must be skipped when None: {without}"
+        );
+        record.prev = Some("deadbeefcafe".to_string());
+        let with = serde_json::to_value(&record).unwrap();
+        assert_eq!(with["prev"], "deadbeefcafe");
+        // Second, independent value pin so weakening one assertion cannot
+        // silence the contract (review R3-M2 on #130).
+        let wire_str = serde_json::to_string(&record).unwrap();
+        assert!(wire_str.contains(r#""prev":"deadbeefcafe""#), "{wire_str}");
+        // and a pre-chain record (no prev key at all) still parses back
+        let back: VerifyRecord = serde_json::from_value(without).unwrap();
+        assert_eq!(back.prev, None);
     }
 
     /// `tree_clean` is required: a payload missing it must fail to parse
