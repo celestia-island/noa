@@ -126,6 +126,14 @@ pub struct VerifyRecord {
     pub outputs: Vec<VerifyOutput>,
     /// Executor identity (workspace claim-owner semantics).
     pub agent: String,
+    /// Hash of the previous record in the same ledger (file or noa), so the
+    /// tamper-evidence chain travels WITH the record when the noa ledger
+    /// becomes the authority — without it, the authoritative ledger would be
+    /// weaker than the file ledger it retires (review R3 on PR #129).
+    /// None on the first record of a chain and on pre-chain records; the
+    /// chain is computed by the writer, this payload only carries it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prev: Option<String>,
     /// Timestamp in microseconds since Unix epoch.
     pub ts: u64,
 }

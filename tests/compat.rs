@@ -595,6 +595,7 @@ async fn test_verify_entry_appended_to_old_format_log() {
         ],
         outputs: Vec::new(),
         agent: "verify-impl".to_string(),
+        prev: None,
         ts: 1_736_000_000_000_000,
     };
 

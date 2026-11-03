@@ -1556,6 +1556,7 @@ mod tests {
                     not_run: Vec::new(),
                     outputs: Vec::new(),
                     agent: "verify-impl".to_string(),
+                    prev: None,
                     ts: 200,
                 }),
                 ts: 200,
