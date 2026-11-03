@@ -355,6 +355,10 @@ also not valid {json
         record.prev = Some("deadbeefcafe".to_string());
         let with = serde_json::to_value(&record).unwrap();
         assert_eq!(with["prev"], "deadbeefcafe");
+        // Second, independent value pin so weakening one assertion cannot
+        // silence the contract (review R3-M2 on #130).
+        let wire_str = serde_json::to_string(&record).unwrap();
+        assert!(wire_str.contains(r#""prev":"deadbeefcafe""#), "{wire_str}");
         // and a pre-chain record (no prev key at all) still parses back
         let back: VerifyRecord = serde_json::from_value(without).unwrap();
         assert_eq!(back.prev, None);
