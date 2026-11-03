@@ -206,6 +206,56 @@ also not valid {json
         assert!(json.contains(r#""schema":"verify.run/1""#));
         assert!(json.contains(r#""kind":"partial""#));
         assert!(json.contains(r#""not_run":[{"what":"--all-features""#));
+        // The *outer* field name is part of the wire contract too: renaming
+        // `LogEntry::verify` would silently orphan every payload ever written
+        // (review R2: only a hand-written-JSON test caught this before).
+        assert!(json.contains(r#""verify":"#), "outer key: {json}");
+    }
+
+    /// All three VerifyKind variants are the wire contract (full / partial /
+    /// sampled are distinguished by consumers); removing one must fail here
+    /// first (review R3-M1: `Sampled` had no pin).
+    #[test]
+    fn test_verify_kind_wire_forms_pinned() {
+        for (kind, wire) in [
+            (VerifyKind::Full, r#""kind":"full""#),
+            (VerifyKind::Partial, r#""kind":"partial""#),
+            (VerifyKind::Sampled, r#""kind":"sampled""#),
+        ] {
+            let mut record = sample_verify_record();
+            record.kind = kind;
+            let entry = LogEntry {
+                seq: 1,
+                op: OpType::Verify,
+                path: None,
+                blob_id: None,
+                from_path: None,
+                resolved_conflict_ours_id: None,
+                resolved_conflict_theirs_id: None,
+                snapshot_id: None,
+                remote_seq: None,
+                remote_sender: None,
+                verify: Some(record),
+                ts: 1_736_000_000_000_000,
+                message: None,
+            };
+            let json = serialize_entry(&entry).unwrap();
+            assert!(json.contains(wire), "kind wire form: {json}");
+        }
+    }
+
+    /// An empty not_run must still serialize as `"not_run":[]`: an absent
+    /// list reads "coverage unknown", an empty one reads "nothing skipped".
+    /// Skipping serialization on empty conflates the two (review R3-M12).
+    #[test]
+    fn test_empty_not_run_still_serialized() {
+        let mut record = sample_verify_record();
+        record.not_run = Vec::new();
+        let json = serde_json::to_string(&record).unwrap();
+        assert!(
+            json.contains(r#""not_run":[]"#),
+            "empty not_run on wire: {json}"
+        );
     }
 
     /// Old log lines (written before the verify field existed) must keep

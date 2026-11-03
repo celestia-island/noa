@@ -632,7 +632,7 @@ async fn test_verify_entry_appended_to_old_format_log() {
     assert_eq!(v.schema, "verify.run/1");
     assert_eq!(v.kind, VerifyKind::Partial);
     assert!(!v.tree_clean);
-    assert_eq!(v.env.offline, true);
+    assert!(v.env.offline);
     assert_eq!(v.env.lock_hash.as_deref(), Some("deadbeef"));
     assert_eq!(v.commands.len(), 1);
     assert_eq!(v.commands[0].exit_code, Some(0));
