@@ -662,3 +662,47 @@ async fn test_verify_entry_appended_to_old_format_log() {
     assert!(verify_line.contains(r#""schema":"verify.run/1""#));
     assert!(verify_line.contains(r#""not_run":[{"what":"--all-features""#));
 }
+
+/// In-process concurrent appends must produce gapless, duplicate-free seqs
+/// (the R4-registered gap on PR #130: the CLI cannot exercise this because
+/// redb serializes whole processes, but concurrent tasks in one process can
+/// race on the seq sidecar). All tasks share ONE FileAgentLog handle — the
+/// same shape `run_append` would hit if called concurrently in-process.
+#[tokio::test]
+async fn concurrent_appends_assign_unique_gapless_seqs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = libnoa::repo::Repository::init(tmp.path()).unwrap();
+    let log = std::sync::Arc::new(repo.agent_log("default").unwrap());
+    drop(repo);
+
+    let mut handles = Vec::new();
+    for _ in 0..16u64 {
+        let log = std::sync::Arc::clone(&log);
+        handles.push(tokio::spawn(async move {
+            let entry = libnoa::log::LogEntry {
+                seq: 0, // append assigns under the OS lock
+                op: libnoa::log::OpType::Snapshot,
+                path: None,
+                blob_id: None,
+                from_path: None,
+                resolved_conflict_ours_id: None,
+                resolved_conflict_theirs_id: None,
+                snapshot_id: None,
+                remote_seq: None,
+                remote_sender: None,
+                verify: None,
+                ts: 1,
+                message: None,
+            };
+            libnoa::log::AgentLog::append(&*log, &entry).await.unwrap()
+        }));
+    }
+
+    let mut seqs: Vec<u64> = Vec::new();
+    for h in handles {
+        seqs.push(h.await.unwrap());
+    }
+    seqs.sort_unstable();
+    let expected: Vec<u64> = (1..=16).collect();
+    assert_eq!(seqs, expected, "seqs must be gapless and unique");
+}

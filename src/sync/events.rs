@@ -62,6 +62,14 @@ pub struct SyncEvent {
     /// Optional so batches written by older senders still deserialize.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender: Option<String>,
+    /// verify.run/1 payload for `op == "verify"` events. Absent on pre-ledger
+    /// senders (serde default) and on all non-verify ops. Carried as the
+    /// already-serialized JSON value so the wire stays exactly what the
+    /// writer produced — the receiver re-parses it into the strong type and
+    /// rejects (warn+skip, counted neither applied nor errored) a verify
+    /// event that arrives without a parseable payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verify: Option<serde_json::Value>,
 }
 
 impl From<LogEntry> for SyncEvent {
@@ -75,6 +83,13 @@ impl From<LogEntry> for SyncEvent {
             ts: entry.ts,
             message: entry.message,
             sender: None,
+            verify: entry
+                .verify
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()
+                .ok()
+                .flatten(),
         }
     }
 }
@@ -90,6 +105,13 @@ impl From<&LogEntry> for SyncEvent {
             ts: entry.ts,
             message: entry.message.clone(),
             sender: None,
+            verify: entry
+                .verify
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()
+                .ok()
+                .flatten(),
         }
     }
 }
@@ -206,10 +228,42 @@ impl EventSyncEngine {
                 "snapshot" => crate::log::OpType::Snapshot,
                 "merge" => crate::log::OpType::Merge,
                 "resolve" => crate::log::OpType::Resolve,
+                "verify" => crate::log::OpType::Verify,
                 _ => {
                     tracing::warn!("unknown event op '{}', skipping", event.op);
                     continue;
                 }
+            };
+
+            // A verify event without a parseable payload is malformed: it
+            // would append a Verify op with verify == None, which no reader
+            // can distinguish from corruption. Warn, skip, and let the sender
+            // retry — never half-land a ledger record.
+            let synced_verify_payload = if op == crate::log::OpType::Verify {
+                match event
+                    .verify
+                    .as_ref()
+                    .map(|value| serde_json::from_value::<crate::log::VerifyRecord>(value.clone()))
+                {
+                    Some(Ok(record)) => Some(record),
+                    Some(Err(err)) => {
+                        tracing::warn!(
+                            "verify event {} carries an unparseable payload ({}), skipping",
+                            event.seq,
+                            err
+                        );
+                        continue;
+                    }
+                    None => {
+                        tracing::warn!(
+                            "verify event {} arrived without a payload (pre-ledger sender?), skipping",
+                            event.seq
+                        );
+                        continue;
+                    }
+                }
+            } else {
+                None
             };
 
             // Whether this event counts toward `applied`. Only events that are
@@ -375,7 +429,7 @@ impl EventSyncEngine {
                 // attempt recovered; with an unconditional stamp it never could.
                 remote_seq: counts.then_some(event.seq),
                 remote_sender: if counts { event.sender.clone() } else { None },
-                verify: None,
+                verify: synced_verify_payload,
                 ts: event.ts,
                 message: event.message.clone(),
             };
@@ -481,6 +535,7 @@ mod tests {
             ts: 100,
             message: None,
             sender: None,
+            verify: None,
         }];
         let applied = engine.apply_pull_events(&events).await.unwrap();
         assert_eq!(applied, 1);
@@ -502,6 +557,7 @@ mod tests {
             ts: 100,
             message: None,
             sender: None,
+            verify: None,
         }];
         let applied = engine.apply_pull_events(&events).await.unwrap();
         assert_eq!(applied, 1);
@@ -537,6 +593,7 @@ mod tests {
                 ts: 100,
                 message: None,
                 sender: None,
+                verify: None,
             },
             // Writing file bytes onto an existing directory fails on every
             // platform (Windows: OS error 5; Unix: EISDIR).
@@ -549,6 +606,7 @@ mod tests {
                 ts: 101,
                 message: None,
                 sender: None,
+                verify: None,
             },
         ];
         let err = engine.apply_pull_events(&batch).await.unwrap_err();
@@ -591,6 +649,7 @@ mod tests {
                 ts: 100,
                 message: None,
                 sender: Some("remote-1".to_string()),
+                verify: None,
             },
             SyncEvent {
                 seq: 2,
@@ -601,6 +660,7 @@ mod tests {
                 ts: 101,
                 message: None,
                 sender: Some("remote-1".to_string()),
+                verify: None,
             },
         ];
         assert_eq!(engine.apply_pull_events(&batch).await.unwrap(), 2);
@@ -636,6 +696,7 @@ mod tests {
             ts: 100,
             message: None,
             sender: Some("a".to_string()),
+            verify: None,
         }];
         let batch_b = vec![SyncEvent {
             seq: 1,
@@ -646,6 +707,7 @@ mod tests {
             ts: 100,
             message: None,
             sender: Some("b".to_string()),
+            verify: None,
         }];
         assert_eq!(engine.apply_pull_events(&batch_a).await.unwrap(), 1);
         assert_eq!(engine.apply_pull_events(&batch_b).await.unwrap(), 1);
@@ -689,7 +751,118 @@ mod tests {
             ts: 100,
             message: None,
             sender: sender.map(std::string::ToString::to_string),
+            verify: None,
         }
+    }
+
+    fn verify_event(
+        seq: u64,
+        payload: Option<serde_json::Value>,
+        sender: Option<&str>,
+    ) -> SyncEvent {
+        SyncEvent {
+            seq,
+            op: "verify".to_string(),
+            path: None,
+            blob_id: None,
+            from_path: None,
+            ts: 100,
+            message: None,
+            sender: sender.map(std::string::ToString::to_string),
+            verify: payload,
+        }
+    }
+
+    fn sample_payload(head: &str) -> serde_json::Value {
+        serde_json::json!({
+            "schema": "verify.run/1",
+            "kind": "partial",
+            "repo": "o/r",
+            "head": head,
+            "tree_clean": true,
+            "env": {"toolchain": "t", "platform": "p"},
+            "commands": [],
+            "not_run": [{"what": "clippy"}],
+            "outputs": [],
+            "agent": "sync-test",
+            "ts": 1
+        })
+    }
+
+    /// Pre-ledger senders emit events WITHOUT the `verify` key (serde
+    /// default); those must keep deserializing — an old peer in a mixed
+    /// fleet must not break a new receiver's pull batches.
+    #[test]
+    fn sync_event_without_verify_key_still_parses() {
+        let legacy = r#"{"seq":1,"op":"write","path":"a.txt","ts":100}"#;
+        let ev: SyncEvent = serde_json::from_str(legacy).unwrap();
+        assert_eq!(ev.op, "write");
+        assert!(ev.verify.is_none());
+    }
+
+    /// A verify event with a parseable payload lands in the agent log with
+    /// the payload byte-intact (the ledger's whole point: records sync).
+    #[tokio::test]
+    async fn verify_event_with_payload_lands() {
+        let tmp = setup_repo();
+        let engine = EventSyncEngine::new(tmp.path(), "default");
+        let applied = engine
+            .apply_pull_events(&[verify_event(
+                1,
+                Some(sample_payload("abc123")),
+                Some("peer-a"),
+            )])
+            .await
+            .unwrap();
+        assert_eq!(applied, 1);
+        let repo = Repository::open(tmp.path()).unwrap();
+        let log = repo.agent_log("default").unwrap();
+        let entries = log.read_all().await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].op, crate::log::OpType::Verify);
+        let rec = entries[0].verify.as_ref().expect("payload must travel");
+        assert_eq!(rec.head, "abc123");
+        assert_eq!(entries[0].remote_seq, Some(1), "counts as applied");
+    }
+
+    /// Verify events without a payload (pre-ledger sender or malformed) are
+    /// skipped loudly and retried — never half-landed as Verify-with-None.
+    #[tokio::test]
+    async fn verify_event_without_payload_skips_and_retries() {
+        let tmp = setup_repo();
+        let engine = EventSyncEngine::new(tmp.path(), "default");
+        let applied = engine
+            .apply_pull_events(&[
+                verify_event(1, None, Some("peer-a")),
+                verify_event(
+                    2,
+                    Some(serde_json::json!({"garbage": true})),
+                    Some("peer-a"),
+                ),
+            ])
+            .await
+            .unwrap();
+        assert_eq!(applied, 0, "neither malformed event may count");
+        drop(engine); // redb is single-writer per process; release before reopening
+        let repo = Repository::open(tmp.path()).unwrap();
+        let log = repo.agent_log("default").unwrap();
+        assert!(
+            log.read_all().await.unwrap().is_empty(),
+            "nothing half-lands"
+        );
+        drop(repo);
+        drop(log);
+        // Same seq arriving again (sender retry) must still apply cleanly.
+        let engine = EventSyncEngine::new(tmp.path(), "default");
+        let reapplied = engine
+            .apply_pull_events(&[verify_event(
+                1,
+                Some(sample_payload("retry")),
+                Some("peer-a"),
+            )])
+            .await
+            .unwrap();
+        assert_eq!(reapplied, 1, "skipped events stay retryable, not stuck");
     }
 
     /// Two peers whose first events both carry sequence 1 must both land.
