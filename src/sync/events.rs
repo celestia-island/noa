@@ -789,6 +789,70 @@ mod tests {
         })
     }
 
+    /// PUSH side round-trip (review R3-M8 on #131): an appended verify entry
+    /// must leave this peer with its payload intact — if the `From<&LogEntry>`
+    /// projection ever drops the payload, receivers warn+skip FOREVER and the
+    /// whole suite stays green (that exact regression survived as SURVIVED).
+    #[tokio::test]
+    async fn push_side_carries_verify_payload() {
+        let tmp = setup_repo();
+        {
+            let repo = Repository::open(tmp.path()).unwrap();
+            let log = repo.agent_log("default").unwrap();
+            log.append(&LogEntry {
+                seq: 0,
+                op: crate::log::OpType::Verify,
+                path: None,
+                blob_id: None,
+                from_path: None,
+                resolved_conflict_ours_id: None,
+                resolved_conflict_theirs_id: None,
+                snapshot_id: None,
+                remote_seq: None,
+                remote_sender: None,
+                verify: Some(crate::log::VerifyRecord {
+                    schema: "verify.run/1".to_string(),
+                    kind: crate::log::VerifyKind::Sampled,
+                    repo: "o/r".to_string(),
+                    head: "push-side-head-01".to_string(),
+                    tree_clean: true,
+                    env: crate::log::VerifyEnv {
+                        toolchain: "t".to_string(),
+                        platform: "p".to_string(),
+                        lock_hash: None,
+                        offline: true,
+                    },
+                    commands: vec![],
+                    not_run: vec![crate::log::VerifyNotRun {
+                        what: "clippy".to_string(),
+                        reason: None,
+                    }],
+                    outputs: vec![],
+                    agent: "push-test".to_string(),
+                    prev: Some("deadbeef".to_string()),
+                    ts: 7,
+                }),
+                ts: 7,
+                message: None,
+            })
+            .await
+            .unwrap();
+        }
+        let engine = EventSyncEngine::new(tmp.path(), "default");
+        let events = engine.collect_push_events(0).await.unwrap();
+        let verify_events: Vec<_> = events.iter().filter(|e| e.op == "verify").collect();
+        assert_eq!(verify_events.len(), 1, "verify entry must be collected");
+        let ev = verify_events[0];
+        let payload = ev
+            .verify
+            .as_ref()
+            .expect("payload must survive the projection");
+        assert_eq!(payload["head"], "push-side-head-01");
+        assert_eq!(payload["kind"], "sampled");
+        assert_eq!(payload["prev"], "deadbeef", "chain link must travel");
+        assert_eq!(payload["not_run"][0]["what"], "clippy");
+    }
+
     /// Pre-ledger senders emit events WITHOUT the `verify` key (serde
     /// default); those must keep deserializing — an old peer in a mixed
     /// fleet must not break a new receiver's pull batches.
