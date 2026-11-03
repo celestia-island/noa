@@ -258,6 +258,104 @@ also not valid {json
         );
     }
 
+    /// The FULL wire contract, as exact key sets at every nesting level.
+    /// `contains`-style pins only cover the five keys they name; the
+    /// cross-language consumer (the Python ledger writer) depends on the
+    /// inner keys — argv/exit_code/duration_ms/summary, env.*, outputs.* —
+    /// and a silent rename of any of them used to pass the whole suite
+    /// (review R5-F1: `summary` → `summary_x` survived).
+    #[test]
+    fn test_verify_payload_wire_keys_exact() {
+        let value: serde_json::Value = serde_json::to_value(sample_verify_record()).unwrap();
+
+        let top: Vec<&str> = value
+            .as_object()
+            .expect("record serializes to an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            top,
+            [
+                "agent",
+                "commands",
+                "env",
+                "head",
+                "kind",
+                "not_run",
+                "outputs",
+                "repo",
+                "schema",
+                "tree_clean",
+                "ts"
+            ],
+            "top-level key set drifted: {top:?}"
+        );
+
+        let env = &value["env"];
+        let env_keys: Vec<&str> = env
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            env_keys,
+            ["lock_hash", "offline", "platform", "toolchain"],
+            "env key set drifted: {env_keys:?}"
+        );
+
+        let cmd = &value["commands"][0];
+        let cmd_keys: Vec<&str> = cmd
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            cmd_keys,
+            ["argv", "duration_ms", "exit_code", "summary"],
+            "command key set drifted: {cmd_keys:?}"
+        );
+
+        let nr = &value["not_run"][0];
+        let nr_keys: Vec<&str> = nr.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(
+            nr_keys,
+            ["reason", "what"],
+            "not_run key set drifted: {nr_keys:?}"
+        );
+
+        let out = &value["outputs"][0];
+        let out_keys: Vec<&str> = out
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            out_keys,
+            ["path", "sha256"],
+            "output key set drifted: {out_keys:?}"
+        );
+    }
+
+    /// `tree_clean` is required: a payload missing it must fail to parse
+    /// rather than silently defaulting to `false` (review R5-F2 — a
+    /// `#[serde(default)]` on it passed the whole suite).
+    #[test]
+    fn test_missing_tree_clean_is_rejected() {
+        let json = serde_json::to_string(&sample_verify_record())
+            .unwrap()
+            .replace("\"tree_clean\":true,", "");
+        let err = serde_json::from_str::<VerifyRecord>(&json)
+            .expect_err("payload without tree_clean must not parse");
+        assert!(
+            err.to_string().contains("tree_clean"),
+            "error should name the missing field: {err}"
+        );
+    }
+
     /// Old log lines (written before the verify field existed) must keep
     /// parsing, with `verify == None` — new binary reads old lines.
     #[test]
