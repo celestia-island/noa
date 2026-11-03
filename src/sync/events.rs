@@ -375,6 +375,7 @@ impl EventSyncEngine {
                 // attempt recovered; with an unconditional stamp it never could.
                 remote_seq: counts.then_some(event.seq),
                 remote_sender: if counts { event.sender.clone() } else { None },
+                verify: None,
                 ts: event.ts,
                 message: event.message.clone(),
             };
@@ -451,6 +452,7 @@ mod tests {
                 snapshot_id: None,
                 remote_seq: None,
                 remote_sender: None,
+                verify: None,
                 ts: 100,
                 message: None,
             })
@@ -714,6 +716,7 @@ mod tests {
                 snapshot_id: None,
                 remote_seq: None,
                 remote_sender: None,
+                verify: None,
                 ts: 100,
                 message: None,
             })

@@ -436,6 +436,7 @@ mod tests {
             snapshot_id: None,
             remote_seq: None,
             remote_sender: None,
+            verify: None,
             ts,
             message: None,
         }
@@ -716,6 +717,7 @@ mod tests {
             snapshot_id: Some("noa_snap1".to_string()),
             remote_seq: Some(77),
             remote_sender: Some("peer-a".to_string()),
+            verify: None,
             ts: 12345,
             message: Some("merge conflict resolved".to_string()),
         };
@@ -794,6 +796,7 @@ mod tests {
                 snapshot_id: Some(format!("noa_snapshot_{}", i)),
                 remote_seq: None,
                 remote_sender: None,
+                verify: None,
                 ts: i * 1000,
                 message: Some(format!(
                     "commit message number {} that is fairly long to increase file size",
