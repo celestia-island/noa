@@ -31,7 +31,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        toolchain: [stable, nightly]
+        # One full suite per PR, on stable only: the self-hosted farm has a
+        # handful of worker slots and PR jobs already queue for 38-77 minutes,
+        # so a second full `cargo test` leg on nightly spends a slot without
+        # adding signal. Nightly keeps the static checks (clippy.yml, fmt.yml).
+        toolchain: [stable]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
