@@ -2013,9 +2013,9 @@ mod tests {
                 "/repos/{owner}/{repo}/git/refs/tags",
                 rget(|| async {
                     axum::Json(serde_json::json!([
+                        { "ref": "refs/tags/v-broken", "object": { "sha": "missing1", "type": "commit" } },
                         { "ref": "refs/tags/v-light", "object": { "sha": "commit1", "type": "commit" } },
-                        { "ref": "refs/tags/v-annot", "object": { "sha": "tagobj1", "type": "tag" } },
-                        { "ref": "refs/tags/v-broken", "object": { "sha": "missing1", "type": "commit" } }
+                        { "ref": "refs/tags/v-annot", "object": { "sha": "tagobj1", "type": "tag" } }
                     ]))
                 }),
             )
