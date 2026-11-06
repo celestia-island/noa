@@ -289,8 +289,28 @@ pub async fn handle_git_http(State(state): State<AppState>, req: Request) -> Res
         }
     };
     // Smart HTTP: POST bodies go to the backend's stdin; GET has no body.
+    // Git compresses larger request bodies (`Content-Encoding: gzip` — seen
+    // on the real noa.git fetch and the reason a small-repo e2e was green
+    // while real clones 500'd): decompress before handing to upload-pack.
     let body = if method == "POST" {
+        let is_gzip = req
+            .headers()
+            .get(header::CONTENT_ENCODING)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.eq_ignore_ascii_case("gzip"));
         match axum::body::to_bytes(req.into_body(), 50 * 1024 * 1024).await {
+            Ok(b) if is_gzip => {
+                let mut decoder = flate2::read::GzDecoder::new(&b[..]);
+                use std::io::Read;
+                let mut plain = Vec::with_capacity(b.len() * 4);
+                if let Err(e) = decoder.read_to_end(&mut plain) {
+                    return json_error_response(
+                        StatusCode::BAD_REQUEST,
+                        format!("gzip request body decode failed: {e}"),
+                    );
+                }
+                Some(plain)
+            }
             Ok(b) => Some(b.to_vec()),
             Err(_) => return json_error_response(StatusCode::BAD_REQUEST, "body read failed"),
         }

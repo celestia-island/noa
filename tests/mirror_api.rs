@@ -334,6 +334,79 @@ async fn test_git_http_clone_end_to_end() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_git_http_accepts_gzip_body() {
+    // Real git clients compress larger POST bodies (Content-Encoding: gzip
+    // seen on a real noa.git fetch) — the handler must decompress before
+    // handing the body to upload-pack (W2a2).
+    let f = make_fixture().await;
+    let create = serde_json::json!({
+        "name": "pilot",
+        "remote_url": f.origin_url,
+        "github_slug": "celestia-island/noa",
+        "branches": ["master"],
+        "enabled": true,
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/jobs",
+            Some(create.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/run",
+            Some(serde_json::json!({ "job": "pilot" }).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let job = wait_job_ok(&f.app, "pilot").await;
+    assert_eq!(job["last_status"], "ok", "{job}");
+
+    // A gzip-compressed fetch body (v0 shape, small enough to handcraft).
+    use base64::Engine;
+    let creds =
+        base64::engine::general_purpose::STANDARD.encode(format!("mirror:{TEST_API_TOKEN}"));
+    let sha = "0000000000000000000000000000000000000000";
+    let body_text = format!("want {sha} multi_ack_detailed side-band-64k\n");
+    let mut body = format!("{:04x}", body_text.len() + 4).into_bytes();
+    body.extend_from_slice(body_text.as_bytes());
+    body.extend_from_slice(b"0000");
+    body.extend_from_slice(b"0009done\n");
+
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    use std::io::Write as _;
+    gz.write_all(&body).unwrap();
+    let gz_body = gz.finish().unwrap();
+
+    let fetch = Request::builder()
+        .method(Method::POST)
+        .uri("/git/pilot/git-upload-pack")
+        .header("authorization", format!("Basic {creds}"))
+        .header("content-type", "application/x-git-upload-pack-request")
+        .header("content-encoding", "gzip")
+        .body(Body::from(gz_body))
+        .unwrap();
+    let resp = f.app.clone().oneshot(fetch).await.unwrap();
+    // An all-zero want is rejected by upload-pack — the point is that the
+    // request REACHES upload-pack (400/200/403-class, not 500 crash from
+    // feeding gzip bytes as pkt-line).
+    assert_ne!(
+        resp.status(),
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "gzip body must be decompressed before upload-pack"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_git_http_auth_and_404() {
     let f = make_fixture().await;
 
