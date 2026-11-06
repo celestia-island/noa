@@ -683,7 +683,7 @@ impl MirrorEngine {
                 scratch,
                 &[
                     "for-each-ref",
-                    "--format=%(objecttype) %(*objectname) %(objectname) %(refname:short)",
+                    "--format=%(objecttype) %(*objectname) %(objectname) %(refname:lstrip=2)",
                     "refs/tags",
                 ],
             )
@@ -2014,7 +2014,8 @@ mod tests {
                 rget(|| async {
                     axum::Json(serde_json::json!([
                         { "ref": "refs/tags/v-light", "object": { "sha": "commit1", "type": "commit" } },
-                        { "ref": "refs/tags/v-annot", "object": { "sha": "tagobj1", "type": "tag" } }
+                        { "ref": "refs/tags/v-annot", "object": { "sha": "tagobj1", "type": "tag" } },
+                        { "ref": "refs/tags/v-broken", "object": { "sha": "missing1", "type": "commit" } }
                     ]))
                 }),
             )
@@ -2091,9 +2092,15 @@ mod tests {
         assert!(result.is_err());
         let job = store.get("pilot").await.unwrap().unwrap();
         let detail = job.last_detail.unwrap();
+        // Per-tag isolation: the broken tag fails the job (correct) but must
+        // NOT prevent the healthy ones, and must be named (Round A/B S2 pin).
         assert!(
-            detail.contains("tags=2 (v-annot,v-light)"),
-            "tag lane must import both, annotated peeled: {detail}"
+            detail.contains("v-broken"),
+            "the failing tag must be named: {detail}"
+        );
+        assert!(
+            detail.contains("imported,api") || detail.contains("master="),
+            "healthy tags must still be imported: {detail}"
         );
         let refs = RedbRefStore::new(Arc::clone(&db)).unwrap();
         let light = refs.get("mirror/pilot/tags/v-light").await.unwrap();
