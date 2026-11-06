@@ -124,6 +124,10 @@ impl MirrorJob {
                 || b.contains(']')
                 || b.contains("__")
                 || b.ends_with(".lock")
+                // `tags/…` collides with the tag ref namespace
+                // mirror/<job>/tags/<tag> (Round A S3).
+                || b == "tags"
+                || b.starts_with("tags/")
                 || b.chars().any(|c| c.is_ascii_control())
                 || !seen.insert(b.as_str())
             {

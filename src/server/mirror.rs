@@ -524,13 +524,13 @@ impl MirrorEngine {
             .ok_or_else(|| anyhow::anyhow!("branch '{branch}' missing on remote (api) — a 404 also means the token lacks access on private repos"))?;
         let ref_name = format!("mirror/{}/{}", job.name, branch);
         let ws_name = format!("mirror.{}.{}", job.name, branch.replace('/', "__"));
-        let snap = self
+        let (snap, changed) = self
             .import_api_commit(&client, job, &commit_sha, &ref_name, &ws_name, branch)
             .await?;
         Ok(BranchOutcome {
             branch: branch.to_string(),
             snapshot: snap,
-            changed: true,
+            changed,
             commit_oid: commit_sha,
         })
     }
@@ -558,7 +558,7 @@ impl MirrorEngine {
         ref_name: &str,
         ws_name: &str,
         label: &str,
-    ) -> Result<SnapshotId> {
+    ) -> Result<(SnapshotId, bool)> {
         let (tree_sha, author, message, seconds) = client
             .get_commit_facts(&job.github_slug, commit_sha)
             .await?;
@@ -670,7 +670,8 @@ impl MirrorEngine {
         )
         .await?
         .ok_or_else(|| anyhow::anyhow!("api import produced no snapshot for '{label}'"))?;
-        Ok(snap)
+        let changed = prev.as_ref() != Some(&snap);
+        Ok((snap, changed))
     }
 
     /// Replicates every remote tag via the git lane. Annotated tags are
@@ -688,6 +689,7 @@ impl MirrorEngine {
             )
             .await?;
         let mut imported = Vec::new();
+        let mut tag_failures: Vec<String> = Vec::new();
         for line in out.lines() {
             let mut parts = line.splitn(4, ' ');
             let (Some(objtype), Some(peeled), Some(objname), Some(name)) =
@@ -703,19 +705,30 @@ impl MirrorEngine {
             } else {
                 objname.to_string()
             };
-            let snap = self
+            // Per-tag isolation: one odd tag (pointing at a blob/tree, or a
+            // nested tag) must not stop the rest, and the error must name it
+            // (Round A S2 — the branch lane already behaves this way).
+            match self
                 .import_git_commit_at(
                     scratch,
-                    job,
                     &commit_oid,
                     &format!("mirror/{}/tags/{}", job.name, name),
                     &format!("mirror.{}.tag.{}", job.name, name.replace('/', "__")),
                 )
-                .await?;
-            let _ = snap;
-            imported.push(name.to_string());
+                .await
+            {
+                Ok(_) => imported.push(name.to_string()),
+                Err(e) => tag_failures.push(format!("{name}: {e:#}")),
+            }
         }
         imported.sort();
+        if !tag_failures.is_empty() {
+            anyhow::bail!(
+                "{} tag(s) failed: {}",
+                tag_failures.len(),
+                tag_failures.join("; ")
+            );
+        }
         Ok(imported)
     }
 
@@ -725,19 +738,31 @@ impl MirrorEngine {
         let client = self.api_client()?;
         let tags = client.list_tags(&job.github_slug).await?;
         let mut imported = Vec::new();
+        let mut tag_failures: Vec<String> = Vec::new();
         for (name, commit_oid) in tags {
-            self.import_api_commit(
-                &client,
-                job,
-                &commit_oid,
-                &format!("mirror/{}/tags/{}", job.name, name),
-                &format!("mirror.{}.tag.{}", job.name, name.replace('/', "__")),
-                &format!("tag {name}"),
-            )
-            .await?;
-            imported.push(name);
+            match self
+                .import_api_commit(
+                    &client,
+                    job,
+                    &commit_oid,
+                    &format!("mirror/{}/tags/{}", job.name, name),
+                    &format!("mirror.{}.tag.{}", job.name, name.replace('/', "__")),
+                    &format!("tag {name}"),
+                )
+                .await
+            {
+                Ok(_) => imported.push(name),
+                Err(e) => tag_failures.push(format!("{name}: {e:#}")),
+            }
         }
         imported.sort();
+        if !tag_failures.is_empty() {
+            anyhow::bail!(
+                "{} tag(s) failed: {}",
+                tag_failures.len(),
+                tag_failures.join("; ")
+            );
+        }
         Ok(imported)
     }
 
@@ -745,12 +770,10 @@ impl MirrorEngine {
     async fn import_git_commit_at(
         &self,
         scratch: &Path,
-        job: &MirrorJob,
         commit_oid: &str,
         ref_name: &str,
         ws_name: &str,
     ) -> Result<SnapshotId> {
-        let _ = job;
         let ref_store = RedbRefStore::new(Arc::clone(&self.db))?;
         let prev = ref_store.get(ref_name).await?;
         let opts = ImportOptions {
@@ -1191,7 +1214,10 @@ mod tests {
     }
 
     fn run(cwd: &Path, args: &[&str]) {
+        // Global -c flags MUST precede the subcommand; ambient signing
+        // config must not break fixtures (Round A S3).
         let out = Command::new("git")
+            .args(["-c", "tag.gpgSign=false", "-c", "commit.gpgsign=false"])
             .args(args)
             .current_dir(cwd)
             .env("GIT_TERMINAL_PROMPT", "0")
@@ -1772,6 +1798,19 @@ mod tests {
             blob_gets.load(std::sync::atomic::Ordering::SeqCst),
             first_wave_gets,
             "unchanged blobs must not be re-fetched"
+        );
+        // Round A S2 pin: a steady-state rerun must report "unchanged", not
+        // keep claiming "imported" forever (the refactor hardcoded true).
+        let detail = store
+            .get("pilot")
+            .await
+            .unwrap()
+            .unwrap()
+            .last_detail
+            .unwrap();
+        assert!(
+            detail.contains("(unchanged,api)"),
+            "steady-state api rerun must report unchanged: {detail}"
         );
     }
 
