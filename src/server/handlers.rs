@@ -108,7 +108,7 @@ pub struct PaginationParams {
     pub offset: usize,
 }
 
-fn default_limit() -> usize {
+pub(crate) fn default_limit() -> usize {
     100
 }
 

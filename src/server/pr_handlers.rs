@@ -18,7 +18,7 @@ use crate::{
     },
 };
 
-use super::handlers::{AppState, PaginationParams};
+use super::handlers::AppState;
 
 #[derive(serde::Deserialize)]
 pub struct CreatePrBody {
@@ -117,10 +117,19 @@ pub async fn create_pr(
     Ok((StatusCode::CREATED, Json(record)))
 }
 
+/// List filters + pagination for the PR list routes.
+///
+/// Pagination fields are INLINED rather than `#[serde(flatten)]`-ing
+/// `PaginationParams`: `serde_urlencoded` (axum's `Query`) cannot
+/// deserialize a flattened struct, so any `?limit=`/`?offset=` request was
+/// answered with 400 instead of being honoured (found while pinning the
+/// repo-scoped route; the flat route had the same latent bug).
 #[derive(serde::Deserialize)]
 pub struct ListPrsParams {
-    #[serde(flatten)]
-    pub pagination: PaginationParams,
+    #[serde(default = "super::handlers::default_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub offset: usize,
     pub repo: Option<String>,
     pub base: Option<String>,
     pub state: Option<String>,
@@ -133,7 +142,7 @@ pub async fn list_repo_prs(
     Path(name): Path<String>,
     Query(params): Query<ListPrsParams>,
 ) -> ApiResult<Vec<PrRecord>> {
-    if params.pagination.limit == 0 || params.pagination.limit > 1000 {
+    if params.limit == 0 || params.limit > 1000 {
         return Err(bad_request("limit must be between 1 and 1000"));
     }
     // 404 when the repo isn't in the catalog (consistent with GET repos/{name}).
@@ -146,8 +155,8 @@ pub async fn list_repo_prs(
         .list(Some(&name), params.base.as_deref(), params.state.as_deref())
         .await
         .map_err(err_json)?;
-    let start = params.pagination.offset.min(records.len());
-    let end = (start + params.pagination.limit).min(records.len());
+    let start = params.offset.min(records.len());
+    let end = (start + params.limit).min(records.len());
     records = records.into_iter().skip(start).take(end - start).collect();
     Ok(Json(records))
 }
@@ -156,7 +165,7 @@ pub async fn list_prs(
     State(state): State<AppState>,
     Query(params): Query<ListPrsParams>,
 ) -> ApiResult<Vec<PrRecord>> {
-    if params.pagination.limit == 0 || params.pagination.limit > 1000 {
+    if params.limit == 0 || params.limit > 1000 {
         return Err(bad_request("limit must be between 1 and 1000"));
     }
     let store = pr_store(&state).map_err(err_json)?;
@@ -168,8 +177,8 @@ pub async fn list_prs(
         )
         .await
         .map_err(err_json)?;
-    let start = params.pagination.offset.min(records.len());
-    let end = (start + params.pagination.limit).min(records.len());
+    let start = params.offset.min(records.len());
+    let end = (start + params.limit).min(records.len());
     records = records.into_iter().skip(start).take(end - start).collect();
     Ok(Json(records))
 }

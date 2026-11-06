@@ -437,7 +437,7 @@ async fn test_repo_scoped_pr_routes() {
     assert_eq!(prs.as_array().unwrap().len(), 1);
     assert_eq!(prs[0]["repo"], "pilot");
 
-    // Pagination honoured: limit=0 is rejected; offset skips the pilot PR.
+    // Pagination honoured: limit=0 is rejected.
     let resp = f
         .app
         .clone()
@@ -445,6 +445,67 @@ async fn test_repo_scoped_pr_routes() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // A SECOND pilot PR so skip/take is actually regress-locked (with only
+    // one PR a dropped limit/offset would look identical).
+    let create3 = serde_json::json!({
+        "title": "second pilot pr",
+        "body": "context",
+        "base": "mirror.pilot.master",
+        "head": "mirror.pilot.master",
+        "author": "tester",
+        "repo": "pilot",
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::POST, "/api/v1/prs", Some(create3.to_string())))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // limit=1 → exactly one record (a dropped take would return 2).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/pilot/prs?limit=1", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let one = body_json(resp).await;
+    assert_eq!(one.as_array().unwrap().len(), 1);
+
+    // offset=1 → one record, and a DIFFERENT one than limit=1 returned
+    // (a dropped skip would return the same first record).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::GET,
+            "/api/v1/repos/pilot/prs?limit=1&offset=1",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let page2 = body_json(resp).await;
+    assert_eq!(page2.as_array().unwrap().len(), 1);
+    assert_ne!(
+        one[0]["number"], page2[0]["number"],
+        "offset must skip the first record"
+    );
+
+    // Flat route honours pagination too (same latent serde_urlencoded bug
+    // would have 400'd any ?limit= request).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/prs?limit=1", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let flat = body_json(resp).await;
+    assert_eq!(flat.as_array().unwrap().len(), 1, "flat limit honoured");
 
     // Ghost repo → 404.
     let resp = f
