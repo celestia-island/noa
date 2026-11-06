@@ -105,7 +105,12 @@ impl GitDataClient {
         body: Option<serde_json::Value>,
     ) -> Result<(reqwest::StatusCode, String)> {
         let url = format!("{}{}", self.base_url, path);
-        let mut req = self.client.request(method, &url).bearer_auth(&self.token);
+        let mut req = self.client.request(method, &url);
+        // Empty token = anonymous (import lane for public repos; GitHub's
+        // 60 req/h anonymous budget applies — production wires a read PAT).
+        if !self.token.is_empty() {
+            req = req.bearer_auth(&self.token);
+        }
         if let Some(b) = body {
             req = req.json(&b);
         }
@@ -190,7 +195,7 @@ impl GitDataClient {
         let (status, text) = self
             .request(
                 reqwest::Method::GET,
-                &format!("/repos/{slug}/git/ref/{ref_path}"),
+                &format!("/repos/{slug}/git/ref/{}", encode_ref_path(ref_path)),
                 None,
             )
             .await?;
@@ -228,6 +233,84 @@ impl GitDataClient {
         let parsed: CommitResponse = serde_json::from_str(&text)
             .map_err(|e| anyhow::anyhow!("git-data get commit bad response: {e}"))?;
         Ok(parsed.tree.sha)
+    }
+
+    /// Commit metadata for the import lane: `(tree_sha, author, message,
+    /// unix_seconds)`.
+    pub async fn get_commit_facts(
+        &self,
+        slug: &str,
+        commit_sha: &str,
+    ) -> Result<(String, String, String, u64)> {
+        let (status, text) = self
+            .request(
+                reqwest::Method::GET,
+                &format!("/repos/{slug}/git/commits/{commit_sha}"),
+                None,
+            )
+            .await?;
+        if !status.is_success() {
+            anyhow::bail!("git-data get commit failed ({status}): {}", truncate(&text));
+        }
+        #[derive(Deserialize)]
+        struct Facts {
+            #[serde(default)]
+            author: Option<NameOnly>,
+            #[serde(default)]
+            committer: Option<DateOnly>,
+            #[serde(default)]
+            message: String,
+            tree: TreeOnly,
+        }
+        #[derive(Deserialize)]
+        struct NameOnly {
+            name: String,
+        }
+        #[derive(Deserialize)]
+        struct DateOnly {
+            date: String,
+        }
+        #[derive(Deserialize)]
+        struct TreeOnly {
+            sha: String,
+        }
+        let parsed: Facts = serde_json::from_str(&text)
+            .map_err(|e| anyhow::anyhow!("git-data get commit bad response: {e}"))?;
+        let author = parsed.author.map(|a| a.name).unwrap_or_default();
+        let seconds = parsed
+            .committer
+            .and_then(|c| chrono_ish_parse(&c.date))
+            .unwrap_or(0);
+        Ok((parsed.tree.sha, author, parsed.message, seconds))
+    }
+
+    /// Blob content by sha; handles both GitHub encodings.
+    pub async fn get_blob(&self, slug: &str, file_sha: &str) -> Result<Vec<u8>> {
+        let (status, text) = self
+            .request(
+                reqwest::Method::GET,
+                &format!("/repos/{slug}/git/blobs/{file_sha}"),
+                None,
+            )
+            .await?;
+        if !status.is_success() {
+            anyhow::bail!("git-data get blob failed ({status}): {}", truncate(&text));
+        }
+        #[derive(Deserialize)]
+        struct BlobResponse {
+            content: String,
+            encoding: String,
+        }
+        let parsed: BlobResponse = serde_json::from_str(&text)
+            .map_err(|e| anyhow::anyhow!("git-data get blob bad response: {e}"))?;
+        if parsed.encoding == "base64" {
+            use base64::Engine;
+            Ok(base64::engine::general_purpose::STANDARD
+                .decode(parsed.content.replace('\n', ""))
+                .map_err(|e| anyhow::anyhow!("git-data blob base64 decode failed: {e}"))?)
+        } else {
+            Ok(parsed.content.into_bytes())
+        }
     }
 
     /// Flat `(path, mode, sha)` entries of a tree (recursive). `None` when
@@ -271,8 +354,15 @@ impl GitDataClient {
                         .tree
                         .into_iter()
                         .filter(|e| e.kind != "tree")
-                        .filter_map(|e| e.sha.map(|sha| (e.path, e.mode, sha)))
-                        .collect(),
+                        .map(|e| match e.sha {
+                            Some(sha) => Ok((e.path, e.mode, sha)),
+                            None => Err(anyhow::anyhow!(
+                                "git-data tree entry without sha: {} ({})",
+                                e.path,
+                                e.kind
+                            )),
+                        })
+                        .collect::<Result<Vec<_>>>()?,
                 ))
             }
             reqwest::StatusCode::NOT_FOUND => Ok(None),
@@ -286,7 +376,7 @@ impl GitDataClient {
         let result = self
             .request(
                 reqwest::Method::PATCH,
-                &format!("/repos/{slug}/git/refs/{ref_path}"),
+                &format!("/repos/{slug}/git/refs/{}", encode_ref_path(ref_path)),
                 Some(patch),
             )
             .await;
@@ -317,6 +407,32 @@ impl GitDataClient {
             Err(e) => anyhow::bail!("git-data update ref request failed: {e}"),
         }
     }
+}
+
+/// ISO-8601 → unix seconds. GitHub's `/git/commits` returns the commit's
+/// ORIGINAL timezone offset (e.g. `-08:00`), so the offset must be honoured
+/// — the git lane's gix `time().seconds` is a true epoch, and a lane switch
+/// must not shift the snapshot id (Round A S2).
+fn chrono_ish_parse(s: &str) -> Option<u64> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.timestamp().max(0) as u64)
+}
+
+/// Percent-encodes a git ref path for use in a URL path, keeping `/` as the
+/// segment separator. Without this a branch like `a#b` would be truncated
+/// at the fragment marker and the lane would silently import branch `a`
+/// (Round B S2); `%` must be encoded too or encoded sequences double-decode.
+fn encode_ref_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for b in path.bytes() {
+        match b {
+            b'/' | b'-' | b'.' | b'_' | b'~' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 fn truncate(s: &str) -> String {
@@ -441,6 +557,78 @@ mod tests {
             .unwrap();
         assert_eq!(commit, "c0mm171");
     }
+    #[test]
+    fn test_encode_ref_path() {
+        // '#'/'%' are legal git ref chars but URL-hazardous (Round B S2).
+        assert_eq!(encode_ref_path("heads/master"), "heads/master");
+        assert_eq!(
+            encode_ref_path("heads/feature/nested"),
+            "heads/feature/nested"
+        );
+        assert_eq!(encode_ref_path("heads/a#b"), "heads/a%23b");
+        assert_eq!(encode_ref_path("heads/a%b"), "heads/a%25b");
+        assert_eq!(encode_ref_path("heads/v1.0_rc-1~x"), "heads/v1.0_rc-1~x");
+    }
+
+    #[tokio::test]
+    async fn test_get_ref_encodes_hazardous_branch_in_url() {
+        // Round E: the encoder must be WIRED, not just available — this
+        // family already regressed once inside this PR. Assert the raw
+        // request path carries the percent-encoded segment.
+        use std::sync::Mutex;
+        let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen_ref = Arc::clone(&seen);
+        let app = Router::new().route(
+            "/repos/{owner}/{repo}/git/ref/{*rest}",
+            axum::routing::get(move |uri: axum::http::Uri| {
+                let seen = Arc::clone(&seen_ref);
+                async move {
+                    seen.lock().unwrap().push(uri.path().to_string());
+                    axum::Json(serde_json::json!({ "object": { "sha": "abc" } }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = GitDataClient::new(format!("http://{addr}"), "tok").unwrap();
+        let sha = client.get_ref("o/r", "heads/a#b").await.unwrap();
+        assert_eq!(sha.as_deref(), Some("abc"));
+        let paths = seen.lock().unwrap();
+        assert_eq!(paths.len(), 1);
+        assert!(
+            paths[0].ends_with("heads/a%23b"),
+            "raw request path must be percent-encoded: {paths:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tree_entry_without_sha_is_loud() {
+        // A listing row without `sha` would silently drop a file from the
+        // imported tree (the API lane has no tree-level net) — Round B M7.
+        let app = Router::new().route(
+            "/repos/{owner}/{repo}/git/trees/bad",
+            axum::routing::get(|| async {
+                axum::Json(serde_json::json!({
+                    "tree": [
+                        { "path": "ok.txt", "mode": "100644", "sha": "aa", "type": "blob" },
+                        { "path": "ghost.txt", "mode": "100644", "type": "blob" }
+                    ],
+                    "truncated": false
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = GitDataClient::new(format!("http://{addr}"), "tok").unwrap();
+        let err = client.get_tree_flat("o/r", "bad").await.unwrap_err();
+        assert!(
+            format!("{err}").contains("ghost.txt"),
+            "error must name the offending entry: {err}"
+        );
+    }
+
     #[tokio::test]
     async fn test_ref_missing_then_created() {
         let app = Router::new()

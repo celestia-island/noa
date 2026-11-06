@@ -9,7 +9,10 @@ pub use export::{
     clone_git_to_noa, detect_lfs_available, export_noa_to_git, has_lfs_tracking, lfs_install,
     lfs_pull, lfs_push_all,
 };
-pub use import::{import_git_commit, import_git_to_noa, is_lfs_pointer, ImportOptions};
+pub use import::{
+    import_git_commit, import_git_to_noa, is_lfs_pointer, store_imported_entries, ImportOptions,
+    ImportedBody, ImportedEntry, StoreOptions,
+};
 
 use crate::{
     error::Result,
