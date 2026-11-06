@@ -195,7 +195,7 @@ impl GitDataClient {
         let (status, text) = self
             .request(
                 reqwest::Method::GET,
-                &format!("/repos/{slug}/git/ref/{ref_path}"),
+                &format!("/repos/{slug}/git/ref/{}", encode_ref_path(ref_path)),
                 None,
             )
             .await?;
@@ -376,7 +376,7 @@ impl GitDataClient {
         let result = self
             .request(
                 reqwest::Method::PATCH,
-                &format!("/repos/{slug}/git/refs/{ref_path}"),
+                &format!("/repos/{slug}/git/refs/{}", encode_ref_path(ref_path)),
                 Some(patch),
             )
             .await;
@@ -417,6 +417,22 @@ fn chrono_ish_parse(s: &str) -> Option<u64> {
     chrono::DateTime::parse_from_rfc3339(s)
         .ok()
         .map(|dt| dt.timestamp().max(0) as u64)
+}
+
+/// Percent-encodes a git ref path for use in a URL path, keeping `/` as the
+/// segment separator. Without this a branch like `a#b` would be truncated
+/// at the fragment marker and the lane would silently import branch `a`
+/// (Round B S2); `%` must be encoded too or encoded sequences double-decode.
+fn encode_ref_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for b in path.bytes() {
+        match b {
+            b'/' | b'-' | b'.' | b'_' | b'~' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 fn truncate(s: &str) -> String {
@@ -541,6 +557,19 @@ mod tests {
             .unwrap();
         assert_eq!(commit, "c0mm171");
     }
+    #[test]
+    fn test_encode_ref_path() {
+        // '#'/'%' are legal git ref chars but URL-hazardous (Round B S2).
+        assert_eq!(encode_ref_path("heads/master"), "heads/master");
+        assert_eq!(
+            encode_ref_path("heads/feature/nested"),
+            "heads/feature/nested"
+        );
+        assert_eq!(encode_ref_path("heads/a#b"), "heads/a%23b");
+        assert_eq!(encode_ref_path("heads/a%b"), "heads/a%25b");
+        assert_eq!(encode_ref_path("heads/v1.0_rc-1~x"), "heads/v1.0_rc-1~x");
+    }
+
     #[tokio::test]
     async fn test_tree_entry_without_sha_is_loud() {
         // A listing row without `sha` would silently drop a file from the

@@ -1595,6 +1595,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_broken_scratch_is_reset_on_transport_failure() {
+        // Round C pin: a half-written clone must not pin the job to the API
+        // lane forever — it is dropped so the next wave can re-clone.
+        let dir = tempfile::tempdir().unwrap();
+        let db_dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            redb::Database::builder()
+                .create(db_dir.path().join("m.redb"))
+                .unwrap(),
+        );
+        let (base, _gets) = api_import_mock(false).await;
+        let scratch_root = dir.path().join("scratch");
+        let broken = scratch_root.join("pilot.git");
+        std::fs::create_dir_all(broken.join("objects")).unwrap();
+        std::fs::write(broken.join("HEAD"), b"not a git dir\n").unwrap();
+
+        let cfg = MirrorConfig {
+            interval_secs: 900,
+            scratch_dir: scratch_root.clone(),
+            token_env: String::new(),
+            github_api_base: base,
+        };
+        let store = MirrorJobStore::new(Arc::clone(&db)).unwrap();
+        store
+            .upsert(MirrorJob {
+                name: "pilot".into(),
+                remote_url: "file:///nonexistent-noa-mirror-fixture".into(),
+                github_slug: "celestia-island/noa".into(),
+                branches: vec!["master".into()],
+                canary_push: false,
+                enabled: true,
+                last_run_us: None,
+                last_status: None,
+                last_detail: None,
+            })
+            .await
+            .unwrap();
+        let engine = MirrorEngine::new(Arc::clone(&db), cfg);
+        engine.run_job("pilot").await.unwrap();
+        assert!(
+            !broken.exists(),
+            "broken scratch must be removed so a later wave can re-clone"
+        );
+    }
+
+    #[tokio::test]
     async fn test_api_import_rejects_corrupt_blob() {
         let dir = tempfile::tempdir().unwrap();
         let db_dir = tempfile::tempdir().unwrap();
