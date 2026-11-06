@@ -185,6 +185,7 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/repos/{name}",
             get(repo_registry::get_repo).delete(repo_registry::delete_repo),
         )
+        .route("/api/v1/repos/{name}/prs", get(pr_handlers::list_repo_prs))
         .route(
             "/api/v1/mirror/jobs",
             get(mirror::list_jobs).post(mirror::upsert_job),

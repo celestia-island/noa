@@ -340,6 +340,535 @@ async fn test_repo_catalog_routes() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_repo_scoped_pr_routes() {
+    let f = make_fixture().await;
+
+    // Register the repo first.
+    let register = serde_json::json!({"name": "pilot"});
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/repos",
+            Some(register.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // base/head workspaces must exist (create_pr validates them) — use the
+    // mirror-imported workspaces (a job run materialises mirror.pilot.master
+    // and friends).
+    let job_create = serde_json::json!({
+        "name": "pilot",
+        "remote_url": f.origin_url,
+        "github_slug": "celestia-island/noa",
+        "branches": ["master"],
+        "enabled": true,
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/jobs",
+            Some(job_create.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/run",
+            Some(serde_json::json!({ "job": "pilot" }).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let job = wait_job_ok(&f.app, "pilot").await;
+    assert_eq!(job["last_status"], "ok", "{job}");
+
+    // Create a PR with repo="pilot" via the flat API.
+    let create = serde_json::json!({
+        "title": "pilot pr",
+        "body": "context",
+        "base": "mirror.pilot.master",
+        "head": "mirror.pilot.master",
+        "author": "tester",
+        "repo": "pilot",
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::POST, "/api/v1/prs", Some(create.to_string())))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED, "{:?}", resp);
+
+    // A second PR in the default repo must NOT leak into the pilot scope.
+    let create2 = serde_json::json!({
+        "title": "default repo pr",
+        "body": "context",
+        "base": "mirror.pilot.master",
+        "head": "mirror.pilot.master",
+        "author": "tester",
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::POST, "/api/v1/prs", Some(create2.to_string())))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Repo-scoped list shows exactly the pilot PR (scoping works).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/pilot/prs", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let prs = body_json(resp).await;
+    assert_eq!(prs.as_array().unwrap().len(), 1);
+    assert_eq!(prs[0]["repo"], "pilot");
+
+    // Pagination honoured: limit=0 is rejected.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/pilot/prs?limit=0", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // Upper bound is enforced too. (This kills bound-removal/raise mutants;
+    // a `>` vs `>=` flip survives both this and the 1001 case — the exact
+    // boundary is pinned by the 1000-is-allowed assert below.)
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/pilot/prs?limit=1001", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // The 1000 boundary is inclusive (pairs with the `>` vs `>=` note above).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/pilot/prs?limit=1000", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "limit=1000 must be allowed");
+
+    // A contradicting ?repo= is a client bug → 400; the equal value is fine.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/pilot/prs?repo=other", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/pilot/prs?repo=pilot", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let same = body_json(resp).await;
+    assert_eq!(
+        same.as_array().unwrap().len(),
+        1,
+        "the matching ?repo= must still answer the scoped rows"
+    );
+    assert_eq!(same[0]["repo"], "pilot");
+
+    // Deleting the catalog row is refused while open PRs exist (the tickets
+    // stay merge-able regardless; the delete would cost them addressability
+    // and let a later re-registration adopt them).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::DELETE, "/api/v1/repos/pilot", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    // ...and the documented remedy works end to end: close every open PR of
+    // a repo, then DELETE it → 204. This pins the `state == "open"` filter
+    // explicitly — with the filter dropped, a repo holding only CLOSED PRs
+    // would 409 forever and the README's "close them first" would be a lie.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/repos",
+            Some(serde_json::json!({"name": "remedy"}).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let remedy_pr = serde_json::json!({
+        "title": "remedy pr",
+        "body": "context",
+        "base": "mirror.pilot.master",
+        "head": "mirror.pilot.master",
+        "author": "tester",
+        "repo": "remedy",
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/prs",
+            Some(remedy_pr.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let remedy_number = body_json(resp).await["number"].as_u64().unwrap();
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::DELETE, "/api/v1/repos/remedy", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT, "open PR blocks delete");
+    let close_path = format!("/api/v1/prs/{remedy_number}/close");
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::POST, &close_path, None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "close the blocking PR");
+    let closed = body_json(resp).await;
+    assert_eq!(closed["state"], "closed", "close must flip the state");
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::DELETE, "/api/v1/repos/remedy", None))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::NO_CONTENT,
+        "closed PRs must not block the delete"
+    );
+
+    // ...but the allow path is real: a repo with no open PRs deletes (204),
+    // otherwise an "always 409" guard would pass the suite.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/repos",
+            Some(serde_json::json!({"name": "scratch"}).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::DELETE, "/api/v1/repos/scratch", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/scratch", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // Job deletion never blocks, but it must KEEP the catalog row while open
+    // PRs exist (otherwise the guarded /repos delete is bypassable and the
+    // tickets lose their scoped view). Pinned here because the job route is
+    // the sibling write path.
+    let job_with_pr = serde_json::json!({
+        "name": "keeper",
+        "remote_url": f.origin_url,
+        "github_slug": "celestia-island/noa",
+        "branches": ["master"],
+        "enabled": true,
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/jobs",
+            Some(job_with_pr.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let keeper_pr = serde_json::json!({
+        "title": "keeper pr",
+        "body": "context",
+        "base": "mirror.pilot.master",
+        "head": "mirror.pilot.master",
+        "author": "tester",
+        "repo": "keeper",
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/prs",
+            Some(keeper_pr.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    // The row exists (auto-registered by the job upsert) and the job delete
+    // succeeds — but the row survives because of the open PR.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::DELETE, "/api/v1/mirror/jobs/keeper", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/keeper", None))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "job delete must keep the catalog row while open PRs exist"
+    );
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/keeper/prs", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let keeper_list = body_json(resp).await;
+    assert_eq!(keeper_list.as_array().unwrap().len(), 1);
+
+    // Existence beats the PR guard: an orphan open PR for an unregistered
+    // repo must not turn DELETE into a 409 about a repo the catalog denies.
+    let orphan = serde_json::json!({
+        "title": "orphan pr",
+        "body": "context",
+        "base": "mirror.pilot.master",
+        "head": "mirror.pilot.master",
+        "author": "tester",
+        "repo": "ghost-repo",
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::POST, "/api/v1/prs", Some(orphan.to_string())))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::DELETE, "/api/v1/repos/ghost-repo", None))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "ghost repo must 404, not 409"
+    );
+
+    // A live mirror job blocks the catalog delete (its next upsert and any
+    // clone of the scratch clone would re-register the row).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::DELETE, "/api/v1/repos/pilot", None))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::CONFLICT,
+        "a live mirror job must block the row delete"
+    );
+
+    // Unknown `state` values are rejected instead of silently matching
+    // nothing (this route is the guard's diagnostic; a typo must not read as
+    // "no open PRs").
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/pilot/prs?state=Open", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // A manual description survives a mirror re-registration (origin and
+    // created_us already did; the operator's text must not be wiped).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/repos",
+            Some(
+                serde_json::json!({
+                    "name": "described",
+                    "description": "operator text",
+                })
+                .to_string(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/jobs",
+            Some(
+                serde_json::json!({
+                    "name": "described",
+                    "remote_url": f.origin_url,
+                    "github_slug": "celestia-island/noa",
+                    "branches": ["master"],
+                    "enabled": true,
+                })
+                .to_string(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/described", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let described = body_json(resp).await;
+    assert_eq!(
+        described["description"], "operator text",
+        "mirror re-registration must keep the manual description"
+    );
+    assert_eq!(described["origin"], "manual", "origin survives too");
+
+    // A SECOND pilot PR so skip/take is actually regress-locked (with only
+    // one PR a dropped limit/offset would look identical).
+    let create3 = serde_json::json!({
+        "title": "second pilot pr",
+        "body": "context",
+        "base": "mirror.pilot.master",
+        "head": "mirror.pilot.master",
+        "author": "tester",
+        "repo": "pilot",
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::POST, "/api/v1/prs", Some(create3.to_string())))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // limit=1 → exactly one record (a dropped take would return 2).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/pilot/prs?limit=1", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let one = body_json(resp).await;
+    assert_eq!(one.as_array().unwrap().len(), 1);
+
+    // offset=1 → one record, and a DIFFERENT one than limit=1 returned
+    // (a dropped skip would return the same first record).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::GET,
+            "/api/v1/repos/pilot/prs?limit=1&offset=1",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let page2 = body_json(resp).await;
+    assert_eq!(page2.as_array().unwrap().len(), 1);
+    assert_ne!(
+        one[0]["number"], page2[0]["number"],
+        "offset must skip the first record"
+    );
+
+    // Filters are wired, not just accepted: values that match nothing must
+    // return [] (a dropped base/state wiring would return the 2 pilot PRs).
+    // Positive AND negative per filter: the negative pins kill a dropped
+    // wiring, the positive pins kill a SWAPPED one (base<->state are
+    // adjacent same-typed Option<&str> args, so a swap compiles silently).
+    for (q, want_len, why) in [
+        ("?base=nope", 0, "base dropped"),
+        ("?state=closed", 0, "state dropped"),
+        ("?base=mirror.pilot.master", 2, "base swapped into state"),
+        ("?state=open", 2, "state swapped into base"),
+    ] {
+        let path = format!("/api/v1/repos/pilot/prs{q}");
+        let resp = f
+            .app
+            .clone()
+            .oneshot(req(Method::GET, &path, None))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "{why}");
+        let listed = body_json(resp).await;
+        assert_eq!(
+            listed.as_array().unwrap().len(),
+            want_len,
+            "filter mis-wired ({why})"
+        );
+    }
+
+    // Flat route honours pagination too (same latent serde_urlencoded bug
+    // would have 400'd any ?limit= request).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/prs?limit=1", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let flat = body_json(resp).await;
+    assert_eq!(flat.as_array().unwrap().len(), 1, "flat limit honoured");
+
+    // Ghost repo → 404.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/ghost/prs", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_git_http_clone_end_to_end() {
     let f = make_fixture().await;
     // Create + run the job so the scratch clone exists and is current.

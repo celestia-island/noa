@@ -18,7 +18,7 @@ use crate::{
     },
 };
 
-use super::handlers::{AppState, PaginationParams};
+use super::handlers::AppState;
 
 #[derive(serde::Deserialize)]
 pub struct CreatePrBody {
@@ -70,8 +70,8 @@ fn not_found(msg: impl ToString) -> (StatusCode, Json<serde_json::Value>) {
     )
 }
 
-fn pr_store(state: &AppState) -> Result<PrStore> {
-    PrStore::new(std::sync::Arc::clone(&state.db))
+fn pr_store(state: &AppState) -> &PrStore {
+    &state.pr_store
 }
 
 pub async fn create_pr(
@@ -96,7 +96,7 @@ pub async fn create_pr(
         .map_err(err_json)?
         .ok_or_else(|| not_found(format!("head workspace not found: {}", body.head)))?;
 
-    let store = pr_store(&state).map_err(err_json)?;
+    let store = pr_store(&state);
     let record = store
         .create(PrRecord {
             number: 0,
@@ -117,23 +117,108 @@ pub async fn create_pr(
     Ok((StatusCode::CREATED, Json(record)))
 }
 
+/// List filters + pagination for the PR list routes.
+///
+/// Pagination fields are INLINED rather than `#[serde(flatten)]`-ing
+/// `PaginationParams`: `serde_urlencoded` (axum's `Query`) buffers unknown
+/// values as strings, so a flattened NON-STRING scalar (`usize` here) fails
+/// to deserialize — every `?limit=`/`?offset=` request was answered with 400
+/// instead of being honoured (found while pinning the repo-scoped route; the
+/// flat route had the same latent bug). String-only flattened fields would
+/// have survived; the conclusion holds either way — inline the fields.
 #[derive(serde::Deserialize)]
 pub struct ListPrsParams {
-    #[serde(flatten)]
-    pub pagination: PaginationParams,
+    #[serde(default = "super::handlers::default_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub offset: usize,
     pub repo: Option<String>,
     pub base: Option<String>,
     pub state: Option<String>,
+}
+
+/// Repo-scoped PR listing (W2b): `/api/v1/repos/{name}/prs`.
+///
+/// Shape: a **bare `PrRecord[]`**, matching the PR resource family
+/// (`GET /api/v1/prs`), NOT the wrapped catalog shape
+/// (`GET /api/v1/repos` → `{"repos": …}`). Rationale: the payload is a list
+/// of PRs regardless of which path reached it; one PR list, one shape.
+///
+/// Identity: the path segment pins `repo`. A *contradicting* `repo` query
+/// parameter is rejected (400) rather than silently ignored — a filter that
+/// answers 200 with another repo's rows is a lie. An equal value is
+/// accepted (it agrees with the path).
+///
+/// 404 when the name isn't in the repo catalog. Note the deliberate
+/// asymmetry: `POST /api/v1/prs` accepts any `repo` string (the catalog is
+/// a discovery view, not a write gate), so PRs of an unregistered repo stay
+/// reachable through `GET /api/v1/prs?repo=…` and `GET /api/v1/prs/{n}`
+/// even though this view 404s. That is why the catalog must be treated as
+/// the canonical registry rather than as an authorization boundary.
+const PR_STATES: [&str; 3] = ["open", "closed", "merged"];
+
+fn validate_state(
+    state: Option<&str>,
+) -> Result<(), (axum::http::StatusCode, Json<serde_json::Value>)> {
+    if let Some(v) = state {
+        if !PR_STATES.contains(&v) {
+            return Err(bad_request(format!(
+                "state must be one of {} (got {v:?})",
+                PR_STATES.join("|")
+            )));
+        }
+    }
+    Ok(())
+}
+
+pub async fn list_repo_prs(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Query(params): Query<ListPrsParams>,
+) -> ApiResult<Vec<PrRecord>> {
+    if params.limit == 0 || params.limit > super::handlers::MAX_LIMIT {
+        return Err(bad_request(format!(
+            "limit must be between 1 and {}",
+            super::handlers::MAX_LIMIT
+        )));
+    }
+    validate_state(params.state.as_deref())?;
+    // The path owns the repo: a contradicting query filter is a client bug.
+    if let Some(query_repo) = params.repo.as_deref() {
+        if query_repo != name {
+            return Err(bad_request(
+                "the repo is determined by the path; drop the ?repo= filter",
+            ));
+        }
+    }
+    // 404 when the repo isn't in the catalog (consistent with GET repos/{name}).
+    match state.repo_registry.get(&name).await.map_err(err_json)? {
+        Some(_) => {}
+        None => return Err(not_found(format!("repo '{name}' not found"))),
+    }
+    let store = pr_store(&state);
+    let mut records = store
+        .list(Some(&name), params.base.as_deref(), params.state.as_deref())
+        .await
+        .map_err(err_json)?;
+    let start = params.offset.min(records.len());
+    let end = (start + params.limit).min(records.len());
+    records = records.into_iter().skip(start).take(end - start).collect();
+    Ok(Json(records))
 }
 
 pub async fn list_prs(
     State(state): State<AppState>,
     Query(params): Query<ListPrsParams>,
 ) -> ApiResult<Vec<PrRecord>> {
-    if params.pagination.limit == 0 || params.pagination.limit > 1000 {
-        return Err(bad_request("limit must be between 1 and 1000"));
+    if params.limit == 0 || params.limit > super::handlers::MAX_LIMIT {
+        return Err(bad_request(format!(
+            "limit must be between 1 and {}",
+            super::handlers::MAX_LIMIT
+        )));
     }
-    let store = pr_store(&state).map_err(err_json)?;
+    validate_state(params.state.as_deref())?;
+    let store = pr_store(&state);
     let mut records = store
         .list(
             params.repo.as_deref(),
@@ -142,14 +227,14 @@ pub async fn list_prs(
         )
         .await
         .map_err(err_json)?;
-    let start = params.pagination.offset.min(records.len());
-    let end = (start + params.pagination.limit).min(records.len());
+    let start = params.offset.min(records.len());
+    let end = (start + params.limit).min(records.len());
     records = records.into_iter().skip(start).take(end - start).collect();
     Ok(Json(records))
 }
 
 pub async fn get_pr(State(state): State<AppState>, Path(number): Path<u64>) -> ApiResult<PrRecord> {
-    let store = pr_store(&state).map_err(err_json)?;
+    let store = pr_store(&state);
     match store.get(number).await.map_err(err_json)? {
         Some(record) => Ok(Json(record)),
         None => Err(not_found(format!("PR not found: #{number}"))),
@@ -170,7 +255,7 @@ pub async fn close_pr(
     State(state): State<AppState>,
     Path(number): Path<u64>,
 ) -> ApiResult<PrRecord> {
-    let store = pr_store(&state).map_err(err_json)?;
+    let store = pr_store(&state);
     let record = store
         .get(number)
         .await
@@ -199,7 +284,7 @@ pub async fn merge_pr(
     Path(number): Path<u64>,
     Json(body): Json<MergePrBody>,
 ) -> ApiResult<PrRecord> {
-    let store = pr_store(&state).map_err(err_json)?;
+    let store = pr_store(&state);
     let record = store
         .get(number)
         .await

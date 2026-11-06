@@ -35,6 +35,14 @@ pub struct AppState {
     /// one-time at construction, so /git read-path requests don't issue
     /// write transactions (R2 S1).
     pub repo_registry: crate::server::repo_registry::RepoRegistry,
+    /// PR store — cached for the same reason as `repo_registry`:
+    /// `PrStore::new` runs an `ensure_table` write transaction, so building
+    /// one per request blocks an async worker on redb's writer lock.
+    /// KNOWN GAP: the mirror-job routes still build `MirrorJobStore` (and
+    /// through it a `RepoRegistry`) per request, and the ref/snapshot/
+    /// workspace/object stores do the same — caching every store type is a
+    /// follow-up, not a claim this field generalises.
+    pub pr_store: crate::server::pr_store::PrStore,
 }
 
 impl AppState {
@@ -43,6 +51,8 @@ impl AppState {
         AppState {
             repo_registry: crate::server::repo_registry::RepoRegistry::new(Arc::clone(&db))
                 .expect("repo registry init is startup-critical"),
+            pr_store: crate::server::pr_store::PrStore::new(Arc::clone(&db))
+                .expect("PR store init is startup-critical"),
             db,
             api_token: String::new(),
             rate_limiter: RateLimiter::new(1000, 60),
@@ -108,9 +118,14 @@ pub struct PaginationParams {
     pub offset: usize,
 }
 
-fn default_limit() -> usize {
+pub(crate) fn default_limit() -> usize {
     100
 }
+
+/// Upper bound for list pagination on the PR routes. NOTE: the snapshot and
+/// workspace list handlers still hardcode their own 1000 — migrating them
+/// here is a follow-up, not a claim this const already unifies everything.
+pub(crate) const MAX_LIMIT: usize = 1000;
 
 pub(crate) fn err_json(msg: impl std::fmt::Display) -> (StatusCode, Json<ApiError>) {
     tracing::error!("internal server error: {}", msg);

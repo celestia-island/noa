@@ -1154,7 +1154,34 @@ pub async fn delete_job(
             // noa-side refs/snapshots stay as replica data (R2 S2 scope).
             // Lockstep: the repo catalog entry goes with the job, otherwise
             // the next upsert re-registers it (R2 S2 delete asymmetry).
-            if let Err(e) = state.repo_registry.delete(&name).await {
+            // NOT ATOMIC (same as the /repos guard): the open-PR listing and
+            // the row delete are separate transactions; this narrows, not
+            // closes, the orphan path. Fail-closed: an unreadable PR store
+            // also keeps the row.
+            // EXCEPT when open PRs still reference the name: job deletion
+            // must never be blocked, but dropping the row would leave those
+            // tickets addressable only through the flat route. Keep the row
+            // (and say so) — DELETE /api/v1/repos/{name} is the guarded path.
+            let has_open = match state.pr_store.list(Some(&name), None, Some("open")).await {
+                Ok(prs) => !prs.is_empty(),
+                // Fail CLOSED (keep the row) when open PRs cannot be
+                // enumerated: dropping the row on an unknown is exactly the
+                // orphaning this guard exists to prevent. Job deletion itself
+                // still succeeds either way.
+                Err(e) => {
+                    tracing::warn!(
+                        "pr store unavailable during job delete ({e}); \
+                         keeping the repo catalog row"
+                    );
+                    true
+                }
+            };
+            if has_open {
+                tracing::warn!(
+                    "mirror job {name} deleted but its repo catalog row is kept: \
+                     open PRs still reference it"
+                );
+            } else if let Err(e) = state.repo_registry.delete(&name).await {
                 tracing::warn!("repo catalog delete for {name} failed: {e}");
             }
             let scratch = state.mirror_config.scratch_dir.join(format!("{name}.git"));
