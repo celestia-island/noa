@@ -31,24 +31,12 @@ use axum::{
 
 use crate::server::handlers::{ApiError, AppState};
 
-const GIT_HTTP_BACKEND: &str = "/usr/lib/git-core/git-http-backend";
-
 /// Pack negotiation is CPU-heavy; cap concurrent backend processes (the
 /// /git middleware bypass skips the API rate limiter — Round A R2 S2).
 static GIT_BACKEND_SEMAPHORE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 /// Wall-clock bound per backend exchange: a stalled/hung child must not
 /// hold a semaphore slot forever.
 const GIT_BACKEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
-
-/// Suffixes git-http-backend may be invoked with. Everything else is
-/// refused in-handler — path validation must not rest on git's own
-/// `enter_repo` guard (Round A R2 S3).
-fn suffix_allowed(suffix: &str) -> bool {
-    matches!(
-        suffix,
-        "info/refs" | "git-upload-pack" | "HEAD" | "objects/info/packs" | "info/alternates"
-    ) || suffix.starts_with("objects/")
-}
 
 /// One validated `/git/{repo}/{suffix}` request, or the reason it is not
 /// servable.
@@ -79,6 +67,16 @@ fn parse_git_path(path: &str) -> Option<GitPath> {
 
 /// Validates Basic auth (any user, password = token) or Bearer token
 /// against the server token.
+fn json_error_response(code: StatusCode, msg: impl Into<String>) -> Response {
+    Response::builder()
+        .status(code)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&ApiError { error: msg.into() }).unwrap_or_default(),
+        ))
+        .expect("static error parts")
+}
+
 fn git_auth_authorized(headers: &HeaderMap, state: &AppState) -> bool {
     let token = &state.api_token;
     if token.is_empty() {
@@ -109,8 +107,15 @@ fn git_auth_authorized(headers: &HeaderMap, state: &AppState) -> bool {
     false
 }
 
-/// Runs `git-http-backend` for one smart-HTTP exchange and converts its
-/// output (CGI headers + body) into an axum `Response`.
+/// Serves one smart-HTTP exchange by invoking `git upload-pack` directly
+/// (NOT via git-http-backend: the CGI wrapper's env whitelist drops
+/// GIT_PROTOCOL on the POST path, silently downgrading to v0 and breaking
+/// clones — found empirically on git 2.39.5). We own the child env, so
+/// protocol v2 negotiation works end-to-end.
+///
+/// - GET  `<repo>/info/refs?service=git-upload-pack` → advertisement
+/// - POST `<repo>/git-upload-pack`                   → pack response
+/// - receive-pack (push) refused; dumb files not served (smart only).
 async fn run_backend(
     state: &AppState,
     repo: &str,
@@ -120,67 +125,74 @@ async fn run_backend(
     headers: &HeaderMap,
     body: Option<Vec<u8>>,
 ) -> Result<Response, anyhow::Error> {
-    // Only the read direction is served in W2a — refuse push BEFORE the
-    // scratch-existence check so the answer never depends on mirror state.
+    let project_root = state.mirror_config.scratch_dir.clone();
+    // Refuse push BEFORE the scratch-existence check so the answer never
+    // depends on mirror state (deliberate invariant, pinned by test).
     if suffix.contains("receive-pack") {
         return Ok(json_error_response(
             StatusCode::FORBIDDEN,
             "push is not served yet — noa becomes write-authority in a later slice",
         ));
     }
-    if !suffix_allowed(suffix) {
-        return Ok(json_error_response(
-            StatusCode::BAD_REQUEST,
-            format!("unsupported git http path '{suffix}'"),
-        ));
-    }
-    let project_root = state.mirror_config.scratch_dir.clone();
-    if !project_root.join(format!("{repo}.git")).exists() {
+    let repo_path = project_root.join(format!("{repo}.git"));
+    if !repo_path.exists() {
         return Ok(json_error_response(
             StatusCode::NOT_FOUND,
             format!("no mirrored repo '{repo}' — create a mirror job first"),
         ));
     }
 
-    let mut cmd = tokio::process::Command::new(GIT_HTTP_BACKEND);
-    cmd.env_clear()
-        .env("PATH", "/usr/bin:/usr/local/bin")
-        .env("GIT_PROJECT_ROOT", &project_root)
-        .env("GIT_HTTP_EXPORT_ALL", "1")
-        .env("PATH_INFO", format!("/{repo}.git/{suffix}"))
-        .env("REQUEST_METHOD", method)
-        .env("REMOTE_ADDR", "127.0.0.1")
-        .env("GIT_PROTOCOL", "")
-        .env("CONTENT_TYPE", "")
-        .env("QUERY_STRING", "");
-    if let Some(q) = query {
-        cmd.env("QUERY_STRING", q);
+    let wants_advertisement = suffix == "info/refs"
+        && query
+            .map(|q| q.contains("service=git-upload-pack"))
+            .unwrap_or(false);
+    let is_post_pack = method == "POST" && suffix == "git-upload-pack";
+    if !wants_advertisement && !is_post_pack {
+        return Ok(json_error_response(
+            StatusCode::BAD_REQUEST,
+            format!("unsupported git http path '{suffix}' — smart HTTP only"),
+        ));
     }
-    if let Some(ct) = headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-    {
-        cmd.env("CONTENT_TYPE", ct);
-    }
-    if let Some(gp) = headers.get("Git-Protocol").and_then(|v| v.to_str().ok()) {
-        cmd.env("GIT_PROTOCOL", gp);
-    }
-    // kill_on_drop: a child abandoned by the 60s timeout below must die,
+
+    let mut cmd = tokio::process::Command::new("git");
+    // kill_on_drop: a child abandoned by the 60s deadline below must die,
     // not linger as an orphan holding .git locks (Round A S2).
     cmd.kill_on_drop(true);
-    cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
-    if body.is_some() {
-        // Capture POST stderr (upload-pack negotiation failures) into the
-        // tracing buffer instead of dropping it.
-        cmd.stderr(Stdio::piped());
+    cmd.arg("upload-pack").arg("--stateless-rpc");
+    if wants_advertisement {
+        cmd.arg("--advertise-refs");
     }
+    cmd.arg(&repo_path);
+    // Deterministic env: no ambient GIT_*/proxy/config leakage into the
+    // served refs (base had env_clear; Round A S3).
+    cmd.env_clear();
+    cmd.env("PATH", "/usr/bin:/usr/local/bin");
+    // Protocol negotiation: honour the CLIENT's Git-Protocol header
+    // (gitprotocol-v2 forbids the server from speaking v2 unrequested).
+    // Empty default = v0. This is the env git-http-backend was dropping
+    // on the POST path (root cause of #140).
+    cmd.env(
+        "GIT_PROTOCOL",
+        headers
+            .get("Git-Protocol")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(""),
+    );
+    cmd.stdin(if is_post_pack {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    });
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
 
     let mut child = cmd.spawn()?;
     // The WHOLE exchange — writing the request body to the child's stdin
     // (a stalled child that never drains a 50 MiB body must not hold the
     // semaphore forever, Round A S2) and reading its output — lives under
     // one wall-clock deadline. Dropping stdin when the write finishes is
-    // what signals EOF (CONTENT_LENGTH is not set).
+    // what signals EOF (CONTENT_LENGTH is not set). On timeout the future
+    // (and with it the child) is dropped → kill_on_drop fires.
     let io = async {
         if let Some(b) = body {
             if let Some(mut stdin) = child.stdin.take() {
@@ -192,71 +204,50 @@ async fn run_backend(
     };
     let output = tokio::time::timeout(GIT_BACKEND_TIMEOUT, io)
         .await
-        .map_err(|_| anyhow::anyhow!("git http backend timed out after 60s"))??;
+        .map_err(|_| anyhow::anyhow!("git backend timed out after 60s"))??;
 
     if !output.status.success() && output.stdout.is_empty() {
         tracing::error!(
-            "git http backend crashed ({}) for {repo}/{suffix}",
-            output.status
+            "git backend crashed ({}) for {repo}/{suffix}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
         );
         return Ok(json_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "git http backend crashed",
+            "git backend crashed",
         ));
     }
 
-    // CGI: headers, blank line, body. git-http-backend emits
-    // `Status: <code>` + Content-Type for smart responses.
-    let raw = &output.stdout;
-    let (head, payload) = split_cgi(raw);
-    let status = head
-        .iter()
-        .find_map(|l| l.strip_prefix("Status: ").map(ToString::to_string))
-        .unwrap_or_else(|| "200".to_string());
-    let code: StatusCode = status
-        .split(' ')
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(StatusCode::OK);
-    let content_type = head
-        .iter()
-        .find_map(|l| l.strip_prefix("Content-Type: ").map(ToString::to_string))
-        .unwrap_or_else(|| "application/octet-stream".to_string());
+    // Smart advertisement MUST carry the `# service=` preamble + flush
+    // (git-http-backend emitted it; raw upload-pack --advertise-refs does
+    // not — D2 S1-class). Only the advertisement path; RPC responses carry
+    // no preamble. Emitted as v0-shaped lines; a v2 client (GIT_PROTOCOL
+    // forwarded) skips them per gitprotocol-v2.
+    let stdout = if wants_advertisement {
+        let mut full = b"001e# service=git-upload-pack\n0000".to_vec();
+        full.extend_from_slice(&output.stdout);
+        full
+    } else {
+        output.stdout
+    };
+    let content_type = if wants_advertisement {
+        "application/x-git-upload-pack-advertisement".to_string()
+    } else {
+        "application/x-git-upload-pack-result".to_string()
+    };
+    if !output.stderr.is_empty() {
+        tracing::debug!(
+            "git {repo}/{suffix}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
 
     Ok(Response::builder()
-        .status(code)
+        .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
         .header(header::CACHE_CONTROL, "no-cache")
-        .body(Body::from(payload.to_vec()))
+        .body(Body::from(stdout))
         .expect("static response parts"))
-}
-
-fn split_cgi(raw: &[u8]) -> (Vec<String>, Vec<u8>) {
-    let sep = raw
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .map(|p| (p, 4))
-        .or_else(|| raw.windows(2).position(|w| w == b"\n\n").map(|p| (p, 2)));
-    match sep {
-        Some((pos, len)) => {
-            let head = String::from_utf8_lossy(&raw[..pos])
-                .lines()
-                .map(|l| l.trim_end_matches('\r').to_string())
-                .collect();
-            (head, raw[pos + len..].to_vec())
-        }
-        None => (Vec::new(), raw.to_vec()),
-    }
-}
-
-fn json_error_response(code: StatusCode, msg: impl Into<String>) -> Response {
-    Response::builder()
-        .status(code)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(
-            serde_json::to_vec(&ApiError { error: msg.into() }).unwrap_or_default(),
-        ))
-        .unwrap()
 }
 
 /// Entry point for every `/git/{repo}/*` request.
@@ -286,6 +277,8 @@ pub async fn handle_git_http(State(state): State<AppState>, req: Request) -> Res
     // Acquire the backend permit BEFORE reading the body: the buffered body
     // is up to 50 MiB and the /git bypass skips the API rate limiter —
     // bounding concurrent reads bounds memory to 4×50 MiB (Round A S2).
+    // One acquisition covers the whole request including the spawned
+    // upload-pack child; run_backend deliberately does not re-acquire.
     let _permit = match GIT_BACKEND_SEMAPHORE.try_acquire() {
         Ok(p) => p,
         Err(_) => {
@@ -317,8 +310,8 @@ pub async fn handle_git_http(State(state): State<AppState>, req: Request) -> Res
     {
         Ok(resp) => resp,
         Err(e) => {
-            tracing::error!("git http backend failed: {e:#}");
-            json_error_response(StatusCode::INTERNAL_SERVER_ERROR, "git http backend failed")
+            tracing::error!("git backend failed: {e:#}");
+            json_error_response(StatusCode::INTERNAL_SERVER_ERROR, "git backend failed")
         }
     }
 }
