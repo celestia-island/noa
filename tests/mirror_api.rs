@@ -481,6 +481,13 @@ async fn test_repo_scoped_pr_routes() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+    let same = body_json(resp).await;
+    assert_eq!(
+        same.as_array().unwrap().len(),
+        1,
+        "the matching ?repo= must still answer the scoped rows"
+    );
+    assert_eq!(same[0]["repo"], "pilot");
 
     // Deleting the catalog row is refused while open PRs exist (the tickets
     // stay merge-able regardless; the delete would cost them addressability
@@ -543,6 +550,8 @@ async fn test_repo_scoped_pr_routes() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK, "close the blocking PR");
+    let closed = body_json(resp).await;
+    assert_eq!(closed["state"], "closed", "close must flip the state");
     let resp = f
         .app
         .clone()
@@ -582,6 +591,77 @@ async fn test_repo_scoped_pr_routes() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // Job deletion never blocks, but it must KEEP the catalog row while open
+    // PRs exist (otherwise the guarded /repos delete is bypassable and the
+    // tickets lose their scoped view). Pinned here because the job route is
+    // the sibling write path.
+    let job_with_pr = serde_json::json!({
+        "name": "keeper",
+        "remote_url": f.origin_url,
+        "github_slug": "celestia-island/noa",
+        "branches": ["master"],
+        "enabled": true,
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/jobs",
+            Some(job_with_pr.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let keeper_pr = serde_json::json!({
+        "title": "keeper pr",
+        "body": "context",
+        "base": "mirror.pilot.master",
+        "head": "mirror.pilot.master",
+        "author": "tester",
+        "repo": "keeper",
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/prs",
+            Some(keeper_pr.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    // The row exists (auto-registered by the job upsert) and the job delete
+    // succeeds — but the row survives because of the open PR.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::DELETE, "/api/v1/mirror/jobs/keeper", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/keeper", None))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "job delete must keep the catalog row while open PRs exist"
+    );
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/keeper/prs", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let keeper_list = body_json(resp).await;
+    assert_eq!(keeper_list.as_array().unwrap().len(), 1);
 
     // Existence beats the PR guard: an orphan open PR for an unregistered
     // repo must not turn DELETE into a 409 about a repo the catalog denies.
