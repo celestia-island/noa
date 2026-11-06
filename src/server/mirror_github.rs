@@ -354,8 +354,15 @@ impl GitDataClient {
                         .tree
                         .into_iter()
                         .filter(|e| e.kind != "tree")
-                        .filter_map(|e| e.sha.map(|sha| (e.path, e.mode, sha)))
-                        .collect(),
+                        .map(|e| match e.sha {
+                            Some(sha) => Ok((e.path, e.mode, sha)),
+                            None => Err(anyhow::anyhow!(
+                                "git-data tree entry without sha: {} ({})",
+                                e.path,
+                                e.kind
+                            )),
+                        })
+                        .collect::<Result<Vec<_>>>()?,
                 ))
             }
             reqwest::StatusCode::NOT_FOUND => Ok(None),
@@ -402,28 +409,14 @@ impl GitDataClient {
     }
 }
 
-/// Minimal ISO-8601 UTC (`YYYY-MM-DDTHH:MM:SS…`) → unix seconds. GitHub
-/// commit dates are always this shape; no date crate needed.
+/// ISO-8601 → unix seconds. GitHub's `/git/commits` returns the commit's
+/// ORIGINAL timezone offset (e.g. `-08:00`), so the offset must be honoured
+/// — the git lane's gix `time().seconds` is a true epoch, and a lane switch
+/// must not shift the snapshot id (Round A S2).
 fn chrono_ish_parse(s: &str) -> Option<u64> {
-    if s.len() < 19 {
-        return None;
-    }
-    let year: i64 = s.get(0..4)?.parse().ok()?;
-    let month: i64 = s.get(5..7)?.parse().ok()?;
-    let day: i64 = s.get(8..10)?.parse().ok()?;
-    let hour: i64 = s.get(11..13)?.parse().ok()?;
-    let min: i64 = s.get(14..16)?.parse().ok()?;
-    let sec: i64 = s.get(17..19)?.parse().ok()?;
-    // days-from-civil (Howard Hinnant).
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = y - era * 400;
-    let mp = (month + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146097 + doe - 719468;
-    let secs = days * 86400 + hour * 3600 + min * 60 + sec;
-    Some(secs.max(0) as u64)
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.timestamp().max(0) as u64)
 }
 
 fn truncate(s: &str) -> String {

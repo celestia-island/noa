@@ -1448,7 +1448,7 @@ mod tests {
                     axum::Json(serde_json::json!({
                         "tree": { "sha": "t1" },
                         "author": { "name": "noa-test" },
-                        "committer": { "date": "2026-11-06T12:00:00Z" },
+                        "committer": { "date": "2026-11-06T12:00:00-08:00" },
                         "message": "api fixture commit"
                     }))
                 }),
@@ -1551,9 +1551,18 @@ mod tests {
         let snap = snaps.get(&first).await.unwrap();
         assert_eq!(snap.author, "noa-test");
         assert_eq!(snap.message, "api fixture commit");
-        assert_eq!(snap.timestamp, 1_793_966_400_000_000);
+        assert_eq!(
+            snap.timestamp, 1_793_995_200_000_000,
+            "timestamp must honour the commit's -08:00 offset (Round A S2 pin)"
+        );
         let obj = RedbObjectStore::new(Arc::clone(&db)).unwrap();
         let tree = obj.get_tree(&TreeId(snap.tree_hash)).await.unwrap();
+        let run = tree.0.iter().find(|e| e.name == "run.sh").unwrap();
+        assert_eq!(
+            run.kind,
+            EntryKind::Executable,
+            "100755 must map to Executable"
+        );
         let link = tree.0.iter().find(|e| e.name == "link").unwrap();
         assert_eq!(link.kind, EntryKind::Symlink);
         let sub = tree.0.iter().find(|e| e.name == "sub").unwrap();
