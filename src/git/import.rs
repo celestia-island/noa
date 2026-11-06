@@ -11,90 +11,173 @@ use crate::{
     },
 };
 
+/// Options for [`import_git_commit`]. The defaults reproduce the legacy
+/// `clone`/`pull` behavior (workspace `"default"`, ref `HEAD`, no parents,
+/// no skip), so the wrapper stays byte-compatible.
+#[derive(Debug, Clone)]
+pub struct ImportOptions {
+    /// Workspace the imported snapshot belongs to.
+    pub workspace: String,
+    /// noa ref advanced to the imported snapshot.
+    pub head_ref: String,
+    /// Explicit git commit oid (hex); `None` uses HEAD.
+    pub commit_hex: Option<String>,
+    /// Parent snapshot ids attached to the imported snapshot.
+    pub parents: Vec<SnapshotId>,
+    /// When the ref already points at a snapshot with the same tree hash,
+    /// return that snapshot instead of writing a new (timestamp-addressed)
+    /// one. Keeps scheduled re-imports idempotent.
+    pub skip_if_tree_unchanged: bool,
+}
+
+impl Default for ImportOptions {
+    fn default() -> Self {
+        ImportOptions {
+            workspace: "default".to_string(),
+            head_ref: "HEAD".to_string(),
+            commit_hex: None,
+            parents: Vec::new(),
+            skip_if_tree_unchanged: false,
+        }
+    }
+}
+
 pub async fn import_git_to_noa(
     git_dir: &Path,
     db: Arc<redb::Database>,
 ) -> Result<Option<SnapshotId>> {
+    import_git_commit(git_dir, db, &ImportOptions::default()).await
+}
+
+/// Commit metadata extracted inside a blocking task so no non-Send gix
+/// handles cross an await point.
+struct CommitFacts {
+    tree_id: gix::hash::ObjectId,
+    author: String,
+    message: String,
+    timestamp_seconds: u64,
+}
+
+/// Imports the tree of one git commit into noa objects, writes a snapshot,
+/// and advances `opts.head_ref` (retrying the CAS on races).
+pub async fn import_git_commit(
+    git_dir: &Path,
+    db: Arc<redb::Database>,
+    opts: &ImportOptions,
+) -> Result<Option<SnapshotId>> {
     let git_dir = git_dir.to_path_buf();
-    let repo = tokio::task::spawn_blocking(move || gix::open(&git_dir).map_err(Box::new))
-        .await?
-        .map_err(|e| anyhow::anyhow!("failed to open git repo: {e}"))?;
+    let commit_hex = opts.commit_hex.clone();
+    let git_dir_for_walk = git_dir.clone();
+    let facts = tokio::task::spawn_blocking(move || {
+        let opened =
+            gix::open(&git_dir).map_err(|e| anyhow::anyhow!("failed to open git repo: {e}"))?;
+        let commit = match commit_hex {
+            Some(hex) => {
+                let oid = gix::hash::ObjectId::from_hex(hex.as_bytes())
+                    .map_err(|e| anyhow::anyhow!("invalid commit oid '{hex}': {e}"))?;
+                Some(
+                    opened
+                        .find_object(oid)?
+                        .try_into_commit()
+                        .with_context(|| format!("object {hex} is not a commit"))?,
+                )
+            }
+            None => match opened.head_id() {
+                Ok(head_id) => Some(
+                    opened
+                        .find_object(head_id.detach())?
+                        .try_into_commit()
+                        .with_context(|| "HEAD is not a commit")?,
+                ),
+                Err(_) => {
+                    tracing::warn!("git repository has no HEAD (empty repo), skipping import");
+                    None
+                }
+            },
+        };
+        // Extract everything we need here: gix handles are not Send and
+        // must not cross the await boundary.
+        let facts = commit
+            .map(|c| {
+                Ok::<_, anyhow::Error>(CommitFacts {
+                    tree_id: c.tree_id()?.detach(),
+                    author: c
+                        .author()
+                        .ok()
+                        .map_or_else(|| "unknown".to_string(), |a| a.name.to_string()),
+                    message: c
+                        .message_raw()
+                        .map(std::string::ToString::to_string)
+                        .unwrap_or_default(),
+                    timestamp_seconds: c.time()?.seconds.max(0) as u64,
+                })
+            })
+            .transpose()?;
+        Ok::<Option<CommitFacts>, anyhow::Error>(facts)
+    })
+    .await??;
+
+    let Some(facts) = facts else {
+        return Ok(None);
+    };
 
     let obj_store = crate::object::RedbObjectStore::new(Arc::clone(&db))?;
     let snap_store = RedbSnapshotStore::new(Arc::clone(&db))?;
     let ref_store = RedbRefStore::new(Arc::clone(&db))?;
     let ws_mgr = crate::workspace::WorkspaceManager::new(Arc::clone(&db))?;
 
-    let head_id = match repo.head_id() {
-        Ok(id) => id.detach(),
-        Err(_) => {
-            tracing::warn!("git repository has no HEAD (empty repo), skipping import");
-            return Ok(None);
-        }
-    };
-
-    let head_obj = repo.find_object(head_id)?;
-
-    let commit = head_obj
-        .try_into_commit()
-        .with_context(|| "HEAD is not a commit")?;
-
-    let tree_id = commit.tree_id()?.detach();
-
-    let entries = import_tree_recursive(&repo, tree_id, &obj_store).await?;
+    let entries = import_tree_recursive(&git_dir_for_walk, facts.tree_id, &obj_store).await?;
 
     let mut sorted = entries;
     sorted.sort_by(|a, b| a.name.cmp(&b.name));
     let noa_tree_id = obj_store.put_tree(&TreeEntries(sorted)).await?;
 
-    let author = commit
-        .author()
-        .ok()
-        .map_or_else(|| "unknown".to_string(), |a| a.name.to_string());
+    if opts.skip_if_tree_unchanged {
+        if let Some(prev_id) = ref_store.get(&opts.head_ref).await? {
+            if let Ok(prev_snap) = snap_store.get(&prev_id).await {
+                if prev_snap.tree_hash == noa_tree_id.0 {
+                    return Ok(Some(prev_id));
+                }
+            }
+        }
+    }
 
-    let message = commit
-        .message_raw()
-        .map(std::string::ToString::to_string)
-        .unwrap_or_default();
-
-    let time = commit.time()?;
-    let timestamp = (time.seconds as u64) * 1_000_000;
+    let timestamp = facts.timestamp_seconds * 1_000_000;
 
     let snapshot = Snapshot {
         id: content_addressed_snapshot_id_with_ts(
             &noa_tree_id.0,
-            &[],
-            "default",
-            &author,
-            &message,
+            &opts.parents,
+            &opts.workspace,
+            &facts.author,
+            &facts.message,
             timestamp,
         ),
         tree_hash: noa_tree_id.0,
-        parents: vec![],
-        workspace: "default".to_string(),
-        author,
+        parents: opts.parents.clone(),
+        workspace: opts.workspace.clone(),
+        author: facts.author,
         timestamp,
-        message,
+        message: facts.message,
     };
     snap_store.store(&snapshot).await?;
-    // Write-through: advance HEAD from its actual current value so repeated
-    // imports track the latest snapshot. The previous `cas("HEAD", None, ...)`
-    // only matched when the ref was absent, freezing HEAD at the clone-time
-    // snapshot forever (issue #70). Retry on races; only this import writes HEAD.
-    let mut current = ref_store.get("HEAD").await?;
+    // Write-through: advance the head ref from its actual current value so
+    // repeated imports track the latest snapshot. Retry on races; only this
+    // import writes the ref (issue #70 precedent).
+    let mut current = ref_store.get(&opts.head_ref).await?;
     loop {
         if ref_store
-            .cas("HEAD", current.as_ref(), &snapshot.id)
+            .cas(&opts.head_ref, current.as_ref(), &snapshot.id)
             .await?
         {
             break;
         }
-        current = ref_store.get("HEAD").await?;
+        current = ref_store.get(&opts.head_ref).await?;
     }
 
     let now = crate::now_micros();
     let ws = crate::workspace::Workspace {
-        name: "default".to_string(),
+        name: opts.workspace.clone(),
         head: snapshot.id.clone(),
         base: crate::snapshot::empty_snapshot_id(),
         agent_id: None,
@@ -105,7 +188,7 @@ pub async fn import_git_to_noa(
     if let Err(e) = ws_mgr.create(&ws).await {
         // Workspace may already exist from init_with_remotes; update in place
         if crate::error::is_workspace_already_exists(&e) {
-            ws_mgr.update_head("default", &snapshot.id).await?;
+            ws_mgr.update_head(&opts.workspace, &snapshot.id).await?;
         } else {
             return Err(e);
         }
@@ -194,11 +277,11 @@ fn walk_tree(repo: &gix::Repository, tree_id: gix::hash::ObjectId) -> Result<Vec
 }
 
 async fn import_tree_recursive(
-    repo: &gix::Repository,
+    git_dir: &Path,
     tree_id: gix::hash::ObjectId,
     obj_store: &crate::object::RedbObjectStore,
 ) -> Result<Vec<TreeEntry>> {
-    let git_dir = repo.git_dir().to_path_buf();
+    let git_dir = git_dir.to_path_buf();
 
     let file_contents = tokio::task::spawn_blocking(move || {
         let opened =

@@ -28,6 +28,9 @@ pub struct AppState {
     /// GitHub App token broker (optional — unconfigured until the App
     /// key lands; routes answer the explicit disconnected shape).
     pub github_broker: Option<crate::server::github_broker::GithubBroker>,
+    /// Mirror scheduler configuration (engine reads this for API-triggered
+    /// runs; the scheduler loop itself is spawned by `bin/server.rs`).
+    pub mirror_config: crate::server::mirror::MirrorConfig,
 }
 
 impl AppState {
@@ -38,6 +41,7 @@ impl AppState {
             api_token: String::new(),
             rate_limiter: RateLimiter::new(1000, 60),
             github_broker: None,
+            mirror_config: crate::server::mirror::MirrorConfig::default(),
         }
     }
 
@@ -59,6 +63,12 @@ impl AppState {
     #[must_use]
     pub fn with_rate_limit(mut self, max_requests: u32, window_secs: u64) -> Self {
         self.rate_limiter = RateLimiter::new(max_requests, window_secs);
+        self
+    }
+
+    #[must_use]
+    pub fn with_mirror_config(mut self, cfg: crate::server::mirror::MirrorConfig) -> Self {
+        self.mirror_config = cfg;
         self
     }
 
@@ -96,7 +106,7 @@ fn default_limit() -> usize {
     100
 }
 
-fn err_json(msg: impl std::fmt::Display) -> (StatusCode, Json<ApiError>) {
+pub(crate) fn err_json(msg: impl std::fmt::Display) -> (StatusCode, Json<ApiError>) {
     tracing::error!("internal server error: {}", msg);
     (
         StatusCode::INTERNAL_SERVER_ERROR,

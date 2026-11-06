@@ -157,6 +157,9 @@ pub fn sha256_hex(data: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
+// clippy(1.99) double_must_use: every macro-generated BoxFuture is already
+// must_use; the attribute below cannot be removed from the expansion (H15).
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait ObjectStore: Send + Sync {
     async fn put_blob(&self, content: &[u8]) -> Result<BlobId>;

@@ -1,4 +1,6 @@
 mod handlers;
+pub mod mirror;
+pub mod mirror_store;
 mod pr_handlers;
 pub mod pr_store;
 
@@ -163,6 +165,15 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/github/installations",
             get(github_broker::installations),
         )
+        .route(
+            "/api/v1/mirror/jobs",
+            get(mirror::list_jobs).post(mirror::upsert_job),
+        )
+        .route(
+            "/api/v1/mirror/jobs/{name}",
+            axum::routing::delete(mirror::delete_job),
+        )
+        .route("/api/v1/mirror/run", post(mirror::run_jobs))
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
