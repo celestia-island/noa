@@ -495,6 +495,28 @@ async fn test_repo_scoped_pr_routes() {
         "offset must skip the first record"
     );
 
+    // Filters are wired, not just accepted: values that match nothing must
+    // return [] (a dropped base/state wiring would return the 2 pilot PRs).
+    for (q, why) in [
+        ("?base=nope", "base dropped"),
+        ("?state=closed", "state dropped"),
+    ] {
+        let path = format!("/api/v1/repos/pilot/prs{q}");
+        let resp = f
+            .app
+            .clone()
+            .oneshot(req(Method::GET, &path, None))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "{why}");
+        let none = body_json(resp).await;
+        assert_eq!(
+            none.as_array().unwrap().len(),
+            0,
+            "filter not applied ({why})"
+        );
+    }
+
     // Flat route honours pagination too (same latent serde_urlencoded bug
     // would have 400'd any ?limit= request).
     let resp = f
