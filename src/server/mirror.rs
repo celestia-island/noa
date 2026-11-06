@@ -1595,6 +1595,194 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_api_import_chains_parents_on_changed_wave() {
+        // Round D D6: unlike the git lane, the API lane had no changed-wave
+        // test, so `parents: vec![]` survived. Two waves with different
+        // content must chain snapshots.
+        use axum::routing::get as rget;
+        use axum::Router;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let wave = Arc::new(AtomicUsize::new(0));
+        let wave_ref = Arc::clone(&wave);
+        let app = Router::new()
+            .route(
+                "/repos/{owner}/{repo}/git/ref/heads/master",
+                rget(move || {
+                    let n = wave_ref.fetch_add(1, Ordering::SeqCst);
+                    async move {
+                        let sha = if n == 0 { "c1" } else { "c2" };
+                        axum::Json(serde_json::json!({ "object": { "sha": sha } }))
+                    }
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/commits/c1",
+                rget(|| async {
+                    axum::Json(serde_json::json!({
+                        "tree": { "sha": "t1" },
+                        "author": { "name": "t" },
+                        "committer": { "date": "2026-11-06T00:00:00Z" },
+                        "message": "one"
+                    }))
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/commits/c2",
+                rget(|| async {
+                    axum::Json(serde_json::json!({
+                        "tree": { "sha": "t2" },
+                        "author": { "name": "t" },
+                        "committer": { "date": "2026-11-06T01:00:00Z" },
+                        "message": "two"
+                    }))
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/trees/t1",
+                rget(|| async {
+                    let sha = git_blob_oid(b"wave one\n");
+                    axum::Json(serde_json::json!({
+                        "tree": [{ "path": "f.txt", "mode": "100644", "sha": sha, "type": "blob" }],
+                        "truncated": false
+                    }))
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/trees/t2",
+                rget(|| async {
+                    let sha = git_blob_oid(b"wave two\n");
+                    axum::Json(serde_json::json!({
+                        "tree": [{ "path": "f.txt", "mode": "100644", "sha": sha, "type": "blob" }],
+                        "truncated": false
+                    }))
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/blobs/{sha}",
+                rget(
+                    move |axum::extract::Path((_o, _r, sha)): axum::extract::Path<(
+                        String,
+                        String,
+                        String,
+                    )>| {
+                        async move {
+                            let body = if sha == git_blob_oid(b"wave one\n") {
+                                b"wave one\n".to_vec()
+                            } else {
+                                b"wave two\n".to_vec()
+                            };
+                            use base64::Engine;
+                            axum::Json(serde_json::json!({
+                                "content": base64::engine::general_purpose::STANDARD.encode(body),
+                                "encoding": "base64"
+                            }))
+                        }
+                    },
+                ),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            redb::Database::builder()
+                .create(db_dir.path().join("m.redb"))
+                .unwrap(),
+        );
+        let cfg = MirrorConfig {
+            interval_secs: 900,
+            scratch_dir: dir.path().join("scratch"),
+            token_env: String::new(),
+            github_api_base: format!("http://{addr}"),
+        };
+        let store = MirrorJobStore::new(Arc::clone(&db)).unwrap();
+        store
+            .upsert(MirrorJob {
+                name: "pilot".into(),
+                remote_url: "file:///nonexistent-noa-mirror-fixture".into(),
+                github_slug: "celestia-island/noa".into(),
+                branches: vec!["master".into()],
+                canary_push: false,
+                enabled: true,
+                last_run_us: None,
+                last_status: None,
+                last_detail: None,
+            })
+            .await
+            .unwrap();
+        let engine = MirrorEngine::new(Arc::clone(&db), cfg);
+        engine.run_job("pilot").await.unwrap();
+        let refs = RedbRefStore::new(Arc::clone(&db)).unwrap();
+        let first = refs.get("mirror/pilot/master").await.unwrap().unwrap();
+        engine.run_job("pilot").await.unwrap();
+        let second = refs.get("mirror/pilot/master").await.unwrap().unwrap();
+        assert_ne!(first, second, "changed content must advance the ref");
+        let snaps = RedbSnapshotStore::new(Arc::clone(&db)).unwrap();
+        let snap = snaps.get(&second).await.unwrap();
+        assert_eq!(snap.parents, vec![first], "api wave 2 must chain to wave 1");
+    }
+
+    #[tokio::test]
+    async fn test_tree_hash_is_entry_order_independent() {
+        // Round D D5: walk_tree is LIFO while GitHub listings are ordered,
+        // so the storage layer MUST normalise order or a lane switch mints a
+        // spurious "changed" snapshot.
+        let db_dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            redb::Database::builder()
+                .create(db_dir.path().join("m.redb"))
+                .unwrap(),
+        );
+        let mk = |path: &str, body: &[u8]| ImportedEntry {
+            path: path.to_string(),
+            kind: EntryKind::Blob,
+            body: ImportedBody::Blob(body.to_vec()),
+        };
+        let forward = vec![
+            mk(
+                "a.txt", b"A
+",
+            ),
+            mk("b.txt", b"B\n"),
+            mk(
+                "c/d.txt", b"D
+",
+            ),
+        ];
+        let reverse = {
+            let mut v = forward.clone();
+            v.reverse();
+            v
+        };
+        let opts = |r: &str| StoreOptions {
+            workspace: "ws.order".into(),
+            head_ref: r.to_string(),
+            parents: Vec::new(),
+            skip_if_tree_unchanged: false,
+            author: "t".into(),
+            message: "m".into(),
+            timestamp_us: 1,
+        };
+        let s1 = store_imported_entries(Arc::clone(&db), forward, &opts("ref-a"))
+            .await
+            .unwrap()
+            .unwrap();
+        let s2 = store_imported_entries(Arc::clone(&db), reverse, &opts("ref-b"))
+            .await
+            .unwrap()
+            .unwrap();
+        let snaps = RedbSnapshotStore::new(Arc::clone(&db)).unwrap();
+        assert_eq!(
+            snaps.get(&s1).await.unwrap().tree_hash,
+            snaps.get(&s2).await.unwrap().tree_hash,
+            "tree hash must be independent of input entry order"
+        );
+    }
+
+    #[tokio::test]
     async fn test_broken_scratch_is_reset_on_transport_failure() {
         // Round C pin: a half-written clone must not pin the job to the API
         // lane forever — it is dropped so the next wave can re-clone.
