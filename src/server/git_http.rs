@@ -165,6 +165,9 @@ async fn run_backend(
     if let Some(gp) = headers.get("Git-Protocol").and_then(|v| v.to_str().ok()) {
         cmd.env("GIT_PROTOCOL", gp);
     }
+    // kill_on_drop: a child abandoned by the 60s timeout below must die,
+    // not linger as an orphan holding .git locks (Round A S2).
+    cmd.kill_on_drop(true);
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
     if body.is_some() {
         // Capture POST stderr (upload-pack negotiation failures) into the
@@ -173,13 +176,21 @@ async fn run_backend(
     }
 
     let mut child = cmd.spawn()?;
-    if let Some(b) = body {
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(&b).await?;
-            stdin.flush().await?;
+    // The WHOLE exchange — writing the request body to the child's stdin
+    // (a stalled child that never drains a 50 MiB body must not hold the
+    // semaphore forever, Round A S2) and reading its output — lives under
+    // one wall-clock deadline. Dropping stdin when the write finishes is
+    // what signals EOF (CONTENT_LENGTH is not set).
+    let io = async {
+        if let Some(b) = body {
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(&b).await?;
+                stdin.flush().await?;
+            }
         }
-    }
-    let output = tokio::time::timeout(GIT_BACKEND_TIMEOUT, child.wait_with_output())
+        child.wait_with_output().await
+    };
+    let output = tokio::time::timeout(GIT_BACKEND_TIMEOUT, io)
         .await
         .map_err(|_| anyhow::anyhow!("git http backend timed out after 60s"))??;
 
@@ -272,17 +283,9 @@ pub async fn handle_git_http(State(state): State<AppState>, req: Request) -> Res
     let query = req.uri().query().map(ToString::to_string);
     let method = req.method().as_str().to_uppercase();
     let headers = req.headers().clone();
-    // Smart HTTP: POST bodies go to the backend's stdin; GET has no body.
-    let body = if method == "POST" {
-        match axum::body::to_bytes(req.into_body(), 50 * 1024 * 1024).await {
-            Ok(b) => Some(b.to_vec()),
-            Err(_) => return json_error_response(StatusCode::BAD_REQUEST, "body read failed"),
-        }
-    } else {
-        None
-    };
-    // Round A R2 S2: bound concurrent backend processes (the middleware
-    // bypass skips the API rate limiter).
+    // Acquire the backend permit BEFORE reading the body: the buffered body
+    // is up to 50 MiB and the /git bypass skips the API rate limiter —
+    // bounding concurrent reads bounds memory to 4×50 MiB (Round A S2).
     let _permit = match GIT_BACKEND_SEMAPHORE.try_acquire() {
         Ok(p) => p,
         Err(_) => {
@@ -291,6 +294,15 @@ pub async fn handle_git_http(State(state): State<AppState>, req: Request) -> Res
                 "git http backend busy — retry shortly",
             );
         }
+    };
+    // Smart HTTP: POST bodies go to the backend's stdin; GET has no body.
+    let body = if method == "POST" {
+        match axum::body::to_bytes(req.into_body(), 50 * 1024 * 1024).await {
+            Ok(b) => Some(b.to_vec()),
+            Err(_) => return json_error_response(StatusCode::BAD_REQUEST, "body read failed"),
+        }
+    } else {
+        None
     };
     match run_backend(
         &state,
