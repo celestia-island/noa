@@ -109,8 +109,13 @@ impl RepoRegistry {
         Ok(())
     }
 
-    /// Registers or updates a repo entry. `origin` is set on insert and
-    /// preserved on update.
+    /// Registers or updates a repo entry.
+    ///
+    /// Preserved on update: `origin`, `created_us`, and — when `description`
+    /// is `None` — the existing description (a re-registration by a mirror
+    /// job or clone self-heal must not wipe operator text). To CLEAR a
+    /// description, pass `Some("")`. `default_branch` always overwrites (it
+    /// is validated non-empty).
     pub async fn register(
         &self,
         name: &str,
@@ -144,11 +149,10 @@ impl RepoRegistry {
                             old.origin,
                             old.created_us,
                             description.or(old.description),
-                            if default_branch.is_empty() {
-                                old.default_branch
-                            } else {
-                                default_branch
-                            },
+                            // `default_branch` is validated non-empty before
+                            // we get here, so it always overwrites (the
+                            // "keep old when empty" arm was unreachable).
+                            default_branch,
                         )
                     }
                     None => (
@@ -296,6 +300,16 @@ pub async fn register_repo(
 }
 
 pub async fn delete_repo(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    // Existence first: a ghost name answers 404 regardless of jobs (a job
+    // whose lockstep catalog write failed leaves job-without-row; that must
+    // read as "not found", matching the documented order).
+    match state.repo_registry.get(&name).await {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return json_err(StatusCode::NOT_FOUND, &format!("repo '{name}' not found"));
+        }
+        Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
     // A live mirror job re-registers the row on its next upsert and any clone
     // of the still-present scratch clone self-heals it back — deleting the
     // row underneath a job would be a 204 that silently undoes itself.
@@ -311,16 +325,6 @@ pub async fn delete_repo(State(state): State<AppState>, Path(name): Path<String>
             );
         }
         Ok(false) => {}
-        Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    }
-    // Existence first: a ghost name must answer 404, not a 409 about PRs of
-    // a repo the catalog denies (POST /api/v1/prs accepts any repo string,
-    // so such orphan PRs are creatable and must not reshape this answer).
-    match state.repo_registry.get(&name).await {
-        Ok(Some(_)) => {}
-        Ok(None) => {
-            return json_err(StatusCode::NOT_FOUND, &format!("repo '{name}' not found"));
-        }
         Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
     // Guard (W2b review). NOT ATOMIC: the open-PR listing and the row delete

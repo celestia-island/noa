@@ -98,16 +98,21 @@ GET    /api/v1/repos                       list  -> {"repos": [...]}
 POST   /api/v1/repos                       register ({"name", "description", "default_branch"})
 GET    /api/v1/repos/{name}                read one (404 when unregistered)
 GET    /api/v1/repos/{name}/prs            PRs of one repo -> bare PrRecord[]
+                                           (?state= must be open|closed|merged — anything else
+                                            is 400, so a typo cannot read as "no open PRs")
                                            (?state=, ?base=, ?limit=, ?offset= apply;
                                             ?repo= is rejected when it contradicts the path;
                                             404 for an unregistered name — after input
                                             validation, so a bad ?limit= answers 400 first)
 DELETE /api/v1/repos/{name}                remove the catalog row
-                                           (409 while OPEN PRs exist — close OR merge them
-                                            first; deleting the MIRROR JOB never blocks but
-                                            keeps the row while open PRs exist — or when the
-                                            open-PR check itself fails — so the scratch clone
-                                            may be gone while the row survives)
+                                           404 ghost → 409 while a MIRROR JOB of that name
+                                           exists (delete the job first: its next upsert would
+                                           re-register the row) → 409 while OPEN PRs exist
+                                           (close or merge them first) → 204.
+                                           Deleting the MIRROR JOB never blocks; it keeps the
+                                           row while open PRs exist (or when the open-PR check
+                                           fails), so the scratch clone may be gone while the
+                                           row survives.
 ```
 
 Read-only git serving shares the same namespace: `git clone

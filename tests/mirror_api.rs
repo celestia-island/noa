@@ -693,6 +693,46 @@ async fn test_repo_scoped_pr_routes() {
     );
 
     // A live mirror job blocks the catalog delete (its next upsert and any
+    // clone of the scratch clone would re-register the row). Use a job-only
+    // repo: with open PRs present the PR guard would answer 409 anyway, so
+    // only this shape proves the JOB guard fired.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/jobs",
+            Some(
+                serde_json::json!({
+                    "name": "jobonly",
+                    "remote_url": f.origin_url,
+                    "github_slug": "celestia-island/noa",
+                    "branches": ["master"],
+                    "enabled": true,
+                })
+                .to_string(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::DELETE, "/api/v1/repos/jobonly", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let jobonly_body = body_json(resp).await;
+    assert!(
+        jobonly_body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("mirror job"),
+        "the 409 must name the mirror job as the reason: {jobonly_body}"
+    );
+
+    // A live mirror job blocks the catalog delete (its next upsert and any
     // clone of the scratch clone would re-register the row).
     let resp = f
         .app
