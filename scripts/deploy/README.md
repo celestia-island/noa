@@ -90,3 +90,20 @@ GET  /api/v1/prs/{number}            read one
 POST /api/v1/prs/{number}/merge      approve + land  (body {"squash": bool})
 POST /api/v1/prs/{number}/close      revoke           (no body; idempotent)
 ```
+
+Repo catalog (W2b) and the repo-scoped PR view:
+
+```
+GET    /api/v1/repos                       list  -> {"repos": [...]}
+POST   /api/v1/repos                       register ({"name", "description", "default_branch"})
+GET    /api/v1/repos/{name}                read one (404 when unregistered)
+DELETE /api/v1/repos/{name}                remove the catalog row
+GET    /api/v1/repos/{name}/prs            PRs of one repo -> bare PrRecord[]
+                                           (404 when unregistered; ?repo= is rejected,
+                                            the path owns the repo; ?state= and ?base= apply)
+```
+
+Read-only git serving shares the same namespace: `git clone
+http://<host>:<port>/git/<repo>` for any repo the catalog knows (auth = API token).
+
+Pagination: every list route takes `?limit=` (1..1000, default 100) and `?offset=`.

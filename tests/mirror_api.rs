@@ -446,6 +446,26 @@ async fn test_repo_scoped_pr_routes() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
+    // Upper bound is enforced too (a `>` vs `>=` mutant would survive
+    // without this).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/pilot/prs?limit=1001", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // Deleting the catalog row is refused while open PRs exist (orphan
+    // tickets would resurrect merge-able after a re-registration).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::DELETE, "/api/v1/repos/pilot", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
     // A SECOND pilot PR so skip/take is actually regress-locked (with only
     // one PR a dropped limit/offset would look identical).
     let create3 = serde_json::json!({

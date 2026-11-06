@@ -135,15 +135,41 @@ pub struct ListPrsParams {
     pub state: Option<String>,
 }
 
-/// Repo-scoped PR listing (W2b): `/api/v1/repos/{name}/prs` — the catalog
-/// entry name is the PR `repo` value; this is the chest-facing view.
+/// Repo-scoped PR listing (W2b): `/api/v1/repos/{name}/prs`.
+///
+/// Shape: a **bare `PrRecord[]`**, matching the PR resource family
+/// (`GET /api/v1/prs`), NOT the wrapped catalog shape
+/// (`GET /api/v1/repos` → `{"repos": …}`). Rationale: the payload is a list
+/// of PRs regardless of which path reached it; one PR list, one shape.
+///
+/// Identity: the path segment pins `repo`. A `repo` query parameter is
+/// REJECTED (400) rather than silently ignored — a contradicting filter
+/// that answers 200 with another repo's rows is a lie.
+///
+/// 404 when the name isn't in the repo catalog. Note the deliberate
+/// asymmetry: `POST /api/v1/prs` accepts any `repo` string (the catalog is
+/// a discovery view, not a write gate), so PRs of an unregistered repo stay
+/// reachable through `GET /api/v1/prs?repo=…` and `GET /api/v1/prs/{n}`
+/// even though this view 404s. That is why the catalog must be treated as
+/// the canonical registry rather than as an authorization boundary.
 pub async fn list_repo_prs(
     State(state): State<AppState>,
     Path(name): Path<String>,
     Query(params): Query<ListPrsParams>,
 ) -> ApiResult<Vec<PrRecord>> {
-    if params.limit == 0 || params.limit > 1000 {
-        return Err(bad_request("limit must be between 1 and 1000"));
+    if params.limit == 0 || params.limit > super::handlers::MAX_LIMIT {
+        return Err(bad_request(format!(
+            "limit must be between 1 and {}",
+            super::handlers::MAX_LIMIT
+        )));
+    }
+    // The path owns the repo: a contradicting query filter is a client bug.
+    if let Some(query_repo) = params.repo.as_deref() {
+        if query_repo != name {
+            return Err(bad_request(
+                "the repo is determined by the path; drop the ?repo= filter",
+            ));
+        }
     }
     // 404 when the repo isn't in the catalog (consistent with GET repos/{name}).
     match state.repo_registry.get(&name).await.map_err(err_json)? {
@@ -165,8 +191,11 @@ pub async fn list_prs(
     State(state): State<AppState>,
     Query(params): Query<ListPrsParams>,
 ) -> ApiResult<Vec<PrRecord>> {
-    if params.limit == 0 || params.limit > 1000 {
-        return Err(bad_request("limit must be between 1 and 1000"));
+    if params.limit == 0 || params.limit > super::handlers::MAX_LIMIT {
+        return Err(bad_request(format!(
+            "limit must be between 1 and {}",
+            super::handlers::MAX_LIMIT
+        )));
     }
     let store = pr_store(&state).map_err(err_json)?;
     let mut records = store

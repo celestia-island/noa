@@ -281,6 +281,27 @@ pub async fn register_repo(
 }
 
 pub async fn delete_repo(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    // Guard (W2b review): deleting the catalog row would orphan any open
+    // PRs — the name can be re-registered by clone traffic or a mirror job
+    // and those stale tickets would silently become merge-able again. Refuse
+    // while open PRs exist; closing/merging them is the operator's call.
+    let prs = match crate::server::pr_store::PrStore::new(Arc::clone(&state.db)) {
+        Ok(store) => store.list(Some(&name), None, Some("open")).await,
+        Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    };
+    match prs {
+        Ok(open) if !open.is_empty() => {
+            return json_err(
+                StatusCode::CONFLICT,
+                &format!(
+                    "repo '{name}' has {} open PR(s); close or merge them first",
+                    open.len()
+                ),
+            );
+        }
+        Ok(_) => {}
+        Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
     let reg = &state.repo_registry;
     match reg.delete(&name).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),

@@ -112,6 +112,10 @@ pub(crate) fn default_limit() -> usize {
     100
 }
 
+/// Upper bound for list pagination; shared so the validation messages and
+/// the bound itself cannot drift between handlers.
+pub(crate) const MAX_LIMIT: usize = 1000;
+
 pub(crate) fn err_json(msg: impl std::fmt::Display) -> (StatusCode, Json<ApiError>) {
     tracing::error!("internal server error: {}", msg);
     (
