@@ -38,6 +38,7 @@ struct Fixture {
     _tmp: tempfile::TempDir,
     app: axum::Router,
     origin_url: String,
+    scratch: std::path::PathBuf,
 }
 
 async fn make_fixture() -> Fixture {
@@ -73,11 +74,12 @@ async fn make_fixture() -> Fixture {
     };
     let state = AppState::new(db)
         .with_api_token(TEST_API_TOKEN.to_string())
-        .with_mirror_config(mirror_cfg);
+        .with_mirror_config(mirror_cfg.clone());
     Fixture {
         _tmp: tmp,
         app: router(state),
         origin_url: format!("file://{}", origin.display()),
+        scratch: mirror_cfg.scratch_dir,
     }
 }
 
@@ -193,7 +195,8 @@ async fn test_job_lifecycle_and_run() {
         "refs after run: {names:?}"
     );
 
-    // Delete removes the job.
+    // Delete removes the job and its scratch clone (R2 S1/S2: a reused name
+    // must not inherit the dead clone's origin).
     let resp = f
         .app
         .clone()
@@ -208,6 +211,10 @@ async fn test_job_lifecycle_and_run() {
         .await
         .unwrap();
     assert_eq!(body_json(resp).await.as_array().unwrap().len(), 0);
+    assert!(
+        !f.scratch.join("pilot.git").exists(),
+        "DELETE must remove the scratch clone"
+    );
 }
 
 #[tokio::test]

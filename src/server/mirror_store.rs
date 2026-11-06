@@ -62,7 +62,7 @@ impl MirrorJob {
         if !scheme_ok {
             anyhow::bail!("mirror remote_url must be https:// or file://");
         }
-        if self.remote_url.contains('@') {
+        if self.remote_url.contains('@') || self.remote_url.contains('?') {
             anyhow::bail!("mirror remote_url must not embed credentials");
         }
         let mut slug = self.github_slug.split('/');
@@ -71,6 +71,10 @@ impl MirrorJob {
         if owner.is_empty()
             || repo.is_empty()
             || slug.next().is_some()
+            || owner.starts_with('.')
+            || repo.starts_with('.')
+            || owner.contains("..")
+            || repo.contains("..")
             || !owner
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
@@ -83,6 +87,11 @@ impl MirrorJob {
         if self.branches.is_empty() {
             anyhow::bail!("mirror job must track at least one branch");
         }
+        // Branch names feed workspace names via '/'→"__" replacement, so a
+        // literal "__" inside a branch would collide with a slashed sibling
+        // (R2 S2) — rejected here to keep the mapping injective. Duplicates
+        // are rejected for the same reason.
+        let mut seen = std::collections::HashSet::new();
         for b in &self.branches {
             if b.is_empty()
                 || b.len() > 200
@@ -95,10 +104,14 @@ impl MirrorJob {
                 || b.contains('^')
                 || b.contains(':')
                 || b.contains('\\')
-                || b.contains('\0')
-                || b.contains('\n')
-                || b.contains('\r')
+                || b.contains('?')
+                || b.contains('*')
+                || b.contains('[')
+                || b.contains(']')
+                || b.contains("__")
                 || b.ends_with(".lock")
+                || b.chars().any(|c| c.is_ascii_control())
+                || !seen.insert(b.as_str())
             {
                 anyhow::bail!("invalid branch name {b:?}");
             }
@@ -317,7 +330,15 @@ mod tests {
                 ..job("x")
             },
             MirrorJob {
+                remote_url: "https://host/r.git?token=SECRET".into(),
+                ..job("x")
+            },
+            MirrorJob {
                 github_slug: "not-a-slug".into(),
+                ..job("x")
+            },
+            MirrorJob {
+                github_slug: "../..".into(),
                 ..job("x")
             },
             MirrorJob {
@@ -328,8 +349,24 @@ mod tests {
                 branches: vec!["bad..name".into()],
                 ..job("x")
             },
+            // '/'→"__" mapping must stay injective (R2 S2): literal "__"
+            // in a branch would collide with a slashed sibling.
+            MirrorJob {
+                branches: vec!["a__b".into()],
+                ..job("x")
+            },
+            MirrorJob {
+                branches: vec!["master".into(), "master".into()],
+                ..job("x")
+            },
         ] {
             assert!(s.upsert(bad).await.is_err(), "expected rejection");
         }
+        // Slashed branches stay legal (nested ref names), just not "__".
+        let nested = MirrorJob {
+            branches: vec!["feature/nested".into()],
+            ..job("x")
+        };
+        s.upsert(nested).await.unwrap();
     }
 }

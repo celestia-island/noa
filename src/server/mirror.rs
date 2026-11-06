@@ -118,6 +118,7 @@ impl MirrorEngine {
     pub async fn run_job(&self, name: &str) -> Result<()> {
         let store = MirrorJobStore::new(Arc::clone(&self.db))?;
         let Some(job) = store.get(name).await? else {
+            tracing::warn!("mirror run: unknown job '{name}'");
             anyhow::bail!("unknown mirror job '{name}'");
         };
         match self.execute(&job).await {
@@ -160,6 +161,11 @@ impl MirrorEngine {
             std::fs::create_dir_all(parent)?;
         }
         if scratch.exists() {
+            // Re-point origin every run: a job whose remote_url was updated
+            // (or a name reused after delete) must never keep fetching the
+            // stale URL baked into an existing clone (R2 S1).
+            self.git(&scratch, &["remote", "set-url", "origin", &job.remote_url])
+                .await?;
             self.git(&scratch, &["fetch", "--prune", "--tags", "origin"])
                 .await?;
         } else {
@@ -185,41 +191,69 @@ impl MirrorEngine {
                 .await?;
         }
 
-        let mut outcomes = Vec::new();
+        // Per-branch isolation (R2 S2): one bad branch (deleted upstream,
+        // missing after fetch, fidelity failure) must not stop the others;
+        // the job still reports error with per-branch detail.
         let mut notes = Vec::new();
+        let mut failed = 0usize;
         for branch in &job.branches {
-            let ref_name = format!("mirror/{}/{}", job.name, branch);
-            let ws_name = format!("mirror.{}.{}", job.name, branch.replace('/', "__"));
-            let oid = resolve_remote_branch(&scratch, branch).await?;
-            let ref_store = RedbRefStore::new(Arc::clone(&self.db))?;
-            let prev = ref_store.get(&ref_name).await?;
-            let opts = ImportOptions {
-                workspace: ws_name,
-                head_ref: ref_name,
-                commit_hex: Some(oid.clone()),
-                parents: prev.iter().cloned().collect(),
-                skip_if_tree_unchanged: true,
-            };
-            let snap = import_git_commit(&scratch, Arc::clone(&self.db), &opts)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("branch '{branch}' missing after fetch"))?;
-            let changed = prev.as_ref() != Some(&snap);
-            self.verify_fidelity(&scratch, &oid, &snap).await?;
-            outcomes.push(BranchOutcome {
-                branch: branch.clone(),
-                snapshot: snap.0.chars().take(12).collect(),
-                changed,
-            });
+            match self.replicate_branch(job, &scratch, branch).await {
+                Ok(outcome) => notes.push(format!(
+                    "{}={}({})",
+                    outcome.branch,
+                    outcome.snapshot,
+                    if outcome.changed {
+                        "imported"
+                    } else {
+                        "unchanged"
+                    }
+                )),
+                Err(e) => {
+                    failed += 1;
+                    notes.push(format!("{branch}=FAILED: {e:#}"));
+                }
+            }
         }
-        for o in &outcomes {
-            notes.push(format!(
-                "{}={}({})",
-                o.branch,
-                o.snapshot,
-                if o.changed { "imported" } else { "unchanged" }
-            ));
+        let summary = if failed == 0 {
+            "fidelity ok".to_string()
+        } else {
+            format!("{failed} branch(es) failed")
+        };
+        let detail = format!("{summary}; {}", notes.join(" "));
+        if failed > 0 {
+            anyhow::bail!("{detail}");
         }
-        Ok(format!("fidelity ok; {}", notes.join(" ")))
+        Ok(detail)
+    }
+
+    async fn replicate_branch(
+        &self,
+        job: &MirrorJob,
+        scratch: &Path,
+        branch: &str,
+    ) -> Result<BranchOutcome> {
+        let ref_name = format!("mirror/{}/{}", job.name, branch);
+        let ws_name = format!("mirror.{}.{}", job.name, branch.replace('/', "__"));
+        let oid = resolve_remote_branch(scratch, branch).await?;
+        let ref_store = RedbRefStore::new(Arc::clone(&self.db))?;
+        let prev = ref_store.get(&ref_name).await?;
+        let opts = ImportOptions {
+            workspace: ws_name,
+            head_ref: ref_name,
+            commit_hex: Some(oid.clone()),
+            parents: prev.iter().cloned().collect(),
+            skip_if_tree_unchanged: true,
+        };
+        let snap = import_git_commit(scratch, Arc::clone(&self.db), &opts)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("branch '{branch}' missing after fetch"))?;
+        let changed = prev.as_ref() != Some(&snap);
+        self.verify_fidelity(scratch, &oid, &snap).await?;
+        Ok(BranchOutcome {
+            branch: branch.to_string(),
+            snapshot: snap.0.chars().take(12).collect(),
+            changed,
+        })
     }
 
     /// Recomputes git blob oids from the noa-side snapshot tree and compares
@@ -392,6 +426,9 @@ async fn walk_git_tree_oids(
     .await?
 }
 
+/// SHA-1 git blob oid (`git hash-object`). NB: a SHA-256-format origin repo
+/// fails fidelity on every entry — detectable, not silently wrong; acceptable
+/// until a SHA-256 origin actually shows up (workspace repos are SHA-1).
 fn git_blob_oid(content: &[u8]) -> String {
     let mut hasher = Sha1::new();
     hasher.update(format!("blob {}\0", content.len()).as_bytes());
@@ -462,7 +499,18 @@ pub async fn delete_job(
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     let store = MirrorJobStore::new(Arc::clone(&state.db)).map_err(err_json)?;
     match store.delete(&name).await.map_err(err_json)? {
-        true => Ok(StatusCode::NO_CONTENT),
+        true => {
+            // Remove the scratch clone so a job name reused with a different
+            // remote cannot inherit the dead clone's origin (R2 S1 trap);
+            // noa-side refs/snapshots stay as replica data (R2 S2 scope).
+            let scratch = state.mirror_config.scratch_dir.join(format!("{name}.git"));
+            if let Err(e) = std::fs::remove_dir_all(&scratch) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    tracing::warn!("mirror: scratch cleanup for {name} failed: {e}");
+                }
+            }
+            Ok(StatusCode::NO_CONTENT)
+        }
         false => Err((
             StatusCode::NOT_FOUND,
             Json(ApiError {
@@ -535,6 +583,31 @@ mod tests {
         run(
             &work,
             &["commit", "-m", "first", "--author=noa-test <t@noa.local>"],
+        );
+        run(&work, &["push", "origin", "master"]);
+        origin
+    }
+
+    /// A one-commit bare origin containing a single marker file.
+    fn make_origin(dir: &Path, name: &str, file: &str, content: &[u8]) -> PathBuf {
+        let origin = dir.join(name);
+        run(
+            dir,
+            &[
+                "init",
+                "--bare",
+                "--initial-branch=master",
+                origin.to_str().unwrap(),
+            ],
+        );
+        let work = dir.join(format!("work-{name}"));
+        std::fs::create_dir_all(&work).unwrap();
+        run(&work, &["clone", origin.to_str().unwrap(), "."]);
+        std::fs::write(work.join(file), content).unwrap();
+        run(&work, &["add", "-A"]);
+        run(
+            &work,
+            &["commit", "-m", "marker", "--author=noa-test <t@noa.local>"],
         );
         run(&work, &["push", "origin", "master"]);
         origin
@@ -631,6 +704,111 @@ mod tests {
         let snaps = RedbSnapshotStore::new(Arc::clone(&engine.db)).unwrap();
         let snap = snaps.get(&third).await.unwrap();
         assert_eq!(snap.parents, vec![second], "mirror snapshots must chain");
+    }
+
+    #[tokio::test]
+    async fn test_url_update_repoints_existing_clone() {
+        // R2 S1 regression: an upsert changing remote_url must repoint the
+        // existing scratch clone instead of silently fetching the old one.
+        let dir = tempfile::tempdir().unwrap();
+        let origin_a = git_fixture(dir.path());
+        let origin_b = make_origin(dir.path(), "b.git", "marker-b.txt", b"from B\n");
+        let db_dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            redb::Database::builder()
+                .create(db_dir.path().join("m.redb"))
+                .unwrap(),
+        );
+        let cfg = MirrorConfig {
+            interval_secs: 900,
+            scratch_dir: dir.path().join("scratch"),
+            token_env: String::new(),
+        };
+        let store = MirrorJobStore::new(Arc::clone(&db)).unwrap();
+        let mk = |url: String| MirrorJob {
+            name: "pilot".into(),
+            remote_url: url,
+            github_slug: "celestia-island/noa".into(),
+            branches: vec!["master".into()],
+            enabled: true,
+            last_run_us: None,
+            last_status: None,
+            last_detail: None,
+        };
+        store
+            .upsert(mk(format!("file://{}", origin_a.display())))
+            .await
+            .unwrap();
+        let engine = MirrorEngine::new(Arc::clone(&db), cfg);
+        engine.run_job("pilot").await.unwrap();
+
+        // Flip the job to origin B and rerun on the SAME scratch clone.
+        store
+            .upsert(mk(format!("file://{}", origin_b.display())))
+            .await
+            .unwrap();
+        engine.run_job("pilot").await.unwrap();
+
+        let refs = RedbRefStore::new(Arc::clone(&db)).unwrap();
+        let id = refs.get("mirror/pilot/master").await.unwrap().unwrap();
+        let snaps = RedbSnapshotStore::new(Arc::clone(&db)).unwrap();
+        let snap = snaps.get(&id).await.unwrap();
+        let obj = RedbObjectStore::new(Arc::clone(&db)).unwrap();
+        let tree = obj.get_tree(&TreeId(snap.tree_hash)).await.unwrap();
+        assert!(
+            tree.0.iter().any(|e| e.name == "marker-b.txt"),
+            "replica must come from origin B after the URL update"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_branch_failure_is_isolated() {
+        // R2 S2 regression: one bad branch must not stop the others; the
+        // job reports error with per-branch detail.
+        let dir = tempfile::tempdir().unwrap();
+        let origin = git_fixture(dir.path());
+        let db_dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            redb::Database::builder()
+                .create(db_dir.path().join("m.redb"))
+                .unwrap(),
+        );
+        let cfg = MirrorConfig {
+            interval_secs: 900,
+            scratch_dir: dir.path().join("scratch"),
+            token_env: String::new(),
+        };
+        let store = MirrorJobStore::new(Arc::clone(&db)).unwrap();
+        store
+            .upsert(MirrorJob {
+                name: "pilot".into(),
+                remote_url: format!("file://{}", origin.display()),
+                github_slug: "celestia-island/noa".into(),
+                branches: vec!["master".into(), "ghost".into()],
+                enabled: true,
+                last_run_us: None,
+                last_status: None,
+                last_detail: None,
+            })
+            .await
+            .unwrap();
+        let engine = MirrorEngine::new(Arc::clone(&db), cfg);
+        let result = engine.run_job("pilot").await;
+        assert!(result.is_err(), "a failing branch must fail the job");
+
+        let job = store.get("pilot").await.unwrap().unwrap();
+        assert_eq!(job.last_status.as_deref(), Some("error"));
+        let detail = job.last_detail.unwrap();
+        assert!(detail.contains("ghost=FAILED"), "detail: {detail}");
+        assert!(
+            detail.contains("master=") && !detail.contains("master=FAILED"),
+            "healthy branch must still import: {detail}"
+        );
+        let refs = RedbRefStore::new(Arc::clone(&db)).unwrap();
+        assert!(
+            refs.get("mirror/pilot/master").await.unwrap().is_some(),
+            "master must have replicated despite ghost failing"
+        );
     }
 
     #[tokio::test]
