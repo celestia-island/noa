@@ -122,6 +122,7 @@ async fn run_backend(
     suffix: &str,
     method: &str,
     query: Option<&str>,
+    headers: &HeaderMap,
     body: Option<Vec<u8>>,
 ) -> Result<Response, anyhow::Error> {
     let project_root = state.mirror_config.scratch_dir.clone();
@@ -153,18 +154,6 @@ async fn run_backend(
         ));
     }
 
-    // Bound concurrent backend processes (the /git middleware bypass skips
-    // the API rate limiter — Round A R2 S2).
-    let _permit = match GIT_BACKEND_SEMAPHORE.try_acquire() {
-        Ok(p) => p,
-        Err(_) => {
-            return Ok(json_error_response(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "git http backend busy — retry shortly",
-            ));
-        }
-    };
-
     let mut cmd = tokio::process::Command::new("git");
     // kill_on_drop: a child abandoned by the 60s deadline below must die,
     // not linger as an orphan holding .git locks (Round A S2).
@@ -174,9 +163,25 @@ async fn run_backend(
         cmd.arg("--advertise-refs");
     }
     cmd.arg(&repo_path);
-    // GIT_PROTOCOL must reach upload-pack itself — this is exactly the env
-    // that git-http-backend was dropping.
-    cmd.env("GIT_PROTOCOL", "version=2");
+    // Protocol negotiation: honour the CLIENT's Git-Protocol header
+    // (gitprotocol-v2 forbids the server from speaking v2 unrequested).
+    // Empty default = v0. This is the env git-http-backend was dropping
+    // on the POST path (root cause of #140).
+    // Deterministic env: no ambient GIT_*/proxy/config leakage into the
+    // served refs (base had env_clear; Round A S3).
+    cmd.env_clear();
+    cmd.env("PATH", "/usr/bin:/usr/local/bin");
+    // Protocol negotiation: honour the CLIENT's Git-Protocol header
+    // (gitprotocol-v2 forbids the server from speaking v2 unrequested).
+    // Empty default = v0. This is the env git-http-backend was dropping
+    // on the POST path (root cause of #140).
+    cmd.env(
+        "GIT_PROTOCOL",
+        headers
+            .get("Git-Protocol")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(""),
+    );
     cmd.stdin(if is_post_pack {
         Stdio::piped()
     } else {
@@ -217,6 +222,18 @@ async fn run_backend(
         ));
     }
 
+    // Smart advertisement MUST carry the `# service=` preamble + flush
+    // (git-http-backend emitted it; raw upload-pack --advertise-refs does
+    // not — D2 S1-class). Only the advertisement path; RPC responses carry
+    // no preamble. Emitted as v0-shaped lines; a v2 client (GIT_PROTOCOL
+    // forwarded) skips them per gitprotocol-v2.
+    let stdout = if wants_advertisement {
+        let mut full = b"001e# service=git-upload-pack\n0000".to_vec();
+        full.extend_from_slice(&output.stdout);
+        full
+    } else {
+        output.stdout
+    };
     let content_type = if wants_advertisement {
         "application/x-git-upload-pack-advertisement".to_string()
     } else {
@@ -233,7 +250,7 @@ async fn run_backend(
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
         .header(header::CACHE_CONTROL, "no-cache")
-        .body(Body::from(output.stdout))
+        .body(Body::from(stdout))
         .expect("static response parts"))
 }
 
@@ -260,9 +277,12 @@ pub async fn handle_git_http(State(state): State<AppState>, req: Request) -> Res
     };
     let query = req.uri().query().map(ToString::to_string);
     let method = req.method().as_str().to_uppercase();
+    let headers = req.headers().clone();
     // Acquire the backend permit BEFORE reading the body: the buffered body
     // is up to 50 MiB and the /git bypass skips the API rate limiter —
     // bounding concurrent reads bounds memory to 4×50 MiB (Round A S2).
+    // One acquisition covers the whole request including the spawned
+    // upload-pack child; run_backend deliberately does not re-acquire.
     let _permit = match GIT_BACKEND_SEMAPHORE.try_acquire() {
         Ok(p) => p,
         Err(_) => {
@@ -287,6 +307,7 @@ pub async fn handle_git_http(State(state): State<AppState>, req: Request) -> Res
         &git_path.suffix,
         &method,
         query.as_deref(),
+        &headers,
         body,
     )
     .await
