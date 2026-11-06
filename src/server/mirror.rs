@@ -506,7 +506,7 @@ impl MirrorEngine {
         let commit_sha = client
             .get_ref(&job.github_slug, &format!("heads/{branch}"))
             .await?
-            .ok_or_else(|| anyhow::anyhow!("branch '{branch}' missing on remote (api)"))?;
+            .ok_or_else(|| anyhow::anyhow!("branch '{branch}' missing on remote (api) — a 404 also means the token lacks access on private repos"))?;
         let (tree_sha, author, message, seconds) = client
             .get_commit_facts(&job.github_slug, &commit_sha)
             .await?;
@@ -524,22 +524,61 @@ impl MirrorEngine {
         let ref_store = RedbRefStore::new(Arc::clone(&self.db))?;
         let prev = ref_store.get(&ref_name).await?;
 
+        // Read-side delta (R2 S2): compare against the previous snapshot's
+        // entries and re-verify locally — unchanged blobs are NOT re-fetched
+        // (a full per-wave re-download would burn the API budget on exactly
+        // the degraded days this lane exists for).
+        let obj_store = RedbObjectStore::new(Arc::clone(&self.db))?;
+        let snap_store = RedbSnapshotStore::new(Arc::clone(&self.db))?;
+        let prev_entries: Option<std::collections::HashMap<String, crate::object::TreeEntry>> =
+            match &prev {
+                Some(prev_id) => match snap_store.get(prev_id).await {
+                    Ok(s) => obj_store
+                        .get_tree(&TreeId(s.tree_hash))
+                        .await
+                        .ok()
+                        .map(|t| t.0.into_iter().map(|e| (e.name.clone(), e)).collect()),
+                    Err(_) => None,
+                },
+                None => None,
+            };
+
         let mut imported = Vec::with_capacity(flat.len());
         for (path, mode, sha) in flat {
             let kind = match mode.as_str() {
+                "100644" => EntryKind::Blob,
                 "100755" => EntryKind::Executable,
                 "120000" => EntryKind::Symlink,
-                "160000" => {
-                    imported.push(ImportedEntry {
-                        path,
-                        kind: EntryKind::Gitlink,
-                        body: ImportedBody::Gitlink(sha),
-                    });
-                    continue;
-                }
-                _ => EntryKind::Blob,
+                "160000" => EntryKind::Gitlink,
+                other => anyhow::bail!("api import: unknown git mode {other:?} at {path:?}"),
             };
-            let content = client.get_blob(&job.github_slug, &sha).await?;
+            if kind == EntryKind::Gitlink {
+                // A gitlink is just the pointer oid (a commit in another
+                // repository) — no content to fetch, pass it through.
+                imported.push(ImportedEntry {
+                    path,
+                    kind: EntryKind::Gitlink,
+                    body: ImportedBody::Gitlink(sha),
+                });
+                continue;
+            }
+            let mut content: Option<Vec<u8>> = None;
+            if let Some(pe) = prev_entries.as_ref().and_then(|m| m.get(&path)) {
+                if pe.kind == kind && kind.has_blob_body() {
+                    if let Ok(local) = obj_store
+                        .get_blob(&crate::object::BlobId(pe.id.clone()))
+                        .await
+                    {
+                        if git_blob_oid(&local) == sha {
+                            content = Some(local);
+                        }
+                    }
+                }
+            }
+            let content = match content {
+                Some(c) => c,
+                None => client.get_blob(&job.github_slug, &sha).await?,
+            };
             let computed = git_blob_oid(&content);
             if computed != sha {
                 anyhow::bail!(
@@ -1369,14 +1408,19 @@ mod tests {
     /// Builds an axum mock serving the Git Data API for one branch head
     /// `c1` whose tree t1 carries the given `(path, mode, content)` files.
     /// `corrupt` flips one declared sha to force an ingest-fidelity error.
-    async fn api_import_mock(corrupt: bool) -> String {
+    async fn api_import_mock(
+        corrupt: bool,
+    ) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
         use axum::routing::{get as rget, post};
         use axum::Router;
+        let gets = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let gets_for_route = std::sync::Arc::clone(&gets);
         let files: Vec<(&str, &str, Vec<u8>)> = vec![
             ("README.md", "100644", b"# api fixture\n".to_vec()),
             ("run.sh", "100755", b"echo hi\n".to_vec()),
+            ("link", "120000", b"README.md".to_vec()),
         ];
-        let listing: Vec<serde_json::Value> = files
+        let mut listing: Vec<serde_json::Value> = files
             .iter()
             .map(|(p, m, c)| {
                 let mut sha = git_blob_oid(c);
@@ -1386,6 +1430,10 @@ mod tests {
                 serde_json::json!({ "path": p, "mode": m, "sha": sha, "type": "blob" })
             })
             .collect();
+        // gitlink row: pointer oid, no blob fetch expected.
+        listing.push(serde_json::json!({
+            "path": "sub", "mode": "160000", "sha": "a1b2c3d4e5f6", "type": "commit"
+        }));
         let blob_files = files.clone();
         let app = Router::new()
             .route(
@@ -1420,7 +1468,9 @@ mod tests {
                 "/repos/{owner}/{repo}/git/blobs/{sha}",
                 rget(move |axum::extract::Path((_o, _r, sha)): axum::extract::Path<(String, String, String)>| {
                     let files = blob_files.clone();
+                    let gets_for_route = std::sync::Arc::clone(&gets_for_route);
                     async move {
+                        gets_for_route.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                         for (_, _, c) in &files {
                             if git_blob_oid(c) == sha {
                                 use base64::Engine;
@@ -1449,7 +1499,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        format!("http://{addr}")
+        (format!("http://{addr}"), gets)
     }
 
     #[tokio::test]
@@ -1461,7 +1511,7 @@ mod tests {
                 .create(db_dir.path().join("m.redb"))
                 .unwrap(),
         );
-        let base = api_import_mock(false).await;
+        let (base, blob_gets) = api_import_mock(false).await;
         let cfg = MirrorConfig {
             interval_secs: 900,
             scratch_dir: dir.path().join("scratch"),
@@ -1495,12 +1545,34 @@ mod tests {
         let refs = RedbRefStore::new(Arc::clone(&db)).unwrap();
         let first = refs.get("mirror/pilot/master").await.unwrap().unwrap();
 
-        // Second run: unchanged via api, skip-if-unchanged holds.
+        // Snapshot metadata comes from the API commit (kills date/author
+        // fallback mutations).
+        let snaps = RedbSnapshotStore::new(Arc::clone(&db)).unwrap();
+        let snap = snaps.get(&first).await.unwrap();
+        assert_eq!(snap.author, "noa-test");
+        assert_eq!(snap.message, "api fixture commit");
+        assert_eq!(snap.timestamp, 1_793_966_400_000_000);
+        let obj = RedbObjectStore::new(Arc::clone(&db)).unwrap();
+        let tree = obj.get_tree(&TreeId(snap.tree_hash)).await.unwrap();
+        let link = tree.0.iter().find(|e| e.name == "link").unwrap();
+        assert_eq!(link.kind, EntryKind::Symlink);
+        let sub = tree.0.iter().find(|e| e.name == "sub").unwrap();
+        assert_eq!(sub.kind, EntryKind::Gitlink);
+        assert_eq!(sub.id, "a1b2c3d4e5f6");
+        let first_wave_gets = blob_gets.load(std::sync::atomic::Ordering::SeqCst);
+
+        // Second run: unchanged via api — skip-if-unchanged holds AND the
+        // delta skip means zero blob re-fetches (R2 S2 pin).
         engine.run_job("pilot").await.unwrap();
         assert_eq!(
             refs.get("mirror/pilot/master").await.unwrap().unwrap(),
             first,
             "api rerun must not advance on unchanged tree"
+        );
+        assert_eq!(
+            blob_gets.load(std::sync::atomic::Ordering::SeqCst),
+            first_wave_gets,
+            "unchanged blobs must not be re-fetched"
         );
     }
 
@@ -1513,7 +1585,7 @@ mod tests {
                 .create(db_dir.path().join("m.redb"))
                 .unwrap(),
         );
-        let base = api_import_mock(true).await;
+        let (base, _blob_gets) = api_import_mock(true).await;
         let cfg = MirrorConfig {
             interval_secs: 900,
             scratch_dir: dir.path().join("scratch"),
