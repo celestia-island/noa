@@ -33,6 +33,23 @@ use crate::server::handlers::{ApiError, AppState};
 
 const GIT_HTTP_BACKEND: &str = "/usr/lib/git-core/git-http-backend";
 
+/// Pack negotiation is CPU-heavy; cap concurrent backend processes (the
+/// /git middleware bypass skips the API rate limiter — Round A R2 S2).
+static GIT_BACKEND_SEMAPHORE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+/// Wall-clock bound per backend exchange: a stalled/hung child must not
+/// hold a semaphore slot forever.
+const GIT_BACKEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Suffixes git-http-backend may be invoked with. Everything else is
+/// refused in-handler — path validation must not rest on git's own
+/// `enter_repo` guard (Round A R2 S3).
+fn suffix_allowed(suffix: &str) -> bool {
+    matches!(
+        suffix,
+        "info/refs" | "git-upload-pack" | "HEAD" | "objects/info/packs" | "info/alternates"
+    ) || suffix.starts_with("objects/")
+}
+
 /// One validated `/git/{repo}/{suffix}` request, or the reason it is not
 /// servable.
 struct GitPath {
@@ -111,6 +128,12 @@ async fn run_backend(
             "push is not served yet — noa becomes write-authority in a later slice",
         ));
     }
+    if !suffix_allowed(suffix) {
+        return Ok(json_error_response(
+            StatusCode::BAD_REQUEST,
+            format!("unsupported git http path '{suffix}'"),
+        ));
+    }
     let project_root = state.mirror_config.scratch_dir.clone();
     if !project_root.join(format!("{repo}.git")).exists() {
         return Ok(json_error_response(
@@ -144,7 +167,9 @@ async fn run_backend(
     }
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
     if body.is_some() {
-        cmd.stderr(Stdio::null());
+        // Capture POST stderr (upload-pack negotiation failures) into the
+        // tracing buffer instead of dropping it.
+        cmd.stderr(Stdio::piped());
     }
 
     let mut child = cmd.spawn()?;
@@ -154,7 +179,20 @@ async fn run_backend(
             stdin.flush().await?;
         }
     }
-    let output = child.wait_with_output().await?;
+    let output = tokio::time::timeout(GIT_BACKEND_TIMEOUT, child.wait_with_output())
+        .await
+        .map_err(|_| anyhow::anyhow!("git http backend timed out after 60s"))??;
+
+    if !output.status.success() && output.stdout.is_empty() {
+        tracing::error!(
+            "git http backend crashed ({}) for {repo}/{suffix}",
+            output.status
+        );
+        return Ok(json_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "git http backend crashed",
+        ));
+    }
 
     // CGI: headers, blank line, body. git-http-backend emits
     // `Status: <code>` + Content-Type for smart responses.
@@ -242,6 +280,17 @@ pub async fn handle_git_http(State(state): State<AppState>, req: Request) -> Res
         }
     } else {
         None
+    };
+    // Round A R2 S2: bound concurrent backend processes (the middleware
+    // bypass skips the API rate limiter).
+    let _permit = match GIT_BACKEND_SEMAPHORE.try_acquire() {
+        Ok(p) => p,
+        Err(_) => {
+            return json_error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "git http backend busy — retry shortly",
+            );
+        }
     };
     match run_backend(
         &state,
