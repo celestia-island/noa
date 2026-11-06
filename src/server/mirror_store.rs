@@ -30,6 +30,12 @@ pub struct MirrorJob {
     /// Tracked branches. Each becomes ref `mirror/<name>/<branch>` and
     /// workspace `mirror.<name>.<sanitized branch>`.
     pub branches: Vec<String>,
+    /// Opt-in canary push (W1a-2): after replication, push the first
+    /// tracked branch's commit to `noa-mirror-canary` on the remote (git
+    /// transport first, Git Data API fallback). Meaningful for https
+    /// remotes; a file:// remote exercises only the git lane.
+    #[serde(default)]
+    pub canary_push: bool,
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_run_us: Option<i64>,
@@ -271,6 +277,7 @@ mod tests {
             remote_url: "https://github.com/celestia-island/noa.git".into(),
             github_slug: "celestia-island/noa".into(),
             branches: vec!["master".into()],
+            canary_push: false,
             enabled: true,
             last_run_us: None,
             last_status: None,
