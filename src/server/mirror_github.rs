@@ -346,7 +346,10 @@ impl GitDataClient {
             )
             .await?;
         if !status.is_success() {
-            anyhow::bail!("git-data peel tag failed ({status}): {}", truncate(&text));
+            anyhow::bail!(
+                "git-data peel tag {tag_sha} failed ({status}): {}",
+                truncate(&text)
+            );
         }
         let parsed: TagTarget = serde_json::from_str(&text)
             .map_err(|e| anyhow::anyhow!("git-data peel tag bad response: {e}"))?;

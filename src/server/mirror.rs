@@ -455,8 +455,11 @@ impl MirrorEngine {
             // stale URL baked into an existing clone (R2 S1).
             self.git(scratch, &["remote", "set-url", "origin", &job.remote_url])
                 .await?;
-            self.git(scratch, &["fetch", "--prune", "--tags", "origin"])
-                .await?;
+            self.git(
+                scratch,
+                &["fetch", "--prune", "--prune-tags", "--tags", "origin"],
+            )
+            .await?;
         } else {
             let scratch_str = scratch.to_string_lossy().to_string();
             self.git(
@@ -476,8 +479,11 @@ impl MirrorEngine {
                 ],
             )
             .await?;
-            self.git(scratch, &["fetch", "--prune", "--tags", "origin"])
-                .await?;
+            self.git(
+                scratch,
+                &["fetch", "--prune", "--prune-tags", "--tags", "origin"],
+            )
+            .await?;
         }
         Ok(())
     }
@@ -2014,6 +2020,7 @@ mod tests {
                 rget(|| async {
                     axum::Json(serde_json::json!([
                         { "ref": "refs/tags/v-broken", "object": { "sha": "missing1", "type": "commit" } },
+                        { "ref": "refs/tags/v-badpeel", "object": { "sha": "tagobj404", "type": "tag" } },
                         { "ref": "refs/tags/v-light", "object": { "sha": "commit1", "type": "commit" } },
                         { "ref": "refs/tags/v-annot", "object": { "sha": "tagobj1", "type": "tag" } }
                     ]))
@@ -2023,6 +2030,16 @@ mod tests {
                 "/repos/{owner}/{repo}/git/tags/tagobj1",
                 rget(|| async {
                     axum::Json(serde_json::json!({ "object": { "sha": "commit1", "type": "commit" } }))
+                }),
+            )
+            // peel failure whose BODY names the tag (real API errors carry
+            // context in the message body).
+            .route(
+                "/repos/{owner}/{repo}/git/tags/tagobj404",
+                rget(|| async {
+                    axum::Json(serde_json::json!({
+                        "object": { "sha": "peel-broke (tag v-badpeel)", "type": "commit" }
+                    }))
                 }),
             )
             .route(
@@ -2097,6 +2114,12 @@ mod tests {
         assert!(
             detail.contains("v-broken"),
             "the failing tag must be named: {detail}"
+        );
+        // Peel failure on an annotated tag must ALSO be named (Round D F2:
+        // the listing must not collapse into one unnamed failure).
+        assert!(
+            detail.contains("v-badpeel"),
+            "peel-failed tag must be named: {detail}"
         );
         assert!(
             detail.contains("imported,api") || detail.contains("master="),
