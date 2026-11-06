@@ -535,6 +535,13 @@ impl MirrorEngine {
         let args_for_error = args.join(" ");
         let out = tokio::task::spawn_blocking(move || -> std::io::Result<std::process::Output> {
             let mut cmd = Command::new("git");
+            // Global -c flags MUST precede the subcommand.
+            cmd.args([
+                "-c",
+                "http.lowSpeedLimit=1000",
+                "-c",
+                "http.lowSpeedTime=30",
+            ]);
             cmd.args(&args)
                 .current_dir(&cwd)
                 .env("GIT_TERMINAL_PROMPT", "0");
