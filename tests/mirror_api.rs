@@ -482,6 +482,68 @@ async fn test_repo_scoped_pr_routes() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CONFLICT);
 
+    // ...and the documented remedy works end to end: close every open PR of
+    // a repo, then DELETE it → 204. This pins the `state == "open"` filter
+    // explicitly — with the filter dropped, a repo holding only CLOSED PRs
+    // would 409 forever and the README's "close them first" would be a lie.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/repos",
+            Some(serde_json::json!({"name": "remedy"}).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let remedy_pr = serde_json::json!({
+        "title": "remedy pr",
+        "body": "context",
+        "base": "mirror.pilot.master",
+        "head": "mirror.pilot.master",
+        "author": "tester",
+        "repo": "remedy",
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/prs",
+            Some(remedy_pr.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let remedy_number = body_json(resp).await["number"].as_u64().unwrap();
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::DELETE, "/api/v1/repos/remedy", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT, "open PR blocks delete");
+    let close_path = format!("/api/v1/prs/{remedy_number}/close");
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::POST, &close_path, None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "close the blocking PR");
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::DELETE, "/api/v1/repos/remedy", None))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::NO_CONTENT,
+        "closed PRs must not block the delete"
+    );
+
     // ...but the allow path is real: a repo with no open PRs deletes (204),
     // otherwise an "always 409" guard would pass the suite.
     let resp = f
