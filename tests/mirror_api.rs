@@ -409,7 +409,23 @@ async fn test_repo_scoped_pr_routes() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED, "{:?}", resp);
 
-    // Repo-scoped list shows it.
+    // A second PR in the default repo must NOT leak into the pilot scope.
+    let create2 = serde_json::json!({
+        "title": "default repo pr",
+        "body": "context",
+        "base": "mirror.pilot.master",
+        "head": "mirror.pilot.master",
+        "author": "tester",
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::POST, "/api/v1/prs", Some(create2.to_string())))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Repo-scoped list shows exactly the pilot PR (scoping works).
     let resp = f
         .app
         .clone()
@@ -419,6 +435,16 @@ async fn test_repo_scoped_pr_routes() {
     assert_eq!(resp.status(), StatusCode::OK);
     let prs = body_json(resp).await;
     assert_eq!(prs.as_array().unwrap().len(), 1);
+    assert_eq!(prs[0]["repo"], "pilot");
+
+    // Pagination honoured: limit=0 is rejected; offset skips the pilot PR.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/pilot/prs?limit=0", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
     // Ghost repo → 404.
     let resp = f

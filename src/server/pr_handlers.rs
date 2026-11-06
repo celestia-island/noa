@@ -142,10 +142,13 @@ pub async fn list_repo_prs(
         None => return Err(not_found(format!("repo '{name}' not found"))),
     }
     let store = pr_store(&state).map_err(err_json)?;
-    let records = store
-        .list(Some(&name), None, params.state.as_deref())
+    let mut records = store
+        .list(Some(&name), params.base.as_deref(), params.state.as_deref())
         .await
         .map_err(err_json)?;
+    let start = params.pagination.offset.min(records.len());
+    let end = (start + params.pagination.limit).min(records.len());
+    records = records.into_iter().skip(start).take(end - start).collect();
     Ok(Json(records))
 }
 
