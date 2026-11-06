@@ -203,6 +203,20 @@ impl MirrorEngine {
         let mut notes = Vec::new();
         let mut outcomes: Vec<BranchOutcome> = Vec::new();
         let mut failed = 0usize;
+        if job.tags {
+            let tag_result = match lane {
+                "git" => self.replicate_tags_git(job, &scratch).await,
+                _ => self.replicate_tags_api(job).await,
+            };
+            match tag_result {
+                Ok(names) if names.is_empty() => {}
+                Ok(names) => notes.push(format!("tags={} ({})", names.len(), names.join(","))),
+                Err(e) => {
+                    failed += 1;
+                    notes.push(format!("tags=FAILED: {e:#}"));
+                }
+            }
+        }
         for branch in &job.branches {
             let result = match (lane, git_lane.as_ref()) {
                 ("git", Ok(())) => self.replicate_branch(job, &scratch, branch).await,
@@ -503,6 +517,26 @@ impl MirrorEngine {
     /// transport involved. Per-blob ingest fidelity: the declared oid must
     /// equal the locally recomputed sha1 of the fetched content.
     async fn replicate_branch_api(&self, job: &MirrorJob, branch: &str) -> Result<BranchOutcome> {
+        let client = self.api_client()?;
+        let commit_sha = client
+            .get_ref(&job.github_slug, &format!("heads/{branch}"))
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("branch '{branch}' missing on remote (api) — a 404 also means the token lacks access on private repos"))?;
+        let ref_name = format!("mirror/{}/{}", job.name, branch);
+        let ws_name = format!("mirror.{}.{}", job.name, branch.replace('/', "__"));
+        let snap = self
+            .import_api_commit(&client, job, &commit_sha, &ref_name, &ws_name, branch)
+            .await?;
+        Ok(BranchOutcome {
+            branch: branch.to_string(),
+            snapshot: snap,
+            changed: true,
+            commit_oid: commit_sha,
+        })
+    }
+
+    /// Builds the Git Data API client (empty token = anonymous).
+    fn api_client(&self) -> Result<GitDataClient> {
         let token = if self.cfg.token_env.is_empty() {
             String::new()
         } else {
@@ -511,27 +545,34 @@ impl MirrorEngine {
                 .filter(|t| !t.is_empty())
                 .unwrap_or_default()
         };
-        let client = GitDataClient::new(&self.cfg.github_api_base, token)?;
-        let commit_sha = client
-            .get_ref(&job.github_slug, &format!("heads/{branch}"))
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("branch '{branch}' missing on remote (api) — a 404 also means the token lacks access on private repos"))?;
+        GitDataClient::new(&self.cfg.github_api_base, token)
+    }
+
+    /// Imports one remote commit (by oid) through the Git Data API into
+    /// `ref_name` / `ws_name`. Shared by the branch and tag lanes.
+    async fn import_api_commit(
+        &self,
+        client: &GitDataClient,
+        job: &MirrorJob,
+        commit_sha: &str,
+        ref_name: &str,
+        ws_name: &str,
+        label: &str,
+    ) -> Result<SnapshotId> {
         let (tree_sha, author, message, seconds) = client
-            .get_commit_facts(&job.github_slug, &commit_sha)
+            .get_commit_facts(&job.github_slug, commit_sha)
             .await?;
         let flat = client
             .get_tree_flat(&job.github_slug, &tree_sha)
             .await?
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "tree listing truncated for '{branch}' (api import needs the full listing)"
+                    "tree listing truncated for '{label}' (api import needs the full listing)"
                 )
             })?;
 
-        let ref_name = format!("mirror/{}/{}", job.name, branch);
-        let ws_name = format!("mirror.{}.{}", job.name, branch.replace('/', "__"));
         let ref_store = RedbRefStore::new(Arc::clone(&self.db))?;
-        let prev = ref_store.get(&ref_name).await?;
+        let prev = ref_store.get(ref_name).await?;
 
         // Read-side delta (R2 S2): compare against the previous snapshot's
         // entries and re-verify locally — unchanged blobs are NOT re-fetched
@@ -618,9 +659,9 @@ impl MirrorEngine {
             Arc::clone(&self.db),
             imported,
             &StoreOptions {
-                workspace: ws_name,
-                head_ref: ref_name,
-                parents: prev.iter().cloned().collect(),
+                workspace: ws_name.to_string(),
+                head_ref: ref_name.to_string(),
+                parents: prev.clone().into_iter().collect(),
                 skip_if_tree_unchanged: true,
                 author,
                 message,
@@ -628,14 +669,150 @@ impl MirrorEngine {
             },
         )
         .await?
-        .ok_or_else(|| anyhow::anyhow!("api import produced no snapshot for '{branch}'"))?;
-        let changed = prev.as_ref() != Some(&snap);
-        Ok(BranchOutcome {
-            branch: branch.to_string(),
-            snapshot: snap,
-            changed,
-            commit_oid: commit_sha,
+        .ok_or_else(|| anyhow::anyhow!("api import produced no snapshot for '{label}'"))?;
+        Ok(snap)
+    }
+
+    /// Replicates every remote tag via the git lane. Annotated tags are
+    /// peeled to their commit (`%(*objectname)`); lightweight tags point at
+    /// the commit directly. Each lands as `mirror/<job>/tags/<tag>`.
+    async fn replicate_tags_git(&self, job: &MirrorJob, scratch: &Path) -> Result<Vec<String>> {
+        let out = self
+            .git_stdout(
+                scratch,
+                &[
+                    "for-each-ref",
+                    "--format=%(objecttype) %(*objectname) %(objectname) %(refname:short)",
+                    "refs/tags",
+                ],
+            )
+            .await?;
+        let mut imported = Vec::new();
+        for line in out.lines() {
+            let mut parts = line.splitn(4, ' ');
+            let (Some(objtype), Some(peeled), Some(objname), Some(name)) =
+                (parts.next(), parts.next(), parts.next(), parts.next())
+            else {
+                continue;
+            };
+            if name.is_empty() {
+                continue;
+            }
+            let commit_oid = if objtype == "tag" && !peeled.is_empty() {
+                peeled.to_string()
+            } else {
+                objname.to_string()
+            };
+            let snap = self
+                .import_git_commit_at(
+                    scratch,
+                    job,
+                    &commit_oid,
+                    &format!("mirror/{}/tags/{}", job.name, name),
+                    &format!("mirror.{}.tag.{}", job.name, name.replace('/', "__")),
+                )
+                .await?;
+            let _ = snap;
+            imported.push(name.to_string());
+        }
+        imported.sort();
+        Ok(imported)
+    }
+
+    /// Replicates every remote tag through the Git Data API (annotated tags
+    /// peeled via `/git/tags/{sha}`).
+    async fn replicate_tags_api(&self, job: &MirrorJob) -> Result<Vec<String>> {
+        let client = self.api_client()?;
+        let tags = client.list_tags(&job.github_slug).await?;
+        let mut imported = Vec::new();
+        for (name, commit_oid) in tags {
+            self.import_api_commit(
+                &client,
+                job,
+                &commit_oid,
+                &format!("mirror/{}/tags/{}", job.name, name),
+                &format!("mirror.{}.tag.{}", job.name, name.replace('/', "__")),
+                &format!("tag {name}"),
+            )
+            .await?;
+            imported.push(name);
+        }
+        imported.sort();
+        Ok(imported)
+    }
+
+    /// Imports one git-lane commit into an explicit ref/workspace.
+    async fn import_git_commit_at(
+        &self,
+        scratch: &Path,
+        job: &MirrorJob,
+        commit_oid: &str,
+        ref_name: &str,
+        ws_name: &str,
+    ) -> Result<SnapshotId> {
+        let _ = job;
+        let ref_store = RedbRefStore::new(Arc::clone(&self.db))?;
+        let prev = ref_store.get(ref_name).await?;
+        let opts = ImportOptions {
+            workspace: ws_name.to_string(),
+            head_ref: ref_name.to_string(),
+            commit_hex: Some(commit_oid.to_string()),
+            parents: prev.iter().cloned().collect(),
+            skip_if_tree_unchanged: true,
+        };
+        import_git_commit(scratch, Arc::clone(&self.db), &opts)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("tag commit '{commit_oid}' not found after fetch"))
+    }
+
+    /// Runs git and returns trimmed stdout.
+    async fn git_stdout(&self, cwd: &Path, args: &[&str]) -> Result<String> {
+        let cfg = self.cfg.clone();
+        let cwd = cwd.to_path_buf();
+        let args: Vec<String> = args.iter().map(ToString::to_string).collect();
+        let args_for_error = args.join(" ");
+        let out = tokio::task::spawn_blocking(move || -> std::io::Result<std::process::Output> {
+            let mut cmd = Command::new("git");
+            cmd.args([
+                "-c",
+                "http.lowSpeedLimit=1000",
+                "-c",
+                "http.lowSpeedTime=30",
+            ]);
+            cmd.args(&args)
+                .current_dir(&cwd)
+                .env("GIT_TERMINAL_PROMPT", "0");
+            let token = if cfg.token_env.is_empty() {
+                None
+            } else {
+                std::env::var(&cfg.token_env).ok().filter(|t| !t.is_empty())
+            };
+            if let Some(token) = token {
+                let askpass = cfg.scratch_dir.join(".askpass.sh");
+                let _ = std::fs::create_dir_all(cfg.scratch_dir.as_path());
+                let _ = std::fs::write(
+                    &askpass,
+                    "#!/bin/sh\nprintf '%s\\n' \"$NOA_MIRROR_FETCH_TOKEN\"\n",
+                );
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(md) = std::fs::metadata(&askpass) {
+                    let mut p = md.permissions();
+                    p.set_mode(0o700);
+                    let _ = std::fs::set_permissions(&askpass, p);
+                }
+                cmd.env("GIT_ASKPASS", &askpass)
+                    .env("NOA_MIRROR_FETCH_TOKEN", token);
+            }
+            cmd.output()
         })
+        .await??;
+        if !out.status.success() {
+            anyhow::bail!(
+                "git {args_for_error} failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 
     /// GitHub tree-entry mode string for an entry kind.
@@ -1054,6 +1231,7 @@ mod tests {
                 remote_url: format!("file://{}", origin.display()),
                 github_slug: "celestia-island/noa".into(),
                 branches: vec!["master".into()],
+                tags: false,
                 canary_push: false,
                 enabled: true,
                 last_run_us: None,
@@ -1133,6 +1311,7 @@ mod tests {
             remote_url: url,
             github_slug: "celestia-island/noa".into(),
             branches: vec!["master".into()],
+            tags: false,
             canary_push: false,
             enabled: true,
             last_run_us: None,
@@ -1192,6 +1371,7 @@ mod tests {
                 // Failing branch FIRST: an "abort remaining branches"
                 // regression must fail this test (master would never import).
                 branches: vec!["ghost".into(), "master".into()],
+                tags: false,
                 canary_push: false,
                 enabled: true,
                 last_run_us: None,
@@ -1534,6 +1714,7 @@ mod tests {
                 remote_url: "file:///nonexistent-noa-mirror-fixture".into(),
                 github_slug: "celestia-island/noa".into(),
                 branches: vec!["master".into()],
+                tags: false,
                 canary_push: false,
                 enabled: true,
                 last_run_us: None,
@@ -1705,6 +1886,7 @@ mod tests {
                 remote_url: "file:///nonexistent-noa-mirror-fixture".into(),
                 github_slug: "celestia-island/noa".into(),
                 branches: vec!["master".into()],
+                tags: false,
                 canary_push: false,
                 enabled: true,
                 last_run_us: None,
@@ -1723,6 +1905,168 @@ mod tests {
         let snaps = RedbSnapshotStore::new(Arc::clone(&db)).unwrap();
         let snap = snaps.get(&second).await.unwrap();
         assert_eq!(snap.parents, vec![first], "api wave 2 must chain to wave 1");
+    }
+
+    #[tokio::test]
+    async fn test_git_lane_replicates_tags() {
+        let (dir, engine, name) = engine_with_fixture("pilot").await;
+        // Lightweight + annotated tag on the fixture's master commit.
+        let work = dir.path().join("work");
+        run(&work, &["tag", "v-light"]);
+        run(&work, &["tag", "-a", "v-annot", "-m", "annotated tag"]);
+        run(&work, &["push", "origin", "--tags"]);
+
+        let store = MirrorJobStore::new(Arc::clone(&engine.db)).unwrap();
+        let job = store.get(&name).await.unwrap().unwrap();
+        store.upsert(MirrorJob { tags: true, ..job }).await.unwrap();
+        engine.run_job(&name).await.unwrap();
+
+        let refs = RedbRefStore::new(Arc::clone(&engine.db)).unwrap();
+        let light = refs
+            .get("mirror/pilot/tags/v-light")
+            .await
+            .unwrap()
+            .expect("lightweight tag imported");
+        let annot = refs
+            .get("mirror/pilot/tags/v-annot")
+            .await
+            .unwrap()
+            .expect("annotated tag imported");
+        // Snapshot ids embed the workspace name (they must differ); the
+        // CONTENT is what must match — compare tree hashes.
+        let snaps = RedbSnapshotStore::new(Arc::clone(&engine.db)).unwrap();
+        assert_eq!(
+            snaps.get(&light).await.unwrap().tree_hash,
+            snaps.get(&annot).await.unwrap().tree_hash,
+            "both tags point at the same commit => same tree hash"
+        );
+        let detail = store
+            .get(&name)
+            .await
+            .unwrap()
+            .unwrap()
+            .last_detail
+            .unwrap();
+        assert!(
+            detail.contains("tags=2"),
+            "detail must count tags: {detail}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_api_lane_replicates_tags_with_peel() {
+        use axum::routing::get as rget;
+        use axum::Router;
+        let content = b"tagged\n".to_vec();
+        let blob_sha = git_blob_oid(&content);
+        let tree_json = serde_json::json!({
+            "tree": [{ "path": "f.txt", "mode": "100644", "sha": blob_sha, "type": "blob" }],
+            "truncated": false
+        });
+        let commit_json = serde_json::json!({
+            "tree": { "sha": "tagtree" },
+            "author": { "name": "t" },
+            "committer": { "date": "2026-11-06T00:00:00Z" },
+            "message": "tagged commit"
+        });
+        let app = Router::new()
+            .route(
+                "/repos/{owner}/{repo}/git/refs/tags",
+                rget(|| async {
+                    axum::Json(serde_json::json!([
+                        { "ref": "refs/tags/v-light", "object": { "sha": "commit1", "type": "commit" } },
+                        { "ref": "refs/tags/v-annot", "object": { "sha": "tagobj1", "type": "tag" } }
+                    ]))
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/tags/tagobj1",
+                rget(|| async {
+                    axum::Json(serde_json::json!({ "object": { "sha": "commit1", "type": "commit" } }))
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/commits/commit1",
+                rget(move || {
+                    let commit_json = commit_json.clone();
+                    async move { axum::Json(commit_json) }
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/trees/tagtree",
+                rget(move || {
+                    let tree_json = tree_json.clone();
+                    async move { axum::Json(tree_json) }
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/blobs/{sha}",
+                rget(move || {
+                    let content = content.clone();
+                    async move {
+                        use base64::Engine;
+                        axum::Json(serde_json::json!({
+                            "content": base64::engine::general_purpose::STANDARD.encode(content),
+                            "encoding": "base64"
+                        }))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            redb::Database::builder()
+                .create(db_dir.path().join("m.redb"))
+                .unwrap(),
+        );
+        let cfg = MirrorConfig {
+            interval_secs: 900,
+            scratch_dir: dir.path().join("scratch"),
+            token_env: String::new(),
+            github_api_base: format!("http://{addr}"),
+        };
+        let store = MirrorJobStore::new(Arc::clone(&db)).unwrap();
+        store
+            .upsert(MirrorJob {
+                name: "pilot".into(),
+                remote_url: "file:///nonexistent-noa-mirror-fixture".into(),
+                github_slug: "celestia-island/noa".into(),
+                branches: vec!["master".into()],
+                tags: true,
+                canary_push: false,
+                enabled: true,
+                last_run_us: None,
+                last_status: None,
+                last_detail: None,
+            })
+            .await
+            .unwrap();
+        let engine = MirrorEngine::new(Arc::clone(&db), cfg);
+        let result = engine.run_job("pilot").await;
+        // The branch lookup 404s in this mock, so the job fails — but the
+        // tag lane must have run and landed both tags (annotated peeled).
+        assert!(result.is_err());
+        let job = store.get("pilot").await.unwrap().unwrap();
+        let detail = job.last_detail.unwrap();
+        assert!(
+            detail.contains("tags=2 (v-annot,v-light)"),
+            "tag lane must import both, annotated peeled: {detail}"
+        );
+        let refs = RedbRefStore::new(Arc::clone(&db)).unwrap();
+        let light = refs.get("mirror/pilot/tags/v-light").await.unwrap();
+        let annot = refs.get("mirror/pilot/tags/v-annot").await.unwrap();
+        let light = light.unwrap();
+        let annot = annot.unwrap();
+        let snaps = RedbSnapshotStore::new(Arc::clone(&db)).unwrap();
+        assert_eq!(
+            snaps.get(&light).await.unwrap().tree_hash,
+            snaps.get(&annot).await.unwrap().tree_hash,
+            "peeled annotated tag lands the same tree as the lightweight tag"
+        );
     }
 
     #[tokio::test]
@@ -1812,6 +2156,7 @@ mod tests {
                 remote_url: "file:///nonexistent-noa-mirror-fixture".into(),
                 github_slug: "celestia-island/noa".into(),
                 branches: vec!["master".into()],
+                tags: false,
                 canary_push: false,
                 enabled: true,
                 last_run_us: None,
@@ -1851,6 +2196,7 @@ mod tests {
                 remote_url: "file:///nonexistent-noa-mirror-fixture".into(),
                 github_slug: "celestia-island/noa".into(),
                 branches: vec!["master".into()],
+                tags: false,
                 canary_push: false,
                 enabled: true,
                 last_run_us: None,

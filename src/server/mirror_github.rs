@@ -284,6 +284,75 @@ impl GitDataClient {
         Ok((parsed.tree.sha, author, parsed.message, seconds))
     }
 
+    /// Lists tags as `(name, commit_oid)`, peeling annotated tags to the
+    /// commit they reference.
+    pub async fn list_tags(&self, slug: &str) -> Result<Vec<(String, String)>> {
+        #[derive(Deserialize)]
+        struct TagRef {
+            #[serde(rename = "ref")]
+            ref_name: String,
+            object: TagObject,
+        }
+        #[derive(Deserialize)]
+        struct TagObject {
+            sha: String,
+            #[serde(rename = "type")]
+            kind: String,
+        }
+        let (status, text) = self
+            .request(
+                reqwest::Method::GET,
+                &format!("/repos/{slug}/git/refs/tags"),
+                None,
+            )
+            .await?;
+        if !status.is_success() {
+            anyhow::bail!("git-data list tags failed ({status}): {}", truncate(&text));
+        }
+        let refs: Vec<TagRef> = serde_json::from_str(&text)
+            .map_err(|e| anyhow::anyhow!("git-data list tags bad response: {e}"))?;
+        let mut out = Vec::with_capacity(refs.len());
+        for r in refs {
+            let name = r
+                .ref_name
+                .strip_prefix("refs/tags/")
+                .unwrap_or(&r.ref_name)
+                .to_string();
+            let commit = if r.object.kind == "tag" {
+                self.peel_tag(slug, &r.object.sha).await?
+            } else {
+                r.object.sha
+            };
+            out.push((name, commit));
+        }
+        Ok(out)
+    }
+
+    /// Peels an annotated tag object to its target commit oid.
+    async fn peel_tag(&self, slug: &str, tag_sha: &str) -> Result<String> {
+        #[derive(Deserialize)]
+        struct TagTarget {
+            object: TagRefObject,
+        }
+        #[derive(Deserialize)]
+        struct TagRefObject {
+            sha: String,
+        }
+        let (status, text) = self
+            .request(
+                reqwest::Method::GET,
+                &format!("/repos/{slug}/git/tags/{tag_sha}"),
+                None,
+            )
+            .await?;
+        if !status.is_success() {
+            anyhow::bail!("git-data peel tag failed ({status}): {}", truncate(&text));
+        }
+        let parsed: TagTarget = serde_json::from_str(&text)
+            .map_err(|e| anyhow::anyhow!("git-data peel tag bad response: {e}"))?;
+        Ok(parsed.object.sha)
+    }
+
     /// Blob content by sha; handles both GitHub encodings.
     pub async fn get_blob(&self, slug: &str, file_sha: &str) -> Result<Vec<u8>> {
         let (status, text) = self
