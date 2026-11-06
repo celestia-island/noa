@@ -35,6 +35,10 @@ pub struct AppState {
     /// one-time at construction, so /git read-path requests don't issue
     /// write transactions (R2 S1).
     pub repo_registry: crate::server::repo_registry::RepoRegistry,
+    /// PR store — cached for the same reason as `repo_registry`:
+    /// `PrStore::new` runs an `ensure_table` write transaction, so building
+    /// one per request blocks an async worker on redb's writer lock.
+    pub pr_store: crate::server::pr_store::PrStore,
 }
 
 impl AppState {
@@ -43,6 +47,8 @@ impl AppState {
         AppState {
             repo_registry: crate::server::repo_registry::RepoRegistry::new(Arc::clone(&db))
                 .expect("repo registry init is startup-critical"),
+            pr_store: crate::server::pr_store::PrStore::new(Arc::clone(&db))
+                .expect("PR store init is startup-critical"),
             db,
             api_token: String::new(),
             rate_limiter: RateLimiter::new(1000, 60),

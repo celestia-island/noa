@@ -298,11 +298,7 @@ pub async fn delete_repo(State(state): State<AppState>, Path(name): Path<String>
     // later re-registration of the same name silently adopt them. Refuse
     // while open PRs exist; closing them is the operator's call (close every
     // open PR, then delete — the allow path stays reachable).
-    let prs = match crate::server::pr_store::PrStore::new(Arc::clone(&state.db)) {
-        Ok(store) => store.list(Some(&name), None, Some("open")).await,
-        Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    };
-    match prs {
+    match state.pr_store.list(Some(&name), None, Some("open")).await {
         Ok(open) if !open.is_empty() => {
             return json_err(
                 StatusCode::CONFLICT,

@@ -70,8 +70,8 @@ fn not_found(msg: impl ToString) -> (StatusCode, Json<serde_json::Value>) {
     )
 }
 
-fn pr_store(state: &AppState) -> Result<PrStore> {
-    PrStore::new(std::sync::Arc::clone(&state.db))
+fn pr_store(state: &AppState) -> &PrStore {
+    &state.pr_store
 }
 
 pub async fn create_pr(
@@ -96,7 +96,7 @@ pub async fn create_pr(
         .map_err(err_json)?
         .ok_or_else(|| not_found(format!("head workspace not found: {}", body.head)))?;
 
-    let store = pr_store(&state).map_err(err_json)?;
+    let store = pr_store(&state);
     let record = store
         .create(PrRecord {
             number: 0,
@@ -176,7 +176,7 @@ pub async fn list_repo_prs(
         Some(_) => {}
         None => return Err(not_found(format!("repo '{name}' not found"))),
     }
-    let store = pr_store(&state).map_err(err_json)?;
+    let store = pr_store(&state);
     let mut records = store
         .list(Some(&name), params.base.as_deref(), params.state.as_deref())
         .await
@@ -197,7 +197,7 @@ pub async fn list_prs(
             super::handlers::MAX_LIMIT
         )));
     }
-    let store = pr_store(&state).map_err(err_json)?;
+    let store = pr_store(&state);
     let mut records = store
         .list(
             params.repo.as_deref(),
@@ -213,7 +213,7 @@ pub async fn list_prs(
 }
 
 pub async fn get_pr(State(state): State<AppState>, Path(number): Path<u64>) -> ApiResult<PrRecord> {
-    let store = pr_store(&state).map_err(err_json)?;
+    let store = pr_store(&state);
     match store.get(number).await.map_err(err_json)? {
         Some(record) => Ok(Json(record)),
         None => Err(not_found(format!("PR not found: #{number}"))),
@@ -234,7 +234,7 @@ pub async fn close_pr(
     State(state): State<AppState>,
     Path(number): Path<u64>,
 ) -> ApiResult<PrRecord> {
-    let store = pr_store(&state).map_err(err_json)?;
+    let store = pr_store(&state);
     let record = store
         .get(number)
         .await
@@ -263,7 +263,7 @@ pub async fn merge_pr(
     Path(number): Path<u64>,
     Json(body): Json<MergePrBody>,
 ) -> ApiResult<PrRecord> {
-    let store = pr_store(&state).map_err(err_json)?;
+    let store = pr_store(&state);
     let record = store
         .get(number)
         .await

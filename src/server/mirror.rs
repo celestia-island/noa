@@ -1158,14 +1158,20 @@ pub async fn delete_job(
             // must never be blocked, but dropping the row would leave those
             // tickets addressable only through the flat route. Keep the row
             // (and say so) — DELETE /api/v1/repos/{name} is the guarded path.
-            let open_prs = match crate::server::pr_store::PrStore::new(Arc::clone(&state.db)) {
-                Ok(store) => store.list(Some(&name), None, Some("open")).await,
+            let has_open = match state.pr_store.list(Some(&name), None, Some("open")).await {
+                Ok(prs) => !prs.is_empty(),
+                // Fail CLOSED (keep the row) when open PRs cannot be
+                // enumerated: dropping the row on an unknown is exactly the
+                // orphaning this guard exists to prevent. Job deletion itself
+                // still succeeds either way.
                 Err(e) => {
-                    tracing::warn!("pr store unavailable during job delete: {e}");
-                    Ok(Vec::new())
+                    tracing::warn!(
+                        "pr store unavailable during job delete ({e}); \
+                         keeping the repo catalog row"
+                    );
+                    true
                 }
             };
-            let has_open = matches!(&open_prs, Ok(prs) if !prs.is_empty());
             if has_open {
                 tracing::warn!(
                     "mirror job {name} deleted but its repo catalog row is kept: \
