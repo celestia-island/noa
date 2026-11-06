@@ -1,15 +1,32 @@
 name: Test
 
+# One in-flight run per pull request (ci-ops 8.3.3): a superseded push cancels
+# its predecessor instead of queueing a second full suite behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_dispatch:
   pull_request:
-    types: [opened, reopened, ready_for_review]
+    # `synchronize` is not optional: without it a push to an existing PR never
+    # re-runs the suite, and the checks stay attached to the superseded SHA
+    # (round-2 review, 2026-11-05).
+    types: [opened, reopened, ready_for_review, synchronize]
+    # This lane is the repo's only Rust suite, so the filter must cover every
+    # path that can change the result (it used to miss tests/**, res/**,
+    # examples/**, scripts/** and the toolchain pin).
     paths:
-      - '.github/workflows/test.yml'
+      - '.github/workflows/**'
       - 'src/**/*'
       - 'bin/**/*'
+      - 'tests/**/*'
+      - 'res/**/*'
+      - 'examples/**/*'
+      - 'scripts/**/*'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'rust-toolchain.toml'
   push:
     branches: [master]
 
@@ -31,7 +48,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        toolchain: [stable, nightly]
+        # One full suite per PR, on stable only: the self-hosted farm has a
+        # handful of worker slots and PR jobs already queue for 38-77 minutes,
+        # so a second full `cargo test` leg on nightly spends a slot without
+        # adding signal. Nightly keeps the static checks (clippy.yml, fmt.yml).
+        toolchain: [stable]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
