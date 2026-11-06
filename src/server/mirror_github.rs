@@ -542,6 +542,33 @@ mod tests {
         assert_eq!(commit, "c0mm171");
     }
     #[tokio::test]
+    async fn test_tree_entry_without_sha_is_loud() {
+        // A listing row without `sha` would silently drop a file from the
+        // imported tree (the API lane has no tree-level net) — Round B M7.
+        let app = Router::new().route(
+            "/repos/{owner}/{repo}/git/trees/bad",
+            axum::routing::get(|| async {
+                axum::Json(serde_json::json!({
+                    "tree": [
+                        { "path": "ok.txt", "mode": "100644", "sha": "aa", "type": "blob" },
+                        { "path": "ghost.txt", "mode": "100644", "type": "blob" }
+                    ],
+                    "truncated": false
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = GitDataClient::new(format!("http://{addr}"), "tok").unwrap();
+        let err = client.get_tree_flat("o/r", "bad").await.unwrap_err();
+        assert!(
+            format!("{err}").contains("ghost.txt"),
+            "error must name the offending entry: {err}"
+        );
+    }
+
+    #[tokio::test]
     async fn test_ref_missing_then_created() {
         let app = Router::new()
             .route(

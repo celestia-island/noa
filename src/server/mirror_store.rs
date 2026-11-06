@@ -114,6 +114,8 @@ impl MirrorJob {
                 || b.contains(':')
                 || b.contains('\\')
                 || b.contains('?')
+                || b.contains('#')
+                || b.contains('%')
                 || b.contains('*')
                 || b.contains('[')
                 || b.contains(']')
@@ -370,6 +372,12 @@ mod tests {
             },
             MirrorJob {
                 branches: vec!["master".into(), "master".into()],
+                ..job("x")
+            },
+            // '#' in a branch would be eaten as a URL fragment on the API
+            // import lane ("a#b" silently imports branch "a") — Round B S2.
+            MirrorJob {
+                branches: vec!["a#b".into()],
                 ..job("x")
             },
             // '/'→"__" doubles length: a 199-char branch with 99 slashes

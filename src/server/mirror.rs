@@ -184,6 +184,15 @@ impl MirrorEngine {
                     "mirror {}: git transport failed, importing via Git Data API: {e:#}",
                     job.name
                 );
+                // Self-heal: a half-written clone (killed mid-clone, disk
+                // error) would otherwise pin every future wave to the API
+                // lane forever. Dropping it makes the next wave try a fresh
+                // clone instead of a doomed `remote set-url`.
+                if scratch.exists() {
+                    if let Err(rm) = std::fs::remove_dir_all(&scratch) {
+                        tracing::warn!("mirror {}: scratch reset failed: {rm}", job.name);
+                    }
+                }
                 "api"
             }
         };
