@@ -1097,6 +1097,35 @@ mod tests {
         let canary = run_out(&origin, &["rev-parse", "refs/heads/noa-mirror-canary"]);
         let master = run_out(&origin, &["rev-parse", "refs/heads/master"]);
         assert_eq!(canary, master, "canary ref must point at master's commit");
+
+        // Rewrite history upstream (amend + force push) so the next canary
+        // push is NON-fast-forward: the leading '+' in the push spec is the
+        // only thing that keeps the git lane usable (Round A S2 pin).
+        let work = dir.path().join("work");
+        std::fs::write(work.join("README.md"), b"# fixture amended\n").unwrap();
+        run(&work, &["add", "-A"]);
+        run(
+            &work,
+            &[
+                "commit",
+                "--amend",
+                "-m",
+                "first-amended",
+                "--author=noa-test <t@noa.local>",
+            ],
+        );
+        run(&work, &["push", "--force", "origin", "master"]);
+        engine.run_job(&name).await.unwrap();
+        let job = store.get(&name).await.unwrap().unwrap();
+        let detail = job.last_detail.unwrap();
+        assert!(
+            detail.contains("canary=git"),
+            "non-FF canary must still ride the git lane: {detail}"
+        );
+        let canary2 = run_out(&origin, &["rev-parse", "refs/heads/noa-mirror-canary"]);
+        let master2 = run_out(&origin, &["rev-parse", "refs/heads/master"]);
+        assert_ne!(master2, master, "upstream must have actually moved");
+        assert_eq!(canary2, master2, "canary must follow the rewritten master");
     }
 
     #[tokio::test]
