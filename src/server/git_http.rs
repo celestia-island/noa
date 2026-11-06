@@ -300,13 +300,25 @@ pub async fn handle_git_http(State(state): State<AppState>, req: Request) -> Res
             .is_some_and(|v| v.eq_ignore_ascii_case("gzip"));
         match axum::body::to_bytes(req.into_body(), 50 * 1024 * 1024).await {
             Ok(b) if is_gzip => {
-                let mut decoder = flate2::read::GzDecoder::new(&b[..]);
+                // Decompression-bomb guard (R2 S2): cap the inflated size —
+                // gzip ratios above 1000:1 mean a 50 MiB body can claim GBs.
+                // MultiGzDecoder also fails loudly on trailing garbage
+                // instead of silently truncating (single-member GzDecoder
+                // returns Ok(0) mid-stream).
+                const PLAIN_MAX: u64 = 200 * 1024 * 1024;
+                let mut decoder = flate2::read::MultiGzDecoder::new(&b[..]).take(PLAIN_MAX + 1);
                 use std::io::Read;
-                let mut plain = Vec::with_capacity(b.len() * 4);
+                let mut plain = Vec::with_capacity(b.len());
                 if let Err(e) = decoder.read_to_end(&mut plain) {
                     return json_error_response(
                         StatusCode::BAD_REQUEST,
                         format!("gzip request body decode failed: {e}"),
+                    );
+                }
+                if plain.len() as u64 > PLAIN_MAX {
+                    return json_error_response(
+                        StatusCode::BAD_REQUEST,
+                        format!("decompressed body too large: {} > {PLAIN_MAX}", plain.len()),
                     );
                 }
                 Some(plain)
