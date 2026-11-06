@@ -31,12 +31,18 @@ pub struct AppState {
     /// Mirror scheduler configuration (engine reads this for API-triggered
     /// runs; the scheduler loop itself is spawned by `bin/server.rs`).
     pub mirror_config: crate::server::mirror::MirrorConfig,
+    /// Repo catalog (W2b) — one instance per server; table creation is
+    /// one-time at construction, so /git read-path requests don't issue
+    /// write transactions (R2 S1).
+    pub repo_registry: crate::server::repo_registry::RepoRegistry,
 }
 
 impl AppState {
     #[must_use]
     pub fn new(db: Arc<redb::Database>) -> Self {
         AppState {
+            repo_registry: crate::server::repo_registry::RepoRegistry::new(Arc::clone(&db))
+                .expect("repo registry init is startup-critical"),
             db,
             api_token: String::new(),
             rate_limiter: RateLimiter::new(1000, 60),

@@ -141,6 +141,18 @@ async fn run_backend(
             format!("no mirrored repo '{repo}' — create a mirror job first"),
         ));
     }
+    // W2b: the repo catalog self-heals from clone traffic — a served repo
+    // that somehow lacks a catalog entry gets one (origin=clone-served).
+    // W2b: the repo catalog self-heals from clone traffic — a served repo
+    // that lacks a catalog entry gets one (origin=clone-served). Uses the
+    // AppState-cached registry (no per-request write txn for table setup);
+    // write fires only on a catalog miss (R2 S1).
+    if matches!(state.repo_registry.get(repo).await, Ok(None)) {
+        let _ = state
+            .repo_registry
+            .register(repo, None, "master", "clone-served")
+            .await;
+    }
 
     let wants_advertisement = suffix == "info/refs"
         && query
