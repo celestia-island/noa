@@ -1551,6 +1551,7 @@ mod tests {
                         platform: "x86_64-unknown-linux-gnu".to_string(),
                         lock_hash: None,
                         offline: true,
+                        hardware: None,
                     },
                     commands: Vec::new(),
                     not_run: Vec::new(),

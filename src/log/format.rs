@@ -149,6 +149,7 @@ also not valid {json
                 platform: "x86_64-unknown-linux-gnu".to_string(),
                 lock_hash: Some("deadbeef".to_string()),
                 offline: true,
+                hardware: None,
             },
             commands: vec![VerifyCommand {
                 argv: vec![
@@ -305,6 +306,10 @@ also not valid {json
             ["lock_hash", "offline", "platform", "toolchain"],
             "env key set drifted: {env_keys:?}"
         );
+        assert!(
+            !env_keys.contains(&"hardware"),
+            "hardware must be skipped when None: {env:?}"
+        );
 
         let cmd = &value["commands"][0];
         let cmd_keys: Vec<&str> = cmd
@@ -344,6 +349,32 @@ also not valid {json
     /// `prev` (the tamper-evidence chain link) is optional on the wire:
     /// absent on chain-head and pre-chain records, present and exact when the
     /// writer carries a chain. Both shapes must be pinned (second cut).
+    #[test]
+    fn test_hardware_optional_on_wire_both_shapes() {
+        // W3a: mirror of test_prev_optional_on_wire_both_shapes — the wire
+        // key name "hardware" is the cross-language contract with the
+        // Python ledger writer; a rename would pass everything else.
+        let mut record = sample_verify_record();
+        let without: serde_json::Value = serde_json::to_value(&record).unwrap();
+        assert!(
+            without["env"].get("hardware").is_none(),
+            "hardware must be skipped when None: {without}"
+        );
+
+        record.env.hardware = Some("node-1".to_string());
+        let with: serde_json::Value = serde_json::to_value(&record).unwrap();
+        assert_eq!(with["env"]["hardware"], "node-1");
+
+        // Roundtrip: parse back and confirm the value survives.
+        let env_roundtrip: crate::log::VerifyEnv =
+            serde_json::from_value(with["env"].clone()).unwrap();
+        assert_eq!(
+            env_roundtrip.hardware.as_deref(),
+            Some("node-1"),
+            "hardware must survive a serialize/parse roundtrip"
+        );
+    }
+
     #[test]
     fn test_prev_optional_on_wire_both_shapes() {
         let mut record = sample_verify_record();

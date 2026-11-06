@@ -59,6 +59,12 @@ pub struct VerifyEnv {
     /// Whether the commands ran with `--offline`.
     #[serde(default)]
     pub offline: bool,
+    /// Hardware identity of the executing machine: `sha256(/etc/machine-id)`
+    /// hex, registered in the workspace hardware registry. Absent on
+    /// unregistered machines or non-Linux runs (optional, backwards
+    /// compatible both ways per the `lock_hash` precedent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hardware: Option<String>,
 }
 
 /// One executed gate command (`VerifyRecord::commands`).
