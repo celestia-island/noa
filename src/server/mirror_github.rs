@@ -105,7 +105,12 @@ impl GitDataClient {
         body: Option<serde_json::Value>,
     ) -> Result<(reqwest::StatusCode, String)> {
         let url = format!("{}{}", self.base_url, path);
-        let mut req = self.client.request(method, &url).bearer_auth(&self.token);
+        let mut req = self.client.request(method, &url);
+        // Empty token = anonymous (import lane for public repos; GitHub's
+        // 60 req/h anonymous budget applies — production wires a read PAT).
+        if !self.token.is_empty() {
+            req = req.bearer_auth(&self.token);
+        }
         if let Some(b) = body {
             req = req.json(&b);
         }
@@ -230,6 +235,84 @@ impl GitDataClient {
         Ok(parsed.tree.sha)
     }
 
+    /// Commit metadata for the import lane: `(tree_sha, author, message,
+    /// unix_seconds)`.
+    pub async fn get_commit_facts(
+        &self,
+        slug: &str,
+        commit_sha: &str,
+    ) -> Result<(String, String, String, u64)> {
+        let (status, text) = self
+            .request(
+                reqwest::Method::GET,
+                &format!("/repos/{slug}/git/commits/{commit_sha}"),
+                None,
+            )
+            .await?;
+        if !status.is_success() {
+            anyhow::bail!("git-data get commit failed ({status}): {}", truncate(&text));
+        }
+        #[derive(Deserialize)]
+        struct Facts {
+            #[serde(default)]
+            author: Option<NameOnly>,
+            #[serde(default)]
+            committer: Option<DateOnly>,
+            #[serde(default)]
+            message: String,
+            tree: TreeOnly,
+        }
+        #[derive(Deserialize)]
+        struct NameOnly {
+            name: String,
+        }
+        #[derive(Deserialize)]
+        struct DateOnly {
+            date: String,
+        }
+        #[derive(Deserialize)]
+        struct TreeOnly {
+            sha: String,
+        }
+        let parsed: Facts = serde_json::from_str(&text)
+            .map_err(|e| anyhow::anyhow!("git-data get commit bad response: {e}"))?;
+        let author = parsed.author.map(|a| a.name).unwrap_or_default();
+        let seconds = parsed
+            .committer
+            .and_then(|c| chrono_ish_parse(&c.date))
+            .unwrap_or(0);
+        Ok((parsed.tree.sha, author, parsed.message, seconds))
+    }
+
+    /// Blob content by sha; handles both GitHub encodings.
+    pub async fn get_blob(&self, slug: &str, file_sha: &str) -> Result<Vec<u8>> {
+        let (status, text) = self
+            .request(
+                reqwest::Method::GET,
+                &format!("/repos/{slug}/git/blobs/{file_sha}"),
+                None,
+            )
+            .await?;
+        if !status.is_success() {
+            anyhow::bail!("git-data get blob failed ({status}): {}", truncate(&text));
+        }
+        #[derive(Deserialize)]
+        struct BlobResponse {
+            content: String,
+            encoding: String,
+        }
+        let parsed: BlobResponse = serde_json::from_str(&text)
+            .map_err(|e| anyhow::anyhow!("git-data get blob bad response: {e}"))?;
+        if parsed.encoding == "base64" {
+            use base64::Engine;
+            Ok(base64::engine::general_purpose::STANDARD
+                .decode(parsed.content.replace('\n', ""))
+                .map_err(|e| anyhow::anyhow!("git-data blob base64 decode failed: {e}"))?)
+        } else {
+            Ok(parsed.content.into_bytes())
+        }
+    }
+
     /// Flat `(path, mode, sha)` entries of a tree (recursive). `None` when
     /// the tree is missing or GitHub truncated the recursive listing — the
     /// caller then falls back to a full upload.
@@ -317,6 +400,30 @@ impl GitDataClient {
             Err(e) => anyhow::bail!("git-data update ref request failed: {e}"),
         }
     }
+}
+
+/// Minimal ISO-8601 UTC (`YYYY-MM-DDTHH:MM:SS…`) → unix seconds. GitHub
+/// commit dates are always this shape; no date crate needed.
+fn chrono_ish_parse(s: &str) -> Option<u64> {
+    if s.len() < 19 {
+        return None;
+    }
+    let year: i64 = s.get(0..4)?.parse().ok()?;
+    let month: i64 = s.get(5..7)?.parse().ok()?;
+    let day: i64 = s.get(8..10)?.parse().ok()?;
+    let hour: i64 = s.get(11..13)?.parse().ok()?;
+    let min: i64 = s.get(14..16)?.parse().ok()?;
+    let sec: i64 = s.get(17..19)?.parse().ok()?;
+    // days-from-civil (Howard Hinnant).
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    let secs = days * 86400 + hour * 3600 + min * 60 + sec;
+    Some(secs.max(0) as u64)
 }
 
 fn truncate(s: &str) -> String {

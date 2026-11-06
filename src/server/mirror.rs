@@ -32,7 +32,10 @@ use tokio::sync::Mutex;
 
 use crate::{
     error::Result,
-    git::{import_git_commit, ImportOptions},
+    git::{
+        import_git_commit, store_imported_entries, ImportOptions, ImportedBody, ImportedEntry,
+        StoreOptions,
+    },
     object::{EntryKind, ObjectStore, RedbObjectStore, TreeId},
     refs::{RedbRefStore, RefStore},
     server::{
@@ -170,36 +173,20 @@ impl MirrorEngine {
         if let Some(parent) = scratch.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        if scratch.exists() {
-            // Re-point origin every run: a job whose remote_url was updated
-            // (or a name reused after delete) must never keep fetching the
-            // stale URL baked into an existing clone (R2 S1).
-            self.git(&scratch, &["remote", "set-url", "origin", &job.remote_url])
-                .await?;
-            self.git(&scratch, &["fetch", "--prune", "--tags", "origin"])
-                .await?;
-        } else {
-            let scratch_str = scratch.to_string_lossy().to_string();
-            self.git(
-                Path::new("."),
-                &["clone", "--bare", &job.remote_url, &scratch_str],
-            )
-            .await?;
-            // Bare clones have no fetch refspec, so branch tracking would
-            // never populate refs/remotes/origin/*; configure it explicitly
-            // and prime it with an initial fetch.
-            self.git(
-                &scratch,
-                &[
-                    "config",
-                    "remote.origin.fetch",
-                    "+refs/heads/*:refs/remotes/origin/*",
-                ],
-            )
-            .await?;
-            self.git(&scratch, &["fetch", "--prune", "--tags", "origin"])
-                .await?;
-        }
+        let git_lane = self.ensure_scratch(job, &scratch).await;
+        // W1a-3: when the git transport is dead (L168 family — node-2 today
+        // resets github.com while api.github.com stays 200), the whole wave
+        // falls back to importing through the Git Data API.
+        let lane = match &git_lane {
+            Ok(()) => "git",
+            Err(e) => {
+                tracing::warn!(
+                    "mirror {}: git transport failed, importing via Git Data API: {e:#}",
+                    job.name
+                );
+                "api"
+            }
+        };
 
         // Per-branch isolation (R2 S2): one bad branch (deleted upstream,
         // missing after fetch, fidelity failure) must not stop the others;
@@ -208,17 +195,24 @@ impl MirrorEngine {
         let mut outcomes: Vec<BranchOutcome> = Vec::new();
         let mut failed = 0usize;
         for branch in &job.branches {
-            match self.replicate_branch(job, &scratch, branch).await {
+            let result = match (lane, git_lane.as_ref()) {
+                ("git", Ok(())) => self.replicate_branch(job, &scratch, branch).await,
+                ("api", Err(_)) => self.replicate_branch_api(job, branch).await,
+                // Unreachable pair kept explicit: lane tracks git_lane 1:1.
+                _ => self.replicate_branch_api(job, branch).await,
+            };
+            match result {
                 Ok(outcome) => {
                     notes.push(format!(
-                        "{}={}({})",
+                        "{}={}({},{})",
                         outcome.branch,
                         outcome.snapshot.0.chars().take(12).collect::<String>(),
                         if outcome.changed {
                             "imported"
                         } else {
                             "unchanged"
-                        }
+                        },
+                        lane
                     ));
                     outcomes.push(outcome);
                 }
@@ -429,6 +423,42 @@ impl MirrorEngine {
         Ok("api")
     }
 
+    /// Clones or updates the bare scratch clone. `Err` = git transport
+    /// unusable this wave (execute falls back to the API import lane).
+    async fn ensure_scratch(&self, job: &MirrorJob, scratch: &Path) -> Result<()> {
+        if scratch.exists() {
+            // Re-point origin every run: a job whose remote_url was updated
+            // (or a name reused after delete) must never keep fetching the
+            // stale URL baked into an existing clone (R2 S1).
+            self.git(scratch, &["remote", "set-url", "origin", &job.remote_url])
+                .await?;
+            self.git(scratch, &["fetch", "--prune", "--tags", "origin"])
+                .await?;
+        } else {
+            let scratch_str = scratch.to_string_lossy().to_string();
+            self.git(
+                Path::new("."),
+                &["clone", "--bare", &job.remote_url, &scratch_str],
+            )
+            .await?;
+            // Bare clones have no fetch refspec, so branch tracking would
+            // never populate refs/remotes/origin/*; configure it explicitly
+            // and prime it with an initial fetch.
+            self.git(
+                scratch,
+                &[
+                    "config",
+                    "remote.origin.fetch",
+                    "+refs/heads/*:refs/remotes/origin/*",
+                ],
+            )
+            .await?;
+            self.git(scratch, &["fetch", "--prune", "--tags", "origin"])
+                .await?;
+        }
+        Ok(())
+    }
+
     async fn replicate_branch(
         &self,
         job: &MirrorJob,
@@ -457,6 +487,106 @@ impl MirrorEngine {
             snapshot: snap,
             changed,
             commit_oid: oid,
+        })
+    }
+
+    /// W1a-3: imports one branch entirely through the Git Data API — no git
+    /// transport involved. Per-blob ingest fidelity: the declared oid must
+    /// equal the locally recomputed sha1 of the fetched content.
+    async fn replicate_branch_api(&self, job: &MirrorJob, branch: &str) -> Result<BranchOutcome> {
+        let token = if self.cfg.token_env.is_empty() {
+            String::new()
+        } else {
+            std::env::var(&self.cfg.token_env)
+                .ok()
+                .filter(|t| !t.is_empty())
+                .unwrap_or_default()
+        };
+        let client = GitDataClient::new(&self.cfg.github_api_base, token)?;
+        let commit_sha = client
+            .get_ref(&job.github_slug, &format!("heads/{branch}"))
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("branch '{branch}' missing on remote (api)"))?;
+        let (tree_sha, author, message, seconds) = client
+            .get_commit_facts(&job.github_slug, &commit_sha)
+            .await?;
+        let flat = client
+            .get_tree_flat(&job.github_slug, &tree_sha)
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "tree listing truncated for '{branch}' (api import needs the full listing)"
+                )
+            })?;
+
+        let ref_name = format!("mirror/{}/{}", job.name, branch);
+        let ws_name = format!("mirror.{}.{}", job.name, branch.replace('/', "__"));
+        let ref_store = RedbRefStore::new(Arc::clone(&self.db))?;
+        let prev = ref_store.get(&ref_name).await?;
+
+        let mut imported = Vec::with_capacity(flat.len());
+        for (path, mode, sha) in flat {
+            let kind = match mode.as_str() {
+                "100755" => EntryKind::Executable,
+                "120000" => EntryKind::Symlink,
+                "160000" => {
+                    imported.push(ImportedEntry {
+                        path,
+                        kind: EntryKind::Gitlink,
+                        body: ImportedBody::Gitlink(sha),
+                    });
+                    continue;
+                }
+                _ => EntryKind::Blob,
+            };
+            let content = client.get_blob(&job.github_slug, &sha).await?;
+            let computed = git_blob_oid(&content);
+            if computed != sha {
+                anyhow::bail!(
+                    "api import: blob oid mismatch at {path:?}: declared {sha} != computed {computed}"
+                );
+            }
+            imported.push(ImportedEntry {
+                path,
+                kind,
+                body: ImportedBody::Blob(content),
+            });
+        }
+
+        let author = if author.is_empty() {
+            "noa-mirror-api".to_string()
+        } else {
+            author
+        };
+        let message = if message.is_empty() {
+            format!(
+                "mirror via git-data-api @ {}",
+                commit_sha.chars().take(12).collect::<String>()
+            )
+        } else {
+            message
+        };
+        let snap = store_imported_entries(
+            Arc::clone(&self.db),
+            imported,
+            &StoreOptions {
+                workspace: ws_name,
+                head_ref: ref_name,
+                parents: prev.iter().cloned().collect(),
+                skip_if_tree_unchanged: true,
+                author,
+                message,
+                timestamp_us: seconds * 1_000_000,
+            },
+        )
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("api import produced no snapshot for '{branch}'"))?;
+        let changed = prev.as_ref() != Some(&snap);
+        Ok(BranchOutcome {
+            branch: branch.to_string(),
+            snapshot: snap,
+            changed,
+            commit_oid: commit_sha,
         })
     }
 
@@ -1234,6 +1364,186 @@ mod tests {
             "blob+tree endpoints must have been called"
         );
         std::env::remove_var(TOKEN_VAR);
+    }
+
+    /// Builds an axum mock serving the Git Data API for one branch head
+    /// `c1` whose tree t1 carries the given `(path, mode, content)` files.
+    /// `corrupt` flips one declared sha to force an ingest-fidelity error.
+    async fn api_import_mock(corrupt: bool) -> String {
+        use axum::routing::{get as rget, post};
+        use axum::Router;
+        let files: Vec<(&str, &str, Vec<u8>)> = vec![
+            ("README.md", "100644", b"# api fixture\n".to_vec()),
+            ("run.sh", "100755", b"echo hi\n".to_vec()),
+        ];
+        let listing: Vec<serde_json::Value> = files
+            .iter()
+            .map(|(p, m, c)| {
+                let mut sha = git_blob_oid(c);
+                if corrupt && *p == "run.sh" {
+                    sha = "0".repeat(40);
+                }
+                serde_json::json!({ "path": p, "mode": m, "sha": sha, "type": "blob" })
+            })
+            .collect();
+        let blob_files = files.clone();
+        let app = Router::new()
+            .route(
+                "/repos/{owner}/{repo}/git/ref/heads/master",
+                rget(|| async {
+                    axum::Json(serde_json::json!({ "object": { "sha": "c1" } }))
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/commits/c1",
+                rget(|| async {
+                    axum::Json(serde_json::json!({
+                        "tree": { "sha": "t1" },
+                        "author": { "name": "noa-test" },
+                        "committer": { "date": "2026-11-06T12:00:00Z" },
+                        "message": "api fixture commit"
+                    }))
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/trees/t1",
+                rget(move || {
+                    let listing = listing.clone();
+                    async move {
+                        axum::Json(serde_json::json!({
+                            "tree": listing, "truncated": false
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/blobs/{sha}",
+                rget(move |axum::extract::Path((_o, _r, sha)): axum::extract::Path<(String, String, String)>| {
+                    let files = blob_files.clone();
+                    async move {
+                        for (_, _, c) in &files {
+                            if git_blob_oid(c) == sha {
+                                use base64::Engine;
+                                return axum::Json(serde_json::json!({
+                                    "content": base64::engine::general_purpose::STANDARD.encode(c),
+                                    "encoding": "base64"
+                                }));
+                            }
+                        }
+                        // Unknown sha: serve the first file's bytes so
+                        // the client's oid self-check fires (corrupt case).
+                        use base64::Engine;
+                        let (_, _, c) = &files[0];
+                        axum::Json(serde_json::json!({
+                            "content": base64::engine::general_purpose::STANDARD.encode(c),
+                            "encoding": "base64"
+                        }))
+                    }
+                }),
+            )
+            // blobs POST kept for potential canary wiring (unused here).
+            .route(
+                "/repos/{owner}/{repo}/git/blobs",
+                post(|| async { axum::Json(serde_json::json!({ "sha": "x" })) }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn test_api_import_lane_when_git_transport_dead() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            redb::Database::builder()
+                .create(db_dir.path().join("m.redb"))
+                .unwrap(),
+        );
+        let base = api_import_mock(false).await;
+        let cfg = MirrorConfig {
+            interval_secs: 900,
+            scratch_dir: dir.path().join("scratch"),
+            token_env: String::new(),
+            github_api_base: base.clone(),
+        };
+        let store = MirrorJobStore::new(Arc::clone(&db)).unwrap();
+        store
+            .upsert(MirrorJob {
+                name: "pilot".into(),
+                remote_url: "file:///nonexistent-noa-mirror-fixture".into(),
+                github_slug: "celestia-island/noa".into(),
+                branches: vec!["master".into()],
+                canary_push: false,
+                enabled: true,
+                last_run_us: None,
+                last_status: None,
+                last_detail: None,
+            })
+            .await
+            .unwrap();
+        let engine = MirrorEngine::new(Arc::clone(&db), cfg);
+        engine.run_job("pilot").await.unwrap();
+
+        let job = store.get("pilot").await.unwrap().unwrap();
+        let detail = job.last_detail.unwrap();
+        assert!(
+            detail.contains("master=noa_") && detail.contains(",api)"),
+            "detail should record the api lane: {detail}"
+        );
+        let refs = RedbRefStore::new(Arc::clone(&db)).unwrap();
+        let first = refs.get("mirror/pilot/master").await.unwrap().unwrap();
+
+        // Second run: unchanged via api, skip-if-unchanged holds.
+        engine.run_job("pilot").await.unwrap();
+        assert_eq!(
+            refs.get("mirror/pilot/master").await.unwrap().unwrap(),
+            first,
+            "api rerun must not advance on unchanged tree"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_api_import_rejects_corrupt_blob() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            redb::Database::builder()
+                .create(db_dir.path().join("m.redb"))
+                .unwrap(),
+        );
+        let base = api_import_mock(true).await;
+        let cfg = MirrorConfig {
+            interval_secs: 900,
+            scratch_dir: dir.path().join("scratch"),
+            token_env: String::new(),
+            github_api_base: base,
+        };
+        let store = MirrorJobStore::new(Arc::clone(&db)).unwrap();
+        store
+            .upsert(MirrorJob {
+                name: "pilot".into(),
+                remote_url: "file:///nonexistent-noa-mirror-fixture".into(),
+                github_slug: "celestia-island/noa".into(),
+                branches: vec!["master".into()],
+                canary_push: false,
+                enabled: true,
+                last_run_us: None,
+                last_status: None,
+                last_detail: None,
+            })
+            .await
+            .unwrap();
+        let engine = MirrorEngine::new(Arc::clone(&db), cfg);
+        let result = engine.run_job("pilot").await;
+        assert!(result.is_err(), "declared-oid mismatch must fail the job");
+        let job = store.get("pilot").await.unwrap().unwrap();
+        let detail = job.last_detail.unwrap();
+        assert!(
+            detail.contains("blob oid mismatch at \"run.sh\""),
+            "error must name the path: {detail}"
+        );
     }
 
     #[tokio::test]
