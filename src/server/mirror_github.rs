@@ -29,7 +29,8 @@ pub struct ApiTreeEntry {
     /// `blob` | `commit` (gitlink).
     #[serde(rename = "type")]
     pub kind: &'static str,
-    pub sha: String,
+    /// `None` renders as JSON `null` — the tree API's deletion form.
+    pub sha: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -40,6 +41,10 @@ struct CreateBlob<'a> {
 
 #[derive(Serialize)]
 struct CreateTree<'a> {
+    /// When set, omitted entries are inherited from this tree (the
+    /// steady-state lane sends only the delta).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    base_tree: Option<&'a str>,
     tree: &'a [ApiTreeEntry],
 }
 
@@ -129,9 +134,18 @@ impl GitDataClient {
         Self::expect_sha(status, &text, "create blob")
     }
 
-    /// Creates a tree from complete entries (no base_tree), returns tree sha.
-    pub async fn put_tree(&self, slug: &str, entries: &[ApiTreeEntry]) -> Result<String> {
-        let body = serde_json::to_value(CreateTree { tree: entries })?;
+    /// Creates a tree, optionally inheriting unchanged entries from
+    /// `base_tree`, returns tree sha.
+    pub async fn put_tree(
+        &self,
+        slug: &str,
+        base_tree: Option<&str>,
+        entries: &[ApiTreeEntry],
+    ) -> Result<String> {
+        let body = serde_json::to_value(CreateTree {
+            base_tree,
+            tree: entries,
+        })?;
         let (status, text) = self
             .request(
                 reqwest::Method::POST,
@@ -185,6 +199,81 @@ impl GitDataClient {
         }
     }
 
+    /// Tree sha of a commit.
+    pub async fn get_commit_tree(&self, slug: &str, commit_sha: &str) -> Result<String> {
+        let (status, text) = self
+            .request(
+                reqwest::Method::GET,
+                &format!("/repos/{slug}/git/commits/{commit_sha}"),
+                None,
+            )
+            .await?;
+        if !status.is_success() {
+            anyhow::bail!("git-data get commit failed ({status}): {}", truncate(&text));
+        }
+        #[derive(Deserialize)]
+        struct CommitTree {
+            sha: String,
+        }
+        #[derive(Deserialize)]
+        struct CommitResponse {
+            tree: CommitTree,
+        }
+        let parsed: CommitResponse = serde_json::from_str(&text)
+            .map_err(|e| anyhow::anyhow!("git-data get commit bad response: {e}"))?;
+        Ok(parsed.tree.sha)
+    }
+
+    /// Flat `(path, mode, sha)` entries of a tree (recursive). `None` when
+    /// the tree is missing or GitHub truncated the recursive listing — the
+    /// caller then falls back to a full upload.
+    pub async fn get_tree_flat(
+        &self,
+        slug: &str,
+        tree_sha: &str,
+    ) -> Result<Option<Vec<(String, String, String)>>> {
+        let (status, text) = self
+            .request(
+                reqwest::Method::GET,
+                &format!("/repos/{slug}/git/trees/{tree_sha}?recursive=1"),
+                None,
+            )
+            .await?;
+        match status {
+            s if s.is_success() => {
+                #[derive(Deserialize)]
+                struct TreeEntryJson {
+                    path: String,
+                    mode: String,
+                    sha: Option<String>,
+                    #[serde(rename = "type")]
+                    kind: String,
+                }
+                #[derive(Deserialize)]
+                struct TreeResponse {
+                    tree: Vec<TreeEntryJson>,
+                    #[serde(default)]
+                    truncated: bool,
+                }
+                let parsed: TreeResponse = serde_json::from_str(&text)
+                    .map_err(|e| anyhow::anyhow!("git-data get tree bad response: {e}"))?;
+                if parsed.truncated {
+                    return Ok(None);
+                }
+                Ok(Some(
+                    parsed
+                        .tree
+                        .into_iter()
+                        .filter(|e| e.kind != "tree")
+                        .filter_map(|e| e.sha.map(|sha| (e.path, e.mode, sha)))
+                        .collect(),
+                ))
+            }
+            reqwest::StatusCode::NOT_FOUND => Ok(None),
+            s => anyhow::bail!("git-data get tree failed ({s}): {}", truncate(&text)),
+        }
+    }
+
     /// Updates a ref when it exists, creates it otherwise.
     pub async fn upsert_ref(&self, slug: &str, ref_path: &str, sha: &str) -> Result<()> {
         let patch = serde_json::to_value(UpdateRef { sha, force: true })?;
@@ -228,7 +317,13 @@ fn truncate(s: &str) -> String {
     if s.len() <= 200 {
         s.to_string()
     } else {
-        format!("{}…", &s[..200])
+        // Char-boundary-safe: byte slicing mid-UTF-8 would panic (GitHub
+        // error bodies can echo non-ASCII paths).
+        let mut end = 200;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &s[..end])
     }
 }
 
@@ -292,18 +387,19 @@ mod tests {
         let tree = client
             .put_tree(
                 "o/r",
+                None,
                 &[
                     ApiTreeEntry {
                         path: "a.txt".into(),
                         mode: "100644",
                         kind: "blob",
-                        sha: blob.clone(),
+                        sha: Some(blob.clone()),
                     },
                     ApiTreeEntry {
                         path: "run.sh".into(),
                         mode: "100755",
                         kind: "blob",
-                        sha: blob.clone(),
+                        sha: Some(blob.clone()),
                     },
                 ],
             )
@@ -350,5 +446,67 @@ mod tests {
             .upsert_ref("o/r", "heads/noa-mirror-canary", "c0mm171")
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_existing_ref_updated_via_patch_with_force() {
+        // The update path must send force=true (canary trees are rebuilt,
+        // not fast-forwarded) — pin it so removing `force` goes red.
+        let app = Router::new().route(
+            "/repos/{owner}/{repo}/git/refs/heads/noa-mirror-canary",
+            axum::routing::patch(
+                |axum::Json(body): axum::Json<serde_json::Value>| async move {
+                    assert_eq!(body["sha"], "c0mm171");
+                    assert_eq!(body["force"], true, "canary updates must be forced");
+                    axum::Json(serde_json::json!({ "object": { "sha": "c0mm171" } }))
+                },
+            ),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = GitDataClient::new(format!("http://{addr}"), "tok");
+        client
+            .upsert_ref("o/r", "heads/noa-mirror-canary", "c0mm171")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_get_tree_flat_parses_and_flags_truncation() {
+        let app = Router::new()
+            .route(
+                "/repos/{owner}/{repo}/git/trees/full",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({
+                        "tree": [
+                            { "path": "a.txt", "mode": "100644", "sha": "aa", "type": "blob" },
+                            { "path": "sub", "mode": "040000", "sha": "tt", "type": "tree" },
+                            { "path": "run.sh", "mode": "100755", "sha": "bb", "type": "blob" }
+                        ],
+                        "truncated": false
+                    }))
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/trees/huge",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({
+                        "tree": [{ "path": "a", "mode": "100644", "sha": "aa", "type": "blob" }],
+                        "truncated": true
+                    }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = GitDataClient::new(format!("http://{addr}"), "tok");
+        let flat = client.get_tree_flat("o/r", "full").await.unwrap().unwrap();
+        assert_eq!(flat.len(), 2, "tree entries are filtered out");
+        assert_eq!(
+            flat[0],
+            ("a.txt".to_string(), "100644".to_string(), "aa".to_string())
+        );
+        assert!(client.get_tree_flat("o/r", "huge").await.unwrap().is_none());
     }
 }

@@ -299,37 +299,89 @@ impl MirrorEngine {
         let snap = snap_store.get(&outcome.snapshot).await?;
         let tree = obj_store.get_tree(&TreeId(snap.tree_hash)).await?;
 
-        let mut entries = Vec::with_capacity(tree.0.len());
+        // Delta against the existing canary tree when one is readable:
+        // steady-state ticks upload only changed blobs (a full flat upload
+        // per tick would burn the API budget on large repos — R2 S2).
+        // `None` remote tree (no canary yet / unreadable / truncated) falls
+        // back to the full one-time upload.
+        let canary_ref_path = format!("heads/{}", Self::CANARY_REF);
+        let existing_canary = client.get_ref(&job.github_slug, &canary_ref_path).await?;
+        let mut remote_tree_sha: Option<String> = None;
+        let mut remote: Option<std::collections::HashMap<String, (String, String)>> = None;
+        if let Some(commit_sha) = &existing_canary {
+            if let Ok(tree_sha) = client.get_commit_tree(&job.github_slug, commit_sha).await {
+                if let Ok(Some(flat)) = client.get_tree_flat(&job.github_slug, &tree_sha).await {
+                    remote = Some(flat.into_iter().map(|(p, m, s)| (p, (m, s))).collect());
+                    remote_tree_sha = Some(tree_sha);
+                }
+            }
+        }
+
+        let mut entries: Vec<ApiTreeEntry> = Vec::new();
+        let mut noa_paths = std::collections::HashSet::new();
         for e in &tree.0 {
+            noa_paths.insert(e.name.clone());
             if e.kind.has_blob_body() {
                 let content = obj_store
                     .get_blob(&crate::object::BlobId(e.id.clone()))
                     .await?;
+                let expected = git_blob_oid(&content);
+                let mode = Self::git_mode_str(e.kind);
+                if let Some((rm, rs)) = remote.as_ref().and_then(|r| r.get(&e.name)) {
+                    if rm.as_str() == mode && rs.as_str() == expected.as_str() {
+                        continue; // unchanged — inherited via base_tree
+                    }
+                }
                 let sha = client.put_blob(&job.github_slug, &content).await?;
+                // Integrity self-check: GitHub returns the sha1 content
+                // address; a mismatch means corrupted upload.
+                if sha != expected {
+                    anyhow::bail!(
+                        "canary blob sha mismatch at {:?}: uploaded {sha} != computed {expected}",
+                        e.name
+                    );
+                }
                 entries.push(ApiTreeEntry {
                     path: e.name.clone(),
-                    mode: Self::git_mode_str(e.kind),
+                    mode,
                     kind: "blob",
-                    sha,
+                    sha: Some(sha),
                 });
             } else if e.kind == EntryKind::Gitlink {
                 // The oid names a commit in another repository; GitHub
                 // accepts the reference verbatim.
+                let mode = Self::git_mode_str(e.kind);
+                if let Some((rm, rs)) = remote.as_ref().and_then(|r| r.get(&e.name)) {
+                    if rm.as_str() == mode && rs.as_str() == e.id.as_str() {
+                        continue;
+                    }
+                }
                 entries.push(ApiTreeEntry {
                     path: e.name.clone(),
-                    mode: Self::git_mode_str(e.kind),
+                    mode,
                     kind: "commit",
-                    sha: e.id.clone(),
+                    sha: Some(e.id.clone()),
                 });
             }
         }
+        // Deletions (only meaningful with a base_tree to delete from).
+        if let Some(r) = &remote {
+            for path in r.keys() {
+                if !noa_paths.contains(path) {
+                    entries.push(ApiTreeEntry {
+                        path: path.clone(),
+                        mode: "100644",
+                        kind: "blob",
+                        sha: None,
+                    });
+                }
+            }
+        }
         entries.sort_by(|a, b| a.path.cmp(&b.path));
-        let tree_sha = client.put_tree(&job.github_slug, &entries).await?;
-        let parents = client
-            .get_ref(&job.github_slug, &format!("heads/{}", Self::CANARY_REF))
-            .await?
-            .into_iter()
-            .collect::<Vec<_>>();
+        let tree_sha = client
+            .put_tree(&job.github_slug, remote_tree_sha.as_deref(), &entries)
+            .await?;
+        let parents = existing_canary.into_iter().collect::<Vec<_>>();
         let commit_sha = client
             .put_commit(
                 &job.github_slug,
@@ -1043,9 +1095,16 @@ mod tests {
         let app = Router::new()
             .route(
                 "/repos/{owner}/{repo}/git/blobs",
-                post(move |axum::Json(_b): axum::Json<serde_json::Value>| {
-                    c1.fetch_add(1, Ordering::SeqCst);
-                    async { axum::Json(serde_json::json!({ "sha": "api-blob-sha" })) }
+                post(move |axum::Json(b): axum::Json<serde_json::Value>| {
+                    let c1 = Arc::clone(&c1);
+                    async move {
+                        c1.fetch_add(1, Ordering::SeqCst);
+                        use base64::Engine;
+                        let content = base64::engine::general_purpose::STANDARD
+                            .decode(b["content"].as_str().unwrap())
+                            .unwrap();
+                        axum::Json(serde_json::json!({ "sha": git_blob_oid(&content) }))
+                    }
                 }),
             )
             .route(
@@ -1112,6 +1171,132 @@ mod tests {
         assert!(
             calls.load(Ordering::SeqCst) >= 2,
             "blob+tree endpoints must have been called"
+        );
+        std::env::remove_var(TOKEN_VAR);
+    }
+
+    #[tokio::test]
+    async fn test_canary_api_delta_uploads_only_changes() {
+        use axum::routing::post;
+        use axum::Router;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let (dir, engine, name) = engine_with_fixture("pilot").await;
+        engine.run_job(&name).await.unwrap();
+        let origin = dir.path().join("origin.git");
+        make_read_only(&origin);
+
+        let blob_calls = Arc::new(AtomicUsize::new(0));
+        let bc = Arc::clone(&blob_calls);
+        // Remote state: an existing canary whose tree already carries the
+        // fixture's two files at their correct shas plus a stale file the
+        // noa tree lost — the delta lane must upload nothing and delete
+        // only the stale entry.
+        let readme_sha = git_blob_oid(b"# fixture\n");
+        let deep_sha = git_blob_oid(b"deep\n");
+        let app = Router::new()
+            .route(
+                "/repos/{owner}/{repo}/git/ref/heads/noa-mirror-canary",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({ "object": { "sha": "prev-canary" } }))
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/commits/prev-canary",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({ "tree": { "sha": "old-tree" } }))
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/trees/old-tree",
+                axum::routing::get(move || {
+                    let readme_sha = readme_sha.clone();
+                    let deep_sha = deep_sha.clone();
+                    async move {
+                        axum::Json(serde_json::json!({
+                            "tree": [
+                                { "path": "README.md", "mode": "100644", "sha": readme_sha, "type": "blob" },
+                                { "path": "nested/deep.txt", "mode": "100644", "sha": deep_sha, "type": "blob" },
+                                { "path": "stale.txt", "mode": "100644", "sha": "deadbee", "type": "blob" }
+                            ],
+                            "truncated": false
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/blobs",
+                post(move |axum::Json(b): axum::Json<serde_json::Value>| {
+                    let bc = Arc::clone(&bc);
+                    async move {
+                        bc.fetch_add(1, Ordering::SeqCst);
+                        use base64::Engine;
+                        let content = base64::engine::general_purpose::STANDARD
+                            .decode(b["content"].as_str().unwrap())
+                            .unwrap();
+                        axum::Json(serde_json::json!({ "sha": git_blob_oid(&content) }))
+                    }
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/trees",
+                post(|axum::Json(b): axum::Json<serde_json::Value>| async move {
+                    assert_eq!(
+                        b["base_tree"], "old-tree",
+                        "delta lane must build on the existing canary tree"
+                    );
+                    let entries = b["tree"].as_array().unwrap();
+                    assert_eq!(entries.len(), 1, "only the deletion should remain: {b}");
+                    assert_eq!(entries[0]["path"], "stale.txt");
+                    assert!(entries[0]["sha"].is_null(), "deletion is sha:null: {b}");
+                    axum::Json(serde_json::json!({ "sha": "new-tree" }))
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/commits",
+                post(|axum::Json(b): axum::Json<serde_json::Value>| async move {
+                    assert_eq!(
+                        b["parents"][0], "prev-canary",
+                        "canary history must chain: {b}"
+                    );
+                    axum::Json(serde_json::json!({ "sha": "api-commit-sha" }))
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/refs/heads/noa-mirror-canary",
+                axum::routing::patch(|axum::Json(_b): axum::Json<serde_json::Value>| async {
+                    axum::Json(serde_json::json!({ "object": { "sha": "api-commit-sha" } }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        const TOKEN_VAR: &str = "NOA_MIRROR_TEST_TOKEN_W1A2D";
+        std::env::set_var(TOKEN_VAR, "test-token");
+        let store = MirrorJobStore::new(Arc::clone(&engine.db)).unwrap();
+        let job = store.get(&name).await.unwrap().unwrap();
+        store
+            .upsert(MirrorJob {
+                canary_push: true,
+                ..job
+            })
+            .await
+            .unwrap();
+        let engine = MirrorEngine::new(
+            Arc::clone(&engine.db),
+            MirrorConfig {
+                scratch_dir: engine.cfg.scratch_dir.clone(),
+                token_env: TOKEN_VAR.to_string(),
+                github_api_base: format!("http://{addr}"),
+                ..engine.cfg.clone()
+            },
+        );
+        engine.run_job(&name).await.unwrap();
+        assert_eq!(
+            blob_calls.load(Ordering::SeqCst),
+            0,
+            "unchanged blobs must not be re-uploaded"
         );
         std::env::remove_var(TOKEN_VAR);
     }
