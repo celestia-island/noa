@@ -150,7 +150,7 @@ async fn run_backend(
     if matches!(state.repo_registry.get(repo).await, Ok(None)) {
         let _ = state
             .repo_registry
-            .register(repo, None, "master", "clone-served")
+            .register(repo, None, None, "clone-served")
             .await;
     }
 

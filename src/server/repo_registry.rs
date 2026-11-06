@@ -47,6 +47,10 @@ pub struct RepoEntry {
 }
 
 fn default_branch() -> String {
+    default_branch_value()
+}
+
+fn default_branch_value() -> String {
     "master".to_string()
 }
 
@@ -120,15 +124,22 @@ impl RepoRegistry {
         &self,
         name: &str,
         description: Option<String>,
-        default_branch: &str,
+        // `None` = the caller has no opinion: keep the existing branch on
+        // update, fall back to "master" on insert. Passing a value always
+        // overwrites. (A `&str` signature could not express "absent", which
+        // made every re-registration silently reset an operator's branch —
+        // review F1/R2.)
+        default_branch: Option<&str>,
         origin: &str,
     ) -> Result<RepoEntry> {
         Self::validate(name)?;
-        Self::validate_payload(name, description.as_deref(), default_branch)?;
+        if let Some(b) = default_branch {
+            Self::validate_payload(name, description.as_deref(), b)?;
+        }
         let db = Arc::clone(&self.db);
         let name = name.to_string();
         let description = description.clone();
-        let default_branch = default_branch.to_string();
+        let default_branch = default_branch.map(ToString::to_string);
         let origin = origin.to_string();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_write()?;
@@ -142,17 +153,12 @@ impl RepoRegistry {
                     Some(bytes) => {
                         let old: RepoEntry = rmp_serde::from_slice(bytes)?;
                         // A re-registration (mirror upsert, clone self-heal)
-                        // must not wipe operator-authored metadata: keep the
-                        // old description when the new call has none, and
-                        // keep the old branch when the new one is empty.
+                        // must not wipe operator-authored metadata.
                         (
                             old.origin,
                             old.created_us,
                             description.or(old.description),
-                            // `default_branch` is validated non-empty before
-                            // we get here, so it always overwrites (the
-                            // "keep old when empty" arm was unreachable).
-                            default_branch,
+                            default_branch.unwrap_or(old.default_branch),
                         )
                     }
                     None => (
@@ -162,7 +168,7 @@ impl RepoRegistry {
                             .unwrap_or_default()
                             .as_micros() as i64,
                         description,
-                        default_branch,
+                        default_branch.unwrap_or_else(default_branch_value),
                     ),
                 };
                 let entry = RepoEntry {
@@ -275,14 +281,12 @@ pub async fn register_repo(
         .get("description")
         .and_then(|v| v.as_str())
         .map(ToString::to_string);
-    let default_branch = body
-        .get("default_branch")
-        .and_then(|v| v.as_str())
-        .unwrap_or("master")
-        .to_string();
+    // Absent field = "no opinion" (preserve on update, "master" on insert);
+    // present = explicit overwrite.
+    let default_branch = body.get("default_branch").and_then(|v| v.as_str());
     let reg = &state.repo_registry;
     match reg
-        .register(&name, description, &default_branch, "manual")
+        .register(&name, description, default_branch, "manual")
         .await
     {
         Ok(entry) => (StatusCode::CREATED, repo_json(entry)).into_response(),
@@ -378,14 +382,19 @@ mod tests {
     async fn test_register_get_list_delete() {
         let (_d, reg) = registry().await;
         let e = reg
-            .register("noa", Some("the VCS itself".into()), "master", "manual")
+            .register(
+                "noa",
+                Some("the VCS itself".into()),
+                Some("master"),
+                "manual",
+            )
             .await
             .unwrap();
         assert_eq!(e.name, "noa");
         assert_eq!(e.origin, "manual");
         assert!(reg.get("noa").await.unwrap().is_some());
 
-        reg.register("devtools", None, "master", "mirror")
+        reg.register("devtools", None, Some("master"), "mirror")
             .await
             .unwrap();
         let all = reg.list().await.unwrap();
@@ -399,9 +408,11 @@ mod tests {
     #[tokio::test]
     async fn test_register_preserves_origin_on_update() {
         let (_d, reg) = registry().await;
-        reg.register("x", None, "master", "mirror").await.unwrap();
+        reg.register("x", None, Some("master"), "mirror")
+            .await
+            .unwrap();
         let e = reg
-            .register("x", Some("updated".into()), "master", "manual")
+            .register("x", Some("updated".into()), Some("master"), "manual")
             .await
             .unwrap();
         assert_eq!(e.origin, "mirror", "origin survives an update");
@@ -413,7 +424,9 @@ mod tests {
         let (_d, reg) = registry().await;
         for bad in ["", "UPPER", "has/slash", "has dot", "-lead", "a..b"] {
             assert!(
-                reg.register(bad, None, "master", "manual").await.is_err(),
+                reg.register(bad, None, Some("master"), "manual")
+                    .await
+                    .is_err(),
                 "expected rejection of {bad:?}"
             );
         }

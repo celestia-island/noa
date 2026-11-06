@@ -769,6 +769,7 @@ async fn test_repo_scoped_pr_routes() {
                 serde_json::json!({
                     "name": "described",
                     "description": "operator text",
+                    "default_branch": "main",
                 })
                 .to_string(),
             ),
@@ -809,6 +810,50 @@ async fn test_repo_scoped_pr_routes() {
         "mirror re-registration must keep the manual description"
     );
     assert_eq!(described["origin"], "manual", "origin survives too");
+    assert_eq!(
+        described["default_branch"], "main",
+        "an absent default_branch must preserve the operator's value"
+    );
+
+    // A PRESENT default_branch overwrites (the other half of the contract).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/repos",
+            Some(
+                serde_json::json!({
+                    "name": "described",
+                    "default_branch": "trunk",
+                })
+                .to_string(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/described", None))
+        .await
+        .unwrap();
+    let overwritten = body_json(resp).await;
+    assert_eq!(overwritten["default_branch"], "trunk");
+
+    // ...and a description already set is kept when the field is absent.
+    assert_eq!(overwritten["description"], "operator text");
+
+    // The flat PR list validates ?state= too (the scoped route's pin alone
+    // leaves that copy unguarded).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/prs?state=bogus", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
     // A SECOND pilot PR so skip/take is actually regress-locked (with only
     // one PR a dropped limit/offset would look identical).
