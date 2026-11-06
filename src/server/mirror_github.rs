@@ -84,12 +84,18 @@ struct RefObject {
 }
 
 impl GitDataClient {
-    pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
-        GitDataClient {
+    /// 120s request timeout: this lane exists for degraded-network days; a
+    /// stalled read must error out, not hang the caller (which holds the
+    /// mirror scheduler's only lock).
+    pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Result<Self> {
+        Ok(GitDataClient {
             base_url: base_url.into(),
             token: token.into(),
-            client: reqwest::Client::new(),
-        }
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(120))
+                .build()
+                .map_err(|e| anyhow::anyhow!("git-data client init failed: {e}"))?,
+        })
     }
 
     async fn request(
@@ -377,10 +383,33 @@ mod tests {
         (format!("http://{addr}"), calls)
     }
 
+    #[test]
+    fn test_truncate_is_char_boundary_safe() {
+        // Round A: byte-slicing at 200 panicked on multibyte error bodies.
+        let long_ascii = "a".repeat(300);
+        let t = truncate(&long_ascii);
+        assert!(t.ends_with('…'));
+        assert_eq!(t.chars().count(), 201, "200 ascii + ellipsis");
+        assert_eq!(t.len(), 203, "ellipsis is 3 bytes");
+
+        let mut s = "a".repeat(199);
+        s.push_str(&"中".repeat(50)); // 3-byte chars crossing byte 200
+        let t2 = truncate(&s);
+        assert!(t2.ends_with('…'), "must keep the ellipsis marker");
+        assert!(t2.len() <= 203);
+        assert!(
+            t2.trim_end_matches('…').chars().all(|c| c == 'a'),
+            "no partial multibyte char may survive: {t2:?}"
+        );
+
+        assert_eq!(truncate("short"), "short");
+        assert_eq!(truncate(""), "");
+    }
+
     #[tokio::test]
     async fn test_blob_tree_commit_roundtrip() {
         let (base, calls) = mock_github().await;
-        let client = GitDataClient::new(base, "tok");
+        let client = GitDataClient::new(base, "tok").unwrap();
         let blob = client.put_blob("o/r", b"hello\n").await.unwrap();
         assert_eq!(blob, "b105ha1");
         assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -436,7 +465,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let client = GitDataClient::new(format!("http://{addr}"), "tok");
+        let client = GitDataClient::new(format!("http://{addr}"), "tok").unwrap();
         assert!(client
             .get_ref("o/r", "heads/noa-mirror-canary")
             .await
@@ -465,7 +494,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let client = GitDataClient::new(format!("http://{addr}"), "tok");
+        let client = GitDataClient::new(format!("http://{addr}"), "tok").unwrap();
         client
             .upsert_ref("o/r", "heads/noa-mirror-canary", "c0mm171")
             .await
@@ -500,7 +529,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let client = GitDataClient::new(format!("http://{addr}"), "tok");
+        let client = GitDataClient::new(format!("http://{addr}"), "tok").unwrap();
         let flat = client.get_tree_flat("o/r", "full").await.unwrap().unwrap();
         assert_eq!(flat.len(), 2, "tree entries are filtered out");
         assert_eq!(

@@ -267,7 +267,11 @@ impl MirrorEngine {
         scratch: &Path,
         outcome: &BranchOutcome,
     ) -> Result<&'static str> {
-        let push_spec = format!("{}:refs/heads/{}", outcome.commit_oid, Self::CANARY_REF);
+        // Leading '+' forces the ref update: after any API-lane canary
+        // commit (built outside master's ancestry) a plain push would be
+        // non-FF-rejected forever, locking the probe onto the API lane
+        // (Round A S2).
+        let push_spec = format!("+{}:refs/heads/{}", outcome.commit_oid, Self::CANARY_REF);
         match self.git(scratch, &["push", "origin", &push_spec]).await {
             Ok(()) => return Ok("git"),
             Err(e) => {
@@ -292,7 +296,7 @@ impl MirrorEngine {
                 self.cfg.token_env
             )
         })?;
-        let client = GitDataClient::new(&self.cfg.github_api_base, token);
+        let client = GitDataClient::new(&self.cfg.github_api_base, token)?;
 
         let snap_store = RedbSnapshotStore::new(Arc::clone(&self.db))?;
         let obj_store = RedbObjectStore::new(Arc::clone(&self.db))?;
@@ -309,11 +313,25 @@ impl MirrorEngine {
         let mut remote_tree_sha: Option<String> = None;
         let mut remote: Option<std::collections::HashMap<String, (String, String)>> = None;
         if let Some(commit_sha) = &existing_canary {
-            if let Ok(tree_sha) = client.get_commit_tree(&job.github_slug, commit_sha).await {
-                if let Ok(Some(flat)) = client.get_tree_flat(&job.github_slug, &tree_sha).await {
-                    remote = Some(flat.into_iter().map(|(p, m, s)| (p, (m, s))).collect());
-                    remote_tree_sha = Some(tree_sha);
-                }
+            match client.get_commit_tree(&job.github_slug, commit_sha).await {
+                Ok(tree_sha) => match client.get_tree_flat(&job.github_slug, &tree_sha).await {
+                    Ok(Some(flat)) => {
+                        remote = Some(flat.into_iter().map(|(p, m, s)| (p, (m, s))).collect());
+                        remote_tree_sha = Some(tree_sha);
+                    }
+                    Ok(None) => tracing::warn!(
+                        "mirror {}: canary tree listing truncated; full upload",
+                        job.name
+                    ),
+                    Err(e) => tracing::warn!(
+                        "mirror {}: canary tree fetch failed; full upload: {e:#}",
+                        job.name
+                    ),
+                },
+                Err(e) => tracing::warn!(
+                    "mirror {}: canary commit fetch failed; full upload: {e:#}",
+                    job.name
+                ),
             }
         }
 
@@ -378,6 +396,13 @@ impl MirrorEngine {
             }
         }
         entries.sort_by(|a, b| a.path.cmp(&b.path));
+        if entries.is_empty() && remote_tree_sha.is_some() {
+            // Everything unchanged and nothing to delete: the canary is
+            // already current. Skipping avoids minting a fresh canary
+            // commit every tick (~96/day at 900s) and the empty-tree edge
+            // (Round A S3). The GETs above still proved the API lane.
+            return Ok("api-unchanged");
+        }
         let tree_sha = client
             .put_tree(&job.github_slug, remote_tree_sha.as_deref(), &entries)
             .await?;
