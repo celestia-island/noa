@@ -264,3 +264,116 @@ async fn test_create_rejects_bad_jobs() {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "body: {bad}");
     }
 }
+
+// --- W2a: git smart-HTTP clone over the mirror scratch clones ---
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_git_http_clone_end_to_end() {
+    let f = make_fixture().await;
+    // Create + run the job so the scratch clone exists and is current.
+    let create = serde_json::json!({
+        "name": "pilot",
+        "remote_url": f.origin_url,
+        "github_slug": "celestia-island/noa",
+        "branches": ["master"],
+        "enabled": true,
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/jobs",
+            Some(create.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/run",
+            Some(serde_json::json!({ "job": "pilot" }).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let job = wait_job_ok(&f.app, "pilot").await;
+    assert_eq!(job["last_status"], "ok", "{job}");
+
+    // Serve the router on a real TCP listener so a stock git client can
+    // hit it (smart HTTP needs a live socket, not oneshot).
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, f.app).await.unwrap() });
+
+    let url = format!("http://mirror:{TEST_API_TOKEN}@{addr}/git/pilot");
+    let dest = f._tmp.path().join("clone-out");
+    let out = Command::new("git")
+        .args(["clone", &url, dest.to_str().unwrap()])
+        .current_dir("/tmp")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_AUTHOR_NAME", "noa-test")
+        .env("GIT_AUTHOR_EMAIL", "t@noa.local")
+        .env("GIT_COMMITTER_NAME", "noa-test")
+        .env("GIT_COMMITTER_EMAIL", "t@noa.local")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "clone failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let cloned = std::fs::read_to_string(dest.join("hello.txt")).unwrap();
+    assert_eq!(cloned, "mirror lane\n");
+
+    // Incremental fetch against the same clone must also work.
+    git(&dest, &["fetch", "origin"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_git_http_auth_and_404() {
+    let f = make_fixture().await;
+
+    // No credentials -> 401 with a Basic challenge.
+    let noauth = Request::builder()
+        .method(Method::GET)
+        .uri("/git/pilot/info/refs?service=git-upload-pack")
+        .body(Body::empty())
+        .unwrap();
+    let resp = f.app.clone().oneshot(noauth).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert!(
+        resp.headers()
+            .get("www-authenticate")
+            .is_some_and(|v| v.to_str().unwrap().contains("Basic")),
+        "401 must carry a Basic challenge"
+    );
+
+    use base64::Engine;
+    let creds =
+        base64::engine::general_purpose::STANDARD.encode(format!("mirror:{TEST_API_TOKEN}"));
+
+    // Valid credentials + unknown repo -> 404 (no scratch clone).
+    let ghost = Request::builder()
+        .method(Method::GET)
+        .uri("/git/ghost/info/refs?service=git-upload-pack")
+        .header("authorization", format!("Basic {creds}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = f.app.clone().oneshot(ghost).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // push must be refused outright (W2a is read-only).
+    let push = Request::builder()
+        .method(Method::POST)
+        .uri("/git/pilot/git-receive-pack")
+        .header("authorization", format!("Basic {creds}"))
+        .header("content-type", "application/x-git-receive-pack-request")
+        .body(Body::from(vec![0u8]))
+        .unwrap();
+    let resp = f.app.clone().oneshot(push).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
