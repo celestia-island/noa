@@ -86,6 +86,29 @@ impl RepoRegistry {
         Ok(())
     }
 
+    /// Validates an update payload (description length + branch shape).
+    fn validate_payload(name: &str, description: Option<&str>, default_branch: &str) -> Result<()> {
+        Self::validate(name)?;
+        if let Some(d) = description {
+            if d.len() > 512 {
+                anyhow::bail!("description must be at most 512 bytes");
+            }
+        }
+        // Branch shape: git ref rules (informational field) — no control
+        // chars, no leading dash, no "..", no spaces.
+        if default_branch.is_empty()
+            || default_branch.starts_with('-')
+            || default_branch.contains("..")
+            || default_branch.contains('\u{0}')
+            || default_branch.contains(' ')
+            || default_branch.starts_with('/')
+            || default_branch.ends_with('/')
+        {
+            anyhow::bail!("invalid default_branch {default_branch:?}");
+        }
+        Ok(())
+    }
+
     /// Registers or updates a repo entry. `origin` is set on insert and
     /// preserved on update.
     pub async fn register(
@@ -96,6 +119,7 @@ impl RepoRegistry {
         origin: &str,
     ) -> Result<RepoEntry> {
         Self::validate(name)?;
+        Self::validate_payload(name, description.as_deref(), default_branch)?;
         let db = Arc::clone(&self.db);
         let name = name.to_string();
         let description = description.clone();
@@ -105,24 +129,29 @@ impl RepoRegistry {
             let txn = db.begin_write()?;
             let entry = {
                 let mut table = txn.open_table(REPOS)?;
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_micros() as i64;
                 let existing: Option<Vec<u8>> =
                     table.get(name.as_str())?.map(|g| g.value().to_vec());
-                let origin = if let Some(bytes) = &existing {
-                    let old: RepoEntry = rmp_serde::from_slice(bytes)?;
-                    old.origin
-                } else {
-                    origin
+                // origin AND created_us are preserved on update —
+                // created_us means "at registration" (R2 S2).
+                let (origin, created_us) = match &existing {
+                    Some(bytes) => {
+                        let old: RepoEntry = rmp_serde::from_slice(bytes)?;
+                        (old.origin, old.created_us)
+                    }
+                    None => (
+                        origin,
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_micros() as i64,
+                    ),
                 };
                 let entry = RepoEntry {
                     name: name.clone(),
                     description,
                     default_branch,
                     origin,
-                    created_us: now,
+                    created_us,
                 };
                 let data = rmp_serde::to_vec_named(&entry)?;
                 table.insert(name.as_str(), data.as_slice())?;
@@ -194,10 +223,7 @@ fn repo_json(entry: RepoEntry) -> Json<serde_json::Value> {
 }
 
 pub async fn list_repos(State(state): State<AppState>) -> Response {
-    let reg = match RepoRegistry::new(Arc::clone(&state.db)) {
-        Ok(r) => r,
-        Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    };
+    let reg = &state.repo_registry;
     match reg.list().await {
         Ok(repos) => (StatusCode::OK, Json(json!({ "repos": repos }))).into_response(),
         Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
@@ -209,10 +235,7 @@ fn json_err(code: StatusCode, msg: &str) -> Response {
 }
 
 pub async fn get_repo(State(state): State<AppState>, Path(name): Path<String>) -> Response {
-    let reg = match RepoRegistry::new(Arc::clone(&state.db)) {
-        Ok(r) => r,
-        Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    };
+    let reg = &state.repo_registry;
     match reg.get(&name).await {
         Ok(Some(e)) => repo_json(e).into_response(),
         Ok(None) => json_err(StatusCode::NOT_FOUND, &format!("repo '{name}' not found")),
@@ -238,24 +261,27 @@ pub async fn register_repo(
         .and_then(|v| v.as_str())
         .unwrap_or("master")
         .to_string();
-    let reg = match RepoRegistry::new(Arc::clone(&state.db)) {
-        Ok(r) => r,
-        Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    };
+    let reg = &state.repo_registry;
     match reg
         .register(&name, description, &default_branch, "manual")
         .await
     {
         Ok(entry) => (StatusCode::CREATED, repo_json(entry)).into_response(),
-        Err(e) => json_err(StatusCode::BAD_REQUEST, &e.to_string()),
+        // Validation failures (client fault) → 400; DB/storage errors → 500.
+        Err(e)
+            if e.to_string().contains("must match")
+                || e.to_string().contains("must be at most")
+                || e.to_string().contains("invalid")
+                || e.to_string().contains("at least") =>
+        {
+            json_err(StatusCode::BAD_REQUEST, &e.to_string())
+        }
+        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
 pub async fn delete_repo(State(state): State<AppState>, Path(name): Path<String>) -> Response {
-    let reg = match RepoRegistry::new(Arc::clone(&state.db)) {
-        Ok(r) => r,
-        Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    };
+    let reg = &state.repo_registry;
     match reg.delete(&name).await {
         Ok(true) => StatusCode::NO_CONTENT.into_response(),
         Ok(false) => json_err(StatusCode::NOT_FOUND, &format!("repo '{name}' not found")),

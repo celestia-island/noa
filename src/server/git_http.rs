@@ -30,7 +30,6 @@ use axum::{
 };
 
 use crate::server::handlers::{ApiError, AppState};
-use std::sync::Arc;
 
 /// Pack negotiation is CPU-heavy; cap concurrent backend processes (the
 /// /git middleware bypass skips the API rate limiter — Round A R2 S2).
@@ -144,12 +143,15 @@ async fn run_backend(
     }
     // W2b: the repo catalog self-heals from clone traffic — a served repo
     // that somehow lacks a catalog entry gets one (origin=clone-served).
-    if let Ok(registry) = crate::server::repo_registry::RepoRegistry::new(Arc::clone(&state.db)) {
-        if matches!(registry.get(repo).await, Ok(None)) {
-            let _ = registry
-                .register(repo, None, "master", "clone-served")
-                .await;
-        }
+    // W2b: the repo catalog self-heals from clone traffic — a served repo
+    // that lacks a catalog entry gets one (origin=clone-served). Uses the
+    // AppState-cached registry (no per-request write txn for table setup);
+    // write fires only on a catalog miss (R2 S1).
+    if matches!(state.repo_registry.get(repo).await, Ok(None)) {
+        let _ = state
+            .repo_registry
+            .register(repo, None, "master", "clone-served")
+            .await;
     }
 
     let wants_advertisement = suffix == "info/refs"

@@ -268,6 +268,78 @@ async fn test_create_rejects_bad_jobs() {
 // --- W2a: git smart-HTTP clone over the mirror scratch clones ---
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_repo_catalog_routes() {
+    let f = make_fixture().await;
+
+    // Register a repo manually.
+    let register = serde_json::json!({
+        "name": "pilot",
+        "description": "the pilot repo",
+        "default_branch": "master",
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/repos",
+            Some(register.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Detail returns the fields we set.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/pilot", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let detail = body_json(resp).await;
+    assert_eq!(detail["name"], "pilot");
+    assert_eq!(detail["default_branch"], "master");
+
+    // Unknown repo → 404.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/ghost", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // A mirror job upsert auto-registers the repo entry (W2b lockstep).
+    let job_create = serde_json::json!({
+        "name": "pilot",
+        "remote_url": f.origin_url,
+        "github_slug": "celestia-island/noa",
+        "branches": ["master"],
+        "enabled": true,
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/jobs",
+            Some(job_create.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/pilot", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_git_http_clone_end_to_end() {
     let f = make_fixture().await;
     // Create + run the job so the scratch clone exists and is current.
