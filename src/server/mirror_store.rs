@@ -144,11 +144,15 @@ impl MirrorJob {
 #[derive(Clone)]
 pub struct MirrorJobStore {
     db: Arc<redb::Database>,
+    /// Shared with AppState (one instance per server) so upsert auto-register
+    /// doesn't construct a fresh registry per call (Round C S2).
+    registry: crate::server::repo_registry::RepoRegistry,
 }
 
 impl MirrorJobStore {
     pub fn new(db: Arc<redb::Database>) -> Result<Self> {
-        let store = MirrorJobStore { db };
+        let registry = crate::server::repo_registry::RepoRegistry::new(Arc::clone(&db))?;
+        let store = MirrorJobStore { db, registry };
         store.ensure_table()?;
         Ok(store)
     }
@@ -165,7 +169,6 @@ impl MirrorJobStore {
     /// update unless the payload carries new values.
     pub async fn upsert(&self, mut job: MirrorJob) -> Result<MirrorJob> {
         job.validate()?;
-        let db_for_registry = self.db.clone();
         let db = self.db.clone();
         let first_branch = job.branches.first().cloned().unwrap_or_default();
         let job_for_registry = job.clone();
@@ -191,7 +194,7 @@ impl MirrorJobStore {
         .await??;
         // W2b: the repo catalog follows the mirror lockstep (async context —
         // the registry registers in its own spawn_blocking).
-        let reg = crate::server::repo_registry::RepoRegistry::new(db_for_registry)?;
+        let reg = &self.registry;
         reg.register(
             &job_for_registry.name,
             None,

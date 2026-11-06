@@ -1154,11 +1154,8 @@ pub async fn delete_job(
             // noa-side refs/snapshots stay as replica data (R2 S2 scope).
             // Lockstep: the repo catalog entry goes with the job, otherwise
             // the next upsert re-registers it (R2 S2 delete asymmetry).
-            if let Ok(reg) = crate::server::repo_registry::RepoRegistry::new(Arc::clone(&state.db))
-            {
-                if let Err(e) = reg.delete(&name).await {
-                    tracing::warn!("repo catalog delete for {name} failed: {e}");
-                }
+            if let Err(e) = state.repo_registry.delete(&name).await {
+                tracing::warn!("repo catalog delete for {name} failed: {e}");
             }
             let scratch = state.mirror_config.scratch_dir.join(format!("{name}.git"));
             if let Err(e) = std::fs::remove_dir_all(&scratch) {
