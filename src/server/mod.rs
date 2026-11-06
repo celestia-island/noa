@@ -1,3 +1,4 @@
+pub mod git_http;
 mod handlers;
 pub mod mirror;
 pub mod mirror_github;
@@ -81,6 +82,11 @@ async fn auth_middleware(
     req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    // `/git/*` routes self-authorize (stock git clients speak Basic, not
+    // Bearer) — the middleware would 401 them before handler logic runs.
+    if req.uri().path().starts_with("/git/") {
+        return Ok(next.run(req).await);
+    }
     if state.api_token.is_empty() {
         tracing::warn!("NOA_API_TOKEN not set — rejecting all API requests");
         return Err(StatusCode::UNAUTHORIZED);
@@ -137,6 +143,10 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route(
+            "/git/{repo}/{*suffix}",
+            axum::routing::any(git_http::handle_git_http),
+        )
         .route(
             "/api/v1/refs",
             get(handlers::list_refs).post(handlers::push_refs),
