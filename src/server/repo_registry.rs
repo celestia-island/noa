@@ -291,11 +291,13 @@ pub async fn delete_repo(State(state): State<AppState>, Path(name): Path<String>
         }
         Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
-    // Guard (W2b review): deleting the catalog row would orphan any open
-    // PRs — the name can be re-registered by clone traffic or a mirror job
-    // and those stale tickets would silently become merge-able again. Refuse
-    // while open PRs exist; closing/merging them is the operator's call
-    // (close every open PR, then delete — the allow path stays reachable).
+    // Guard (W2b review): deleting the catalog row orphans any open PRs —
+    // merge_pr never consults the catalog, so those tickets stay merge-able
+    // throughout; what the delete costs is their ADDRESSABILITY (the scoped
+    // view 404s while the flat route still serves them) and it lets a
+    // later re-registration of the same name silently adopt them. Refuse
+    // while open PRs exist; closing them is the operator's call (close every
+    // open PR, then delete — the allow path stays reachable).
     let prs = match crate::server::pr_store::PrStore::new(Arc::clone(&state.db)) {
         Ok(store) => store.list(Some(&name), None, Some("open")).await,
         Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),

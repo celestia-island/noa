@@ -1154,7 +1154,24 @@ pub async fn delete_job(
             // noa-side refs/snapshots stay as replica data (R2 S2 scope).
             // Lockstep: the repo catalog entry goes with the job, otherwise
             // the next upsert re-registers it (R2 S2 delete asymmetry).
-            if let Err(e) = state.repo_registry.delete(&name).await {
+            // EXCEPT when open PRs still reference the name: job deletion
+            // must never be blocked, but dropping the row would leave those
+            // tickets addressable only through the flat route. Keep the row
+            // (and say so) — DELETE /api/v1/repos/{name} is the guarded path.
+            let open_prs = match crate::server::pr_store::PrStore::new(Arc::clone(&state.db)) {
+                Ok(store) => store.list(Some(&name), None, Some("open")).await,
+                Err(e) => {
+                    tracing::warn!("pr store unavailable during job delete: {e}");
+                    Ok(Vec::new())
+                }
+            };
+            let has_open = matches!(&open_prs, Ok(prs) if !prs.is_empty());
+            if has_open {
+                tracing::warn!(
+                    "mirror job {name} deleted but its repo catalog row is kept: \
+                     open PRs still reference it"
+                );
+            } else if let Err(e) = state.repo_registry.delete(&name).await {
                 tracing::warn!("repo catalog delete for {name} failed: {e}");
             }
             let scratch = state.mirror_config.scratch_dir.join(format!("{name}.git"));

@@ -98,16 +98,18 @@ GET    /api/v1/repos                       list  -> {"repos": [...]}
 POST   /api/v1/repos                       register ({"name", "description", "default_branch"})
 GET    /api/v1/repos/{name}                read one (404 when unregistered)
 GET    /api/v1/repos/{name}/prs            PRs of one repo -> bare PrRecord[]
-                                           (404 when unregistered; ?repo= is rejected when it
-                                            contradicts the path; ?state=, ?base=, ?limit=,
-                                            ?offset= apply)
+                                           (?state=, ?base=, ?limit=, ?offset= apply;
+                                            ?repo= is rejected when it contradicts the path;
+                                            404 for an unregistered name — after input
+                                            validation, so a bad ?limit= answers 400 first)
 DELETE /api/v1/repos/{name}                remove the catalog row
                                            (409 while OPEN PRs exist — close them first)
 ```
 
 Read-only git serving shares the same namespace: `git clone
 http://<host>:<port>/git/<repo>` (auth = API token). A clone of a name the
-catalog does not know yet auto-registers it with origin `clone-served`.
+catalog does not know yet is auto-registered (origin `clone-served`) — best
+effort: the clone succeeds even if the catalog write fails.
 
 Pagination: the two PR list routes (`/api/v1/prs` and
 `/api/v1/repos/{name}/prs`) take `?limit=` (1..1000, default 100) and

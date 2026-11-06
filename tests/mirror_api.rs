@@ -446,8 +446,9 @@ async fn test_repo_scoped_pr_routes() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
-    // Upper bound is enforced too (a `>` vs `>=` mutant would survive
-    // without this).
+    // Upper bound is enforced too. (This kills bound-removal/raise mutants;
+    // a `>` vs `>=` flip survives both this and the 1001 case — the exact
+    // boundary is pinned by the 1000-is-allowed assert below.)
     let resp = f
         .app
         .clone()
@@ -455,6 +456,15 @@ async fn test_repo_scoped_pr_routes() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // The 1000 boundary is inclusive (pairs with the `>` vs `>=` note above).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/pilot/prs?limit=1000", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "limit=1000 must be allowed");
 
     // A contradicting ?repo= is a client bug → 400; the equal value is fine.
     let resp = f
@@ -472,8 +482,9 @@ async fn test_repo_scoped_pr_routes() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    // Deleting the catalog row is refused while open PRs exist (orphan
-    // tickets would resurrect merge-able after a re-registration).
+    // Deleting the catalog row is refused while open PRs exist (the tickets
+    // stay merge-able regardless; the delete would cost them addressability
+    // and let a later re-registration adopt them).
     let resp = f
         .app
         .clone()
