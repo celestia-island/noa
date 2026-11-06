@@ -177,6 +177,8 @@ pub struct LogEntry {
     pub message: Option<String>,
 }
 
+// See src/object/mod.rs: clippy(1.99) double_must_use on async_trait (H15).
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait AgentLog: Send + Sync {
     async fn append(&self, entry: &LogEntry) -> Result<u64>;

@@ -5,6 +5,8 @@ use redb::{ReadableDatabase, ReadableTable};
 
 use crate::{error::Result, snapshot::SnapshotId};
 
+// See src/object/mod.rs: clippy(1.99) double_must_use on async_trait (H15).
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait RefStore: Send + Sync {
     async fn get(&self, name: &str) -> Result<Option<SnapshotId>>;

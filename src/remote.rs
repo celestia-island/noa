@@ -32,6 +32,8 @@ pub struct FetchResult {
     pub refs: Vec<RemoteRef>,
 }
 
+// See src/object/mod.rs: clippy(1.99) double_must_use on async_trait (H15).
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait RemoteBackend: Send + Sync {
     fn protocol(&self) -> &str;
