@@ -163,10 +163,6 @@ async fn run_backend(
         cmd.arg("--advertise-refs");
     }
     cmd.arg(&repo_path);
-    // Protocol negotiation: honour the CLIENT's Git-Protocol header
-    // (gitprotocol-v2 forbids the server from speaking v2 unrequested).
-    // Empty default = v0. This is the env git-http-backend was dropping
-    // on the POST path (root cause of #140).
     // Deterministic env: no ambient GIT_*/proxy/config leakage into the
     // served refs (base had env_clear; Round A S3).
     cmd.env_clear();
