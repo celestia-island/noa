@@ -5,6 +5,7 @@ pub mod mirror_github;
 pub mod mirror_store;
 mod pr_handlers;
 pub mod pr_store;
+pub mod repo_registry;
 
 use std::{
     collections::HashMap,
@@ -175,6 +176,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/github/installations",
             get(github_broker::installations),
+        )
+        .route(
+            "/api/v1/repos",
+            get(repo_registry::list_repos).post(repo_registry::register_repo),
+        )
+        .route(
+            "/api/v1/repos/{name}",
+            get(repo_registry::get_repo).delete(repo_registry::delete_repo),
         )
         .route(
             "/api/v1/mirror/jobs",

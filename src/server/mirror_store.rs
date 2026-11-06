@@ -165,8 +165,11 @@ impl MirrorJobStore {
     /// update unless the payload carries new values.
     pub async fn upsert(&self, mut job: MirrorJob) -> Result<MirrorJob> {
         job.validate()?;
+        let db_for_registry = self.db.clone();
         let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
+        let first_branch = job.branches.first().cloned().unwrap_or_default();
+        let job_for_registry = job.clone();
+        let returned_job = tokio::task::spawn_blocking(move || {
             let txn = db.begin_write()?;
             {
                 let mut table = txn.open_table(MIRROR_JOBS)?;
@@ -183,9 +186,20 @@ impl MirrorJobStore {
                 table.insert(job.name.as_str(), data.as_slice())?;
             }
             txn.commit()?;
-            Ok(job)
+            Ok::<_, anyhow::Error>(job)
         })
-        .await?
+        .await??;
+        // W2b: the repo catalog follows the mirror lockstep (async context —
+        // the registry registers in its own spawn_blocking).
+        let reg = crate::server::repo_registry::RepoRegistry::new(db_for_registry)?;
+        reg.register(
+            &job_for_registry.name,
+            None,
+            first_branch.as_str(),
+            "mirror",
+        )
+        .await?;
+        Ok(returned_job)
     }
 
     pub async fn get(&self, name: &str) -> Result<Option<MirrorJob>> {
