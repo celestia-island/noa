@@ -746,6 +746,8 @@ impl MirrorEngine {
         let tags = client.list_tags(&job.github_slug).await?;
         let mut imported = Vec::new();
         let mut tag_failures: Vec<String> = Vec::new();
+        // Reconcile set = the full upstream listing (Round F S2).
+        let upstream_names: Vec<String> = tags.iter().map(|(n, _)| n.clone()).collect();
         for (name, commit_oid) in tags {
             // list_tags defers peel failures into this marker (Round E:
             // inline `?` collapsed the whole listing into one unnamed
@@ -770,12 +772,11 @@ impl MirrorEngine {
             }
         }
         imported.sort();
-        // Reconcile BEFORE the failure bail: an upstream-deleted tag must be
-        // cleaned even when another tag failed this wave (the reconcile list
-        // is the successful set; the failed tag has no mirror ref unless a
-        // previous wave imported it, and upstream deleting it is exactly the
-        // signal to drop that entry).
-        self.reconcile_tag_refs(job, &imported).await?;
+        // Reconcile BEFORE the failure bail, and against the FULL upstream
+        // listing (not the imported subset): a transiently failing tag is
+        // still present upstream and must NOT be dropped from the mirror
+        // (Round F S2).
+        self.reconcile_tag_refs(job, &upstream_names).await?;
         if !tag_failures.is_empty() {
             anyhow::bail!(
                 "{} tag(s) failed: {}",
