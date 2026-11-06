@@ -149,6 +149,7 @@ also not valid {json
                 platform: "x86_64-unknown-linux-gnu".to_string(),
                 lock_hash: Some("deadbeef".to_string()),
                 offline: true,
+                hardware: None,
             },
             commands: vec![VerifyCommand {
                 argv: vec![

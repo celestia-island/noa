@@ -821,6 +821,7 @@ mod tests {
                         platform: "p".to_string(),
                         lock_hash: None,
                         offline: true,
+                        hardware: None,
                     },
                     commands: vec![],
                     not_run: vec![crate::log::VerifyNotRun {

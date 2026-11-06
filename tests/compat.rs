@@ -570,6 +570,7 @@ async fn test_verify_entry_appended_to_old_format_log() {
             platform: "x86_64-unknown-linux-gnu".to_string(),
             lock_hash: Some("deadbeef".to_string()),
             offline: true,
+            hardware: None,
         },
         commands: vec![VerifyCommand {
             argv: vec![
