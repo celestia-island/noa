@@ -784,7 +784,9 @@ mod tests {
                 name: "pilot".into(),
                 remote_url: format!("file://{}", origin.display()),
                 github_slug: "celestia-island/noa".into(),
-                branches: vec!["master".into(), "ghost".into()],
+                // Failing branch FIRST: an "abort remaining branches"
+                // regression must fail this test (master would never import).
+                branches: vec!["ghost".into(), "master".into()],
                 enabled: true,
                 last_run_us: None,
                 last_status: None,

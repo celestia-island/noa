@@ -90,7 +90,10 @@ impl MirrorJob {
         // Branch names feed workspace names via '/'→"__" replacement, so a
         // literal "__" inside a branch would collide with a slashed sibling
         // (R2 S2) — rejected here to keep the mapping injective. Duplicates
-        // are rejected for the same reason.
+        // are rejected for the same reason. The derived workspace name is
+        // validated with the workspace module's own authority so an
+        // over-long branch cannot pass upsert and only blow up (or worse,
+        // settle into a green-but-workspace-less state) at run time (R-A S2).
         let mut seen = std::collections::HashSet::new();
         for b in &self.branches {
             if b.is_empty()
@@ -115,6 +118,9 @@ impl MirrorJob {
             {
                 anyhow::bail!("invalid branch name {b:?}");
             }
+            let ws_name = format!("mirror.{}.{}", self.name, b.replace('/', "__"));
+            crate::workspace::validate_workspace_name(&ws_name)
+                .map_err(|e| anyhow::anyhow!("branch {b:?} derives an invalid workspace: {e}"))?;
         }
         Ok(())
     }
@@ -357,6 +363,14 @@ mod tests {
             },
             MirrorJob {
                 branches: vec!["master".into(), "master".into()],
+                ..job("x")
+            },
+            // '/'→"__" doubles length: a 199-char branch with 99 slashes
+            // derives a >255-char workspace name — must be rejected at
+            // upsert, not blow up (or settle green-without-workspace) at
+            // run time (Round A S2).
+            MirrorJob {
+                branches: vec![format!("{}a", "a/".repeat(99))],
                 ..job("x")
             },
         ] {
