@@ -125,18 +125,19 @@ async fn run_backend(
     body: Option<Vec<u8>>,
 ) -> Result<Response, anyhow::Error> {
     let project_root = state.mirror_config.scratch_dir.clone();
+    // Refuse push BEFORE the scratch-existence check so the answer never
+    // depends on mirror state (deliberate invariant, pinned by test).
+    if suffix.contains("receive-pack") {
+        return Ok(json_error_response(
+            StatusCode::FORBIDDEN,
+            "push is not served yet — noa becomes write-authority in a later slice",
+        ));
+    }
     let repo_path = project_root.join(format!("{repo}.git"));
     if !repo_path.exists() {
         return Ok(json_error_response(
             StatusCode::NOT_FOUND,
             format!("no mirrored repo '{repo}' — create a mirror job first"),
-        ));
-    }
-
-    if suffix.contains("receive-pack") {
-        return Ok(json_error_response(
-            StatusCode::FORBIDDEN,
-            "push is not served yet — noa becomes write-authority in a later slice",
         ));
     }
 
