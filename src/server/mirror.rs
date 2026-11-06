@@ -696,6 +696,11 @@ impl MirrorEngine {
             .await?;
         let mut imported = Vec::new();
         let mut tag_failures: Vec<String> = Vec::new();
+        // The reconcile set is the FULL upstream listing (Round F S2):
+        // a transiently failing tag is still present upstream and must NOT
+        // be dropped from the mirror. Pushed AFTER the defensive `continue`s
+        // so garbage names can never shield a mirror ref from deletion.
+        let mut upstream_names: Vec<String> = Vec::new();
         for line in out.lines() {
             let mut parts = line.splitn(4, ' ');
             let (Some(objtype), Some(peeled), Some(objname), Some(name)) =
@@ -706,6 +711,7 @@ impl MirrorEngine {
             if name.is_empty() {
                 continue;
             }
+            upstream_names.push(name.to_string());
             let commit_oid = if objtype == "tag" && !peeled.is_empty() {
                 peeled.to_string()
             } else {
@@ -728,7 +734,7 @@ impl MirrorEngine {
             }
         }
         imported.sort();
-        self.reconcile_tag_refs(job, &imported).await?;
+        self.reconcile_tag_refs(job, &upstream_names).await?;
         if !tag_failures.is_empty() {
             anyhow::bail!(
                 "{} tag(s) failed: {}",
