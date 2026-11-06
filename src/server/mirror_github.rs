@@ -571,6 +571,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_ref_encodes_hazardous_branch_in_url() {
+        // Round E: the encoder must be WIRED, not just available — this
+        // family already regressed once inside this PR. Assert the raw
+        // request path carries the percent-encoded segment.
+        use std::sync::Mutex;
+        let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen_ref = Arc::clone(&seen);
+        let app = Router::new().route(
+            "/repos/{owner}/{repo}/git/ref/{*rest}",
+            axum::routing::get(move |uri: axum::http::Uri| {
+                let seen = Arc::clone(&seen_ref);
+                async move {
+                    seen.lock().unwrap().push(uri.path().to_string());
+                    axum::Json(serde_json::json!({ "object": { "sha": "abc" } }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = GitDataClient::new(format!("http://{addr}"), "tok").unwrap();
+        let sha = client.get_ref("o/r", "heads/a#b").await.unwrap();
+        assert_eq!(sha.as_deref(), Some("abc"));
+        let paths = seen.lock().unwrap();
+        assert_eq!(paths.len(), 1);
+        assert!(
+            paths[0].ends_with("heads/a%23b"),
+            "raw request path must be percent-encoded: {paths:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn test_tree_entry_without_sha_is_loud() {
         // A listing row without `sha` would silently drop a file from the
         // imported tree (the API lane has no tree-level net) — Round B M7.

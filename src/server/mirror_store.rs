@@ -389,5 +389,16 @@ mod tests {
             ..job("x")
         };
         s.upsert(nested).await.unwrap();
+        // '#'/'%' are legal git ref chars; the URL hazard is handled by the
+        // encoder, so validation must KEEP accepting them (Round C S2 pin —
+        // re-adding the ban must now fail).
+        for ok_branch in ["a#b", "a%b"] {
+            s.upsert(MirrorJob {
+                branches: vec![ok_branch.to_string()],
+                ..job("x")
+            })
+            .await
+            .unwrap_or_else(|e| panic!("'{ok_branch}' must stay accepted: {e}"));
+        }
     }
 }
