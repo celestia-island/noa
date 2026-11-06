@@ -318,8 +318,18 @@ impl GitDataClient {
                 .strip_prefix("refs/tags/")
                 .unwrap_or(&r.ref_name)
                 .to_string();
+            // Peel failures are DEFERRED into the marker so the caller's
+            // per-tag isolation names the offending tag instead of losing
+            // the whole listing (Round D F2 — the inline `?` collapsed every
+            // tag into one unnamed failure).
             let commit = if r.object.kind == "tag" {
-                self.peel_tag(slug, &r.object.sha).await?
+                match self.peel_tag(slug, &r.object.sha).await {
+                    Ok(sha) => sha,
+                    Err(e) => {
+                        out.push((name, format!("__peel_failed__: {e:#}")));
+                        continue;
+                    }
+                }
             } else {
                 r.object.sha
             };

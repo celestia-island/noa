@@ -728,6 +728,7 @@ impl MirrorEngine {
             }
         }
         imported.sort();
+        self.reconcile_tag_refs(job, &imported).await?;
         if !tag_failures.is_empty() {
             anyhow::bail!(
                 "{} tag(s) failed: {}",
@@ -746,6 +747,13 @@ impl MirrorEngine {
         let mut imported = Vec::new();
         let mut tag_failures: Vec<String> = Vec::new();
         for (name, commit_oid) in tags {
+            // list_tags defers peel failures into this marker (Round E:
+            // inline `?` collapsed the whole listing into one unnamed
+            // failure) — surface it as a named per-tag failure.
+            if let Some(peel_err) = commit_oid.strip_prefix("__peel_failed__: ") {
+                tag_failures.push(format!("{name}: peel failed: {peel_err}"));
+                continue;
+            }
             match self
                 .import_api_commit(
                     &client,
@@ -757,11 +765,17 @@ impl MirrorEngine {
                 )
                 .await
             {
-                Ok(_) => imported.push(name),
+                Ok(_) => imported.push(name.clone()),
                 Err(e) => tag_failures.push(format!("{name}: {e:#}")),
             }
         }
         imported.sort();
+        // Reconcile BEFORE the failure bail: an upstream-deleted tag must be
+        // cleaned even when another tag failed this wave (the reconcile list
+        // is the successful set; the failed tag has no mirror ref unless a
+        // previous wave imported it, and upstream deleting it is exactly the
+        // signal to drop that entry).
+        self.reconcile_tag_refs(job, &imported).await?;
         if !tag_failures.is_empty() {
             anyhow::bail!(
                 "{} tag(s) failed: {}",
@@ -770,6 +784,28 @@ impl MirrorEngine {
             );
         }
         Ok(imported)
+    }
+
+    /// Deletes `mirror/<job>/tags/<name>` refs whose tag no longer exists
+    /// upstream. `--prune --prune-tags` only cleans the scratch clone; the
+    /// mirror store must follow or upstream-deleted tags keep serving from
+    /// the authority set forever (Round D F1 / Round E S1).
+    async fn reconcile_tag_refs(&self, job: &MirrorJob, live: &[String]) -> Result<()> {
+        let prefix = format!("mirror/{}/tags/", job.name);
+        let ref_store = RedbRefStore::new(Arc::clone(&self.db))?;
+        let mut removed = Vec::new();
+        for (name, _) in ref_store.list().await? {
+            let stale = name
+                .strip_prefix(&prefix)
+                .is_some_and(|tag| !live.iter().any(|l| l == tag));
+            if stale && ref_store.delete(&name).await? {
+                removed.push(name.strip_prefix(&prefix).unwrap_or(&name).to_string());
+            }
+        }
+        if !removed.is_empty() {
+            tracing::info!("mirror {}: pruned stale tag refs {removed:?}", job.name);
+        }
+        Ok(())
     }
 
     /// Imports one git-lane commit into an explicit ref/workspace.
@@ -1955,16 +1991,28 @@ mod tests {
     #[tokio::test]
     async fn test_git_lane_replicates_tags() {
         let (dir, engine, name) = engine_with_fixture("pilot").await;
-        // Lightweight + annotated tag on the fixture's master commit.
+        // Lightweight + annotated tag on the fixture's master commit, a
+        // same-named BRANCH (refname disambiguation pin), and a tag pointing
+        // at a BLOB (per-tag failure isolation pin).
         let work = dir.path().join("work");
         run(&work, &["tag", "v-light"]);
         run(&work, &["tag", "-a", "v-annot", "-m", "annotated tag"]);
         run(&work, &["push", "origin", "--tags"]);
+        run(&work, &["branch", "v-light"]);
+        run(&work, &["push", "origin", "refs/heads/v-light"]);
+        std::fs::write(work.join("blob.txt"), b"just a blob\n").unwrap();
+        let blob_sha = run_out(&work, &["hash-object", "-w", "blob.txt"]);
+        run(&work, &["tag", "v-blob", &blob_sha]);
+        run(&work, &["push", "origin", "v-blob"]);
 
         let store = MirrorJobStore::new(Arc::clone(&engine.db)).unwrap();
         let job = store.get(&name).await.unwrap().unwrap();
         store.upsert(MirrorJob { tags: true, ..job }).await.unwrap();
-        engine.run_job(&name).await.unwrap();
+        // v-blob fails the job; healthy tags must still land.
+        assert!(
+            engine.run_job(&name).await.is_err(),
+            "a tag pointing at a blob must fail the job"
+        );
 
         let refs = RedbRefStore::new(Arc::clone(&engine.db)).unwrap();
         let light = refs
@@ -1993,8 +2041,42 @@ mod tests {
             .last_detail
             .unwrap();
         assert!(
-            detail.contains("tags=2"),
-            "detail must count tags: {detail}"
+            detail.contains("v-blob"),
+            "the failing tag must be named (isolation pins it separately)"
+        );
+        assert!(
+            detail.contains("tags=FAILED"),
+            "a failing tag must fail the job: {detail}"
+        );
+        assert!(
+            detail.contains("v-blob"),
+            "the failing tag must be named: {detail}"
+        );
+
+        // Same-named branch (Round B S1): lstrip=2 keeps the tag at
+        // mirror/pilot/tags/v-light, not .../tags/tags/v-light.
+
+        // Round D F1 / Round E S1: an upstream-DELETED tag must be
+        // reconciled away from the mirror store (fetch pruning only cleans
+        // the scratch clone; the ref delete is the real contract).
+        run(&work, &["push", "origin", "--delete", "v-annot"]);
+        assert!(
+            engine.run_job(&name).await.is_err(),
+            "v-blob still fails the job"
+        );
+        assert!(
+            refs.get("mirror/pilot/tags/v-annot")
+                .await
+                .unwrap()
+                .is_none(),
+            "upstream-deleted tag must not survive in the mirror store"
+        );
+        assert!(
+            refs.get("mirror/pilot/tags/v-light")
+                .await
+                .unwrap()
+                .is_some(),
+            "the tag ref must persist across the reconcile wave"
         );
     }
 
