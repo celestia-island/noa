@@ -37,6 +37,7 @@ use crate::{
     refs::{RedbRefStore, RefStore},
     server::{
         handlers::{err_json, ApiError},
+        mirror_github::{ApiTreeEntry, GitDataClient},
         mirror_store::{MirrorJob, MirrorJobStore},
     },
     snapshot::{RedbSnapshotStore, SnapshotId, SnapshotStore},
@@ -55,6 +56,8 @@ pub struct MirrorConfig {
     /// Env var the engine reads the git token from at run time (rotation
     /// without restart). Empty string disables authenticated fetch.
     pub token_env: String,
+    /// REST base for the Git Data API fallback lane (injectable for tests).
+    pub github_api_base: String,
 }
 
 impl Default for MirrorConfig {
@@ -63,6 +66,7 @@ impl Default for MirrorConfig {
             interval_secs: 900,
             scratch_dir: PathBuf::from("mirror-cache"),
             token_env: "NOA_MIRROR_GH_TOKEN".to_string(),
+            github_api_base: "https://api.github.com".to_string(),
         }
     }
 }
@@ -87,6 +91,10 @@ impl MirrorConfig {
                 .ok()
                 .filter(|s| !s.trim().is_empty())
                 .unwrap_or_else(|| "NOA_MIRROR_GH_TOKEN".to_string()),
+            github_api_base: std::env::var("NOA_MIRROR_GH_API_BASE")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "https://api.github.com".to_string()),
         }
     }
 }
@@ -104,8 +112,10 @@ pub struct MirrorEngine {
 /// Per-branch outcome collected for the job status line.
 struct BranchOutcome {
     branch: String,
-    snapshot: String,
+    snapshot: SnapshotId,
     changed: bool,
+    /// Full git commit oid the snapshot was imported from (canary push).
+    commit_oid: String,
 }
 
 impl MirrorEngine {
@@ -195,35 +205,228 @@ impl MirrorEngine {
         // missing after fetch, fidelity failure) must not stop the others;
         // the job still reports error with per-branch detail.
         let mut notes = Vec::new();
+        let mut outcomes: Vec<BranchOutcome> = Vec::new();
         let mut failed = 0usize;
         for branch in &job.branches {
             match self.replicate_branch(job, &scratch, branch).await {
-                Ok(outcome) => notes.push(format!(
-                    "{}={}({})",
-                    outcome.branch,
-                    outcome.snapshot,
-                    if outcome.changed {
-                        "imported"
-                    } else {
-                        "unchanged"
-                    }
-                )),
+                Ok(outcome) => {
+                    notes.push(format!(
+                        "{}={}({})",
+                        outcome.branch,
+                        outcome.snapshot.0.chars().take(12).collect::<String>(),
+                        if outcome.changed {
+                            "imported"
+                        } else {
+                            "unchanged"
+                        }
+                    ));
+                    outcomes.push(outcome);
+                }
                 Err(e) => {
                     failed += 1;
                     notes.push(format!("{branch}=FAILED: {e:#}"));
                 }
             }
         }
+
+        // Canary push (W1a-2): opt-in per job; pushes the first replicated
+        // branch's commit to `noa-mirror-canary` on the remote — first via
+        // git transport, and when that lane is dead (L168 TLS family) via
+        // the Git Data API. A canary failure fails the job loudly.
+        if job.canary_push {
+            if let Some(outcome) = outcomes.first() {
+                match self.push_canary(job, &scratch, outcome).await {
+                    Ok(lane) => notes.push(format!("canary={lane}")),
+                    Err(e) => {
+                        failed += 1;
+                        notes.push(format!("canary=FAILED: {e:#}"));
+                    }
+                }
+            }
+        }
+
         let summary = if failed == 0 {
             "fidelity ok".to_string()
         } else {
-            format!("{failed} branch(es) failed")
+            format!("{failed} item(s) failed")
         };
         let detail = format!("{summary}; {}", notes.join(" "));
         if failed > 0 {
             anyhow::bail!("{detail}");
         }
         Ok(detail)
+    }
+
+    /// Canary ref name pushed to the remote (one per repo, per job would
+    /// multiply noise without adding channel coverage).
+    const CANARY_REF: &'static str = "noa-mirror-canary";
+
+    async fn push_canary(
+        &self,
+        job: &MirrorJob,
+        scratch: &Path,
+        outcome: &BranchOutcome,
+    ) -> Result<&'static str> {
+        // Leading '+' forces the ref update: after any API-lane canary
+        // commit (built outside master's ancestry) a plain push would be
+        // non-FF-rejected forever, locking the probe onto the API lane
+        // (Round A S2).
+        let push_spec = format!("+{}:refs/heads/{}", outcome.commit_oid, Self::CANARY_REF);
+        match self.git(scratch, &["push", "origin", &push_spec]).await {
+            Ok(()) => return Ok("git"),
+            Err(e) => {
+                tracing::warn!(
+                    "mirror {}: git-transport canary failed, trying Git Data API: {e:#}",
+                    job.name
+                );
+            }
+        }
+
+        // Git Data API lane — needs a token and reuses the imported snapshot.
+        let token = if self.cfg.token_env.is_empty() {
+            None
+        } else {
+            std::env::var(&self.cfg.token_env)
+                .ok()
+                .filter(|t| !t.is_empty())
+        };
+        let token = token.ok_or_else(|| {
+            anyhow::anyhow!(
+                "canary API lane needs a token from {} (git transport already failed)",
+                self.cfg.token_env
+            )
+        })?;
+        let client = GitDataClient::new(&self.cfg.github_api_base, token)?;
+
+        let snap_store = RedbSnapshotStore::new(Arc::clone(&self.db))?;
+        let obj_store = RedbObjectStore::new(Arc::clone(&self.db))?;
+        let snap = snap_store.get(&outcome.snapshot).await?;
+        let tree = obj_store.get_tree(&TreeId(snap.tree_hash)).await?;
+
+        // Delta against the existing canary tree when one is readable:
+        // steady-state ticks upload only changed blobs (a full flat upload
+        // per tick would burn the API budget on large repos — R2 S2).
+        // `None` remote tree (no canary yet / unreadable / truncated) falls
+        // back to the full one-time upload.
+        let canary_ref_path = format!("heads/{}", Self::CANARY_REF);
+        let existing_canary = client.get_ref(&job.github_slug, &canary_ref_path).await?;
+        let mut remote_tree_sha: Option<String> = None;
+        let mut remote: Option<std::collections::HashMap<String, (String, String)>> = None;
+        if let Some(commit_sha) = &existing_canary {
+            match client.get_commit_tree(&job.github_slug, commit_sha).await {
+                Ok(tree_sha) => match client.get_tree_flat(&job.github_slug, &tree_sha).await {
+                    Ok(Some(flat)) => {
+                        remote = Some(flat.into_iter().map(|(p, m, s)| (p, (m, s))).collect());
+                        remote_tree_sha = Some(tree_sha);
+                    }
+                    Ok(None) => tracing::warn!(
+                        "mirror {}: canary tree listing truncated; full upload",
+                        job.name
+                    ),
+                    Err(e) => tracing::warn!(
+                        "mirror {}: canary tree fetch failed; full upload: {e:#}",
+                        job.name
+                    ),
+                },
+                Err(e) => tracing::warn!(
+                    "mirror {}: canary commit fetch failed; full upload: {e:#}",
+                    job.name
+                ),
+            }
+        }
+
+        let mut entries: Vec<ApiTreeEntry> = Vec::new();
+        let mut noa_paths = std::collections::HashSet::new();
+        for e in &tree.0 {
+            noa_paths.insert(e.name.clone());
+            if e.kind.has_blob_body() {
+                let content = obj_store
+                    .get_blob(&crate::object::BlobId(e.id.clone()))
+                    .await?;
+                let expected = git_blob_oid(&content);
+                let mode = Self::git_mode_str(e.kind);
+                if let Some((rm, rs)) = remote.as_ref().and_then(|r| r.get(&e.name)) {
+                    if rm.as_str() == mode && rs.as_str() == expected.as_str() {
+                        continue; // unchanged — inherited via base_tree
+                    }
+                }
+                let sha = client.put_blob(&job.github_slug, &content).await?;
+                // Integrity self-check: GitHub returns the sha1 content
+                // address; a mismatch means corrupted upload.
+                if sha != expected {
+                    anyhow::bail!(
+                        "canary blob sha mismatch at {:?}: uploaded {sha} != computed {expected}",
+                        e.name
+                    );
+                }
+                entries.push(ApiTreeEntry {
+                    path: e.name.clone(),
+                    mode,
+                    kind: "blob",
+                    sha: Some(sha),
+                });
+            } else if e.kind == EntryKind::Gitlink {
+                // The oid names a commit in another repository; GitHub
+                // accepts the reference verbatim.
+                let mode = Self::git_mode_str(e.kind);
+                if let Some((rm, rs)) = remote.as_ref().and_then(|r| r.get(&e.name)) {
+                    if rm.as_str() == mode && rs.as_str() == e.id.as_str() {
+                        continue;
+                    }
+                }
+                entries.push(ApiTreeEntry {
+                    path: e.name.clone(),
+                    mode,
+                    kind: "commit",
+                    sha: Some(e.id.clone()),
+                });
+            }
+        }
+        // Deletions (only meaningful with a base_tree to delete from).
+        if let Some(r) = &remote {
+            for path in r.keys() {
+                if !noa_paths.contains(path) {
+                    entries.push(ApiTreeEntry {
+                        path: path.clone(),
+                        mode: "100644",
+                        kind: "blob",
+                        sha: None,
+                    });
+                }
+            }
+        }
+        entries.sort_by(|a, b| a.path.cmp(&b.path));
+        if entries.is_empty() && remote_tree_sha.is_some() {
+            // Everything unchanged and nothing to delete: the canary is
+            // already current. Skipping avoids minting a fresh canary
+            // commit every tick (~96/day at 900s) and the empty-tree edge
+            // (Round A S3). The GETs above still proved the API lane.
+            return Ok("api-unchanged");
+        }
+        let tree_sha = client
+            .put_tree(&job.github_slug, remote_tree_sha.as_deref(), &entries)
+            .await?;
+        let parents = existing_canary.into_iter().collect::<Vec<_>>();
+        let commit_sha = client
+            .put_commit(
+                &job.github_slug,
+                &tree_sha,
+                &parents,
+                &format!(
+                    "noa mirror canary {} @ {}",
+                    job.name,
+                    outcome.commit_oid.chars().take(12).collect::<String>()
+                ),
+            )
+            .await?;
+        client
+            .upsert_ref(
+                &job.github_slug,
+                &format!("heads/{}", Self::CANARY_REF),
+                &commit_sha,
+            )
+            .await?;
+        Ok("api")
     }
 
     async fn replicate_branch(
@@ -251,9 +454,21 @@ impl MirrorEngine {
         self.verify_fidelity(scratch, &oid, &snap).await?;
         Ok(BranchOutcome {
             branch: branch.to_string(),
-            snapshot: snap.0.chars().take(12).collect(),
+            snapshot: snap,
             changed,
+            commit_oid: oid,
         })
+    }
+
+    /// GitHub tree-entry mode string for an entry kind.
+    fn git_mode_str(kind: EntryKind) -> &'static str {
+        match kind {
+            EntryKind::Blob => "100644",
+            EntryKind::Executable => "100755",
+            EntryKind::Symlink => "120000",
+            EntryKind::Gitlink => "160000",
+            EntryKind::Tree => "040000",
+        }
     }
 
     /// Recomputes git blob oids from the noa-side snapshot tree and compares
@@ -320,6 +535,13 @@ impl MirrorEngine {
         let args_for_error = args.join(" ");
         let out = tokio::task::spawn_blocking(move || -> std::io::Result<std::process::Output> {
             let mut cmd = Command::new("git");
+            // Global -c flags MUST precede the subcommand.
+            cmd.args([
+                "-c",
+                "http.lowSpeedLimit=1000",
+                "-c",
+                "http.lowSpeedTime=30",
+            ]);
             cmd.args(&args)
                 .current_dir(&cwd)
                 .env("GIT_TERMINAL_PROMPT", "0");
@@ -645,6 +867,7 @@ mod tests {
             interval_secs: 900,
             scratch_dir: dir.path().join("scratch"),
             token_env: String::new(),
+            github_api_base: String::new(),
         };
         let store = MirrorJobStore::new(Arc::clone(&db)).unwrap();
         store
@@ -653,6 +876,7 @@ mod tests {
                 remote_url: format!("file://{}", origin.display()),
                 github_slug: "celestia-island/noa".into(),
                 branches: vec!["master".into()],
+                canary_push: false,
                 enabled: true,
                 last_run_us: None,
                 last_status: None,
@@ -723,6 +947,7 @@ mod tests {
             interval_secs: 900,
             scratch_dir: dir.path().join("scratch"),
             token_env: String::new(),
+            github_api_base: String::new(),
         };
         let store = MirrorJobStore::new(Arc::clone(&db)).unwrap();
         let mk = |url: String| MirrorJob {
@@ -730,6 +955,7 @@ mod tests {
             remote_url: url,
             github_slug: "celestia-island/noa".into(),
             branches: vec!["master".into()],
+            canary_push: false,
             enabled: true,
             last_run_us: None,
             last_status: None,
@@ -777,6 +1003,7 @@ mod tests {
             interval_secs: 900,
             scratch_dir: dir.path().join("scratch"),
             token_env: String::new(),
+            github_api_base: String::new(),
         };
         let store = MirrorJobStore::new(Arc::clone(&db)).unwrap();
         store
@@ -787,6 +1014,7 @@ mod tests {
                 // Failing branch FIRST: an "abort remaining branches"
                 // regression must fail this test (master would never import).
                 branches: vec!["ghost".into(), "master".into()],
+                canary_push: false,
                 enabled: true,
                 last_run_us: None,
                 last_status: None,
@@ -811,6 +1039,327 @@ mod tests {
             refs.get("mirror/pilot/master").await.unwrap().is_some(),
             "master must have replicated despite ghost failing"
         );
+    }
+
+    /// Runs git capturing stdout (trimmed) — for asserting remote refs.
+    fn run_out(cwd: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    fn make_read_only(dir: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        for entry in walkdir(dir) {
+            if entry.is_dir() {
+                std::fs::set_permissions(entry, std::fs::Permissions::from_mode(0o555)).unwrap();
+            }
+        }
+    }
+
+    fn walkdir(dir: &Path) -> Vec<std::path::PathBuf> {
+        let mut out = vec![dir.to_path_buf()];
+        let mut stack = vec![dir.to_path_buf()];
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).unwrap() {
+                let e = e.unwrap().path();
+                if e.is_dir() {
+                    stack.push(e.clone());
+                    out.push(e);
+                }
+            }
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn test_canary_push_git_transport() {
+        let (dir, engine, name) = engine_with_fixture("pilot").await;
+        let store = MirrorJobStore::new(Arc::clone(&engine.db)).unwrap();
+        let job = store.get(&name).await.unwrap().unwrap();
+        store
+            .upsert(MirrorJob {
+                canary_push: true,
+                ..job
+            })
+            .await
+            .unwrap();
+        engine.run_job(&name).await.unwrap();
+        let job = store.get(&name).await.unwrap().unwrap();
+        assert!(
+            job.last_detail.unwrap().contains("canary=git"),
+            "detail should record the git lane"
+        );
+        let origin = dir.path().join("origin.git");
+        let canary = run_out(&origin, &["rev-parse", "refs/heads/noa-mirror-canary"]);
+        let master = run_out(&origin, &["rev-parse", "refs/heads/master"]);
+        assert_eq!(canary, master, "canary ref must point at master's commit");
+
+        // Rewrite history upstream (amend + force push) so the next canary
+        // push is NON-fast-forward: the leading '+' in the push spec is the
+        // only thing that keeps the git lane usable (Round A S2 pin).
+        let work = dir.path().join("work");
+        std::fs::write(work.join("README.md"), b"# fixture amended\n").unwrap();
+        run(&work, &["add", "-A"]);
+        run(
+            &work,
+            &[
+                "commit",
+                "--amend",
+                "-m",
+                "first-amended",
+                "--author=noa-test <t@noa.local>",
+            ],
+        );
+        run(&work, &["push", "--force", "origin", "master"]);
+        engine.run_job(&name).await.unwrap();
+        let job = store.get(&name).await.unwrap().unwrap();
+        let detail = job.last_detail.unwrap();
+        assert!(
+            detail.contains("canary=git"),
+            "non-FF canary must still ride the git lane: {detail}"
+        );
+        let canary2 = run_out(&origin, &["rev-parse", "refs/heads/noa-mirror-canary"]);
+        let master2 = run_out(&origin, &["rev-parse", "refs/heads/master"]);
+        assert_ne!(master2, master, "upstream must have actually moved");
+        assert_eq!(canary2, master2, "canary must follow the rewritten master");
+    }
+
+    #[tokio::test]
+    async fn test_canary_falls_back_to_git_data_api() {
+        use axum::routing::post;
+        use axum::Router;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let (dir, engine, name) = engine_with_fixture("pilot").await;
+        engine.run_job(&name).await.unwrap();
+
+        // Kill the git-transport push lane: origin becomes read-only (fetch
+        // still works; push cannot create objects).
+        let origin = dir.path().join("origin.git");
+        make_read_only(&origin);
+
+        // Git Data API mock.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let c1 = Arc::clone(&calls);
+        let c2 = Arc::clone(&calls);
+        let app = Router::new()
+            .route(
+                "/repos/{owner}/{repo}/git/blobs",
+                post(move |axum::Json(b): axum::Json<serde_json::Value>| {
+                    let c1 = Arc::clone(&c1);
+                    async move {
+                        c1.fetch_add(1, Ordering::SeqCst);
+                        use base64::Engine;
+                        let content = base64::engine::general_purpose::STANDARD
+                            .decode(b["content"].as_str().unwrap())
+                            .unwrap();
+                        axum::Json(serde_json::json!({ "sha": git_blob_oid(&content) }))
+                    }
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/trees",
+                post(move |axum::Json(b): axum::Json<serde_json::Value>| {
+                    c2.fetch_add(1, Ordering::SeqCst);
+                    assert!(
+                        b["tree"].as_array().map(|a| !a.is_empty()).unwrap_or(false),
+                        "tree payload must carry entries"
+                    );
+                    async { axum::Json(serde_json::json!({ "sha": "api-tree-sha" })) }
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/commits",
+                post(|| async { axum::Json(serde_json::json!({ "sha": "api-commit-sha" })) }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/ref/heads/noa-mirror-canary",
+                axum::routing::get(|| async { axum::http::StatusCode::NOT_FOUND }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/refs/heads/noa-mirror-canary",
+                axum::routing::patch(|| async { axum::http::StatusCode::NOT_FOUND }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/refs",
+                post(|| async {
+                    axum::Json(serde_json::json!({ "object": { "sha": "api-commit-sha" } }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        // Engine config with the mock API base + a token env var.
+        const TOKEN_VAR: &str = "NOA_MIRROR_TEST_TOKEN_W1A2";
+        std::env::set_var(TOKEN_VAR, "test-token");
+        let store = MirrorJobStore::new(Arc::clone(&engine.db)).unwrap();
+        let job = store.get(&name).await.unwrap().unwrap();
+        store
+            .upsert(MirrorJob {
+                canary_push: true,
+                ..job
+            })
+            .await
+            .unwrap();
+        let engine = MirrorEngine::new(
+            Arc::clone(&engine.db),
+            MirrorConfig {
+                scratch_dir: engine.cfg.scratch_dir.clone(),
+                token_env: TOKEN_VAR.to_string(),
+                github_api_base: format!("http://{addr}"),
+                ..engine.cfg.clone()
+            },
+        );
+        engine.run_job(&name).await.unwrap();
+        let job = store.get(&name).await.unwrap().unwrap();
+        let detail = job.last_detail.unwrap();
+        assert!(
+            detail.contains("canary=api"),
+            "detail should record the API lane: {detail}"
+        );
+        assert!(
+            calls.load(Ordering::SeqCst) >= 2,
+            "blob+tree endpoints must have been called"
+        );
+        std::env::remove_var(TOKEN_VAR);
+    }
+
+    #[tokio::test]
+    async fn test_canary_api_delta_uploads_only_changes() {
+        use axum::routing::post;
+        use axum::Router;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let (dir, engine, name) = engine_with_fixture("pilot").await;
+        engine.run_job(&name).await.unwrap();
+        let origin = dir.path().join("origin.git");
+        make_read_only(&origin);
+
+        let blob_calls = Arc::new(AtomicUsize::new(0));
+        let bc = Arc::clone(&blob_calls);
+        // Remote state: an existing canary whose tree already carries the
+        // fixture's two files at their correct shas plus a stale file the
+        // noa tree lost — the delta lane must upload nothing and delete
+        // only the stale entry.
+        let readme_sha = git_blob_oid(b"# fixture\n");
+        let deep_sha = git_blob_oid(b"deep\n");
+        let app = Router::new()
+            .route(
+                "/repos/{owner}/{repo}/git/ref/heads/noa-mirror-canary",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({ "object": { "sha": "prev-canary" } }))
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/commits/prev-canary",
+                axum::routing::get(|| async {
+                    axum::Json(serde_json::json!({ "tree": { "sha": "old-tree" } }))
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/trees/old-tree",
+                axum::routing::get(move || {
+                    let readme_sha = readme_sha.clone();
+                    let deep_sha = deep_sha.clone();
+                    async move {
+                        axum::Json(serde_json::json!({
+                            "tree": [
+                                { "path": "README.md", "mode": "100644", "sha": readme_sha, "type": "blob" },
+                                { "path": "nested/deep.txt", "mode": "100644", "sha": deep_sha, "type": "blob" },
+                                { "path": "stale.txt", "mode": "100644", "sha": "deadbee", "type": "blob" }
+                            ],
+                            "truncated": false
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/blobs",
+                post(move |axum::Json(b): axum::Json<serde_json::Value>| {
+                    let bc = Arc::clone(&bc);
+                    async move {
+                        bc.fetch_add(1, Ordering::SeqCst);
+                        use base64::Engine;
+                        let content = base64::engine::general_purpose::STANDARD
+                            .decode(b["content"].as_str().unwrap())
+                            .unwrap();
+                        axum::Json(serde_json::json!({ "sha": git_blob_oid(&content) }))
+                    }
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/trees",
+                post(|axum::Json(b): axum::Json<serde_json::Value>| async move {
+                    assert_eq!(
+                        b["base_tree"], "old-tree",
+                        "delta lane must build on the existing canary tree"
+                    );
+                    let entries = b["tree"].as_array().unwrap();
+                    assert_eq!(entries.len(), 1, "only the deletion should remain: {b}");
+                    assert_eq!(entries[0]["path"], "stale.txt");
+                    assert!(entries[0]["sha"].is_null(), "deletion is sha:null: {b}");
+                    axum::Json(serde_json::json!({ "sha": "new-tree" }))
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/commits",
+                post(|axum::Json(b): axum::Json<serde_json::Value>| async move {
+                    assert_eq!(
+                        b["parents"][0], "prev-canary",
+                        "canary history must chain: {b}"
+                    );
+                    axum::Json(serde_json::json!({ "sha": "api-commit-sha" }))
+                }),
+            )
+            .route(
+                "/repos/{owner}/{repo}/git/refs/heads/noa-mirror-canary",
+                axum::routing::patch(|axum::Json(_b): axum::Json<serde_json::Value>| async {
+                    axum::Json(serde_json::json!({ "object": { "sha": "api-commit-sha" } }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        const TOKEN_VAR: &str = "NOA_MIRROR_TEST_TOKEN_W1A2D";
+        std::env::set_var(TOKEN_VAR, "test-token");
+        let store = MirrorJobStore::new(Arc::clone(&engine.db)).unwrap();
+        let job = store.get(&name).await.unwrap().unwrap();
+        store
+            .upsert(MirrorJob {
+                canary_push: true,
+                ..job
+            })
+            .await
+            .unwrap();
+        let engine = MirrorEngine::new(
+            Arc::clone(&engine.db),
+            MirrorConfig {
+                scratch_dir: engine.cfg.scratch_dir.clone(),
+                token_env: TOKEN_VAR.to_string(),
+                github_api_base: format!("http://{addr}"),
+                ..engine.cfg.clone()
+            },
+        );
+        engine.run_job(&name).await.unwrap();
+        assert_eq!(
+            blob_calls.load(Ordering::SeqCst),
+            0,
+            "unchanged blobs must not be re-uploaded"
+        );
+        std::env::remove_var(TOKEN_VAR);
     }
 
     #[tokio::test]

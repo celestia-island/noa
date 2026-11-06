@@ -1,5 +1,6 @@
 mod handlers;
 pub mod mirror;
+pub mod mirror_github;
 pub mod mirror_store;
 mod pr_handlers;
 pub mod pr_store;

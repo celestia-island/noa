@@ -71,6 +71,7 @@ async fn make_fixture() -> Fixture {
         interval_secs: 900,
         scratch_dir: tmp.path().join("scratch"),
         token_env: String::new(),
+        github_api_base: String::new(),
     };
     let state = AppState::new(db)
         .with_api_token(TEST_API_TOKEN.to_string())
