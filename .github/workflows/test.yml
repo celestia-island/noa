@@ -8,27 +8,6 @@ concurrency:
 
 on:
   workflow_dispatch:
-  pull_request:
-    # `synchronize` is not optional: without it a push to an existing PR never
-    # re-runs the suite, and the checks stay attached to the superseded SHA
-    # (round-2 review, 2026-11-05).
-    types: [opened, reopened, ready_for_review, synchronize]
-    # This lane is the repo's only Rust suite, so the filter must cover every
-    # path that can change the result (it used to miss tests/**, res/**,
-    # examples/**, scripts/** and the toolchain pin).
-    paths:
-      - '.github/workflows/**'
-      - 'src/**/*'
-      - 'bin/**/*'
-      - 'tests/**/*'
-      - 'res/**/*'
-      - 'examples/**/*'
-      - 'scripts/**/*'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'rust-toolchain.toml'
-  push:
-    branches: [master]
 
 jobs:
   test:

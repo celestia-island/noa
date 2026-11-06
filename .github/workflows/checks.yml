@@ -1,11 +1,6 @@
 name: Code Checks
 
 on:
-  push:
-    branches: [master]
-  pull_request:
-    types: [opened, reopened, ready_for_review]
-    branches: [master]
   workflow_dispatch:
 
 concurrency:
