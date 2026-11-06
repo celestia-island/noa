@@ -62,9 +62,26 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("github broker misconfigured (routes stay disabled): {e}");
         None
     });
-    let state = AppState::new(db)
+
+    let default_scratch = std::path::Path::new(&app.db_path)
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("mirror-cache");
+    let mirror_config = libnoa::server::mirror::MirrorConfig::from_env(default_scratch);
+    let state = AppState::new(std::sync::Arc::clone(&db))
         .with_api_token(api_token)
-        .with_github_broker(github_broker);
+        .with_github_broker(github_broker)
+        .with_mirror_config(mirror_config.clone());
+
+    if std::env::var("NOA_MIRROR_ENABLED").ok().as_deref() == Some("1") {
+        libnoa::server::mirror::spawn_scheduler(state.db.clone(), mirror_config.clone());
+        println!(
+            "mirror scheduler enabled (interval {}s, scratch {})",
+            mirror_config.interval_secs,
+            mirror_config.scratch_dir.display()
+        );
+    }
+
     let router = router(state);
 
     let addr = format!("{}:{}", app.host, app.port)
