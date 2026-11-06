@@ -1154,6 +1154,10 @@ pub async fn delete_job(
             // noa-side refs/snapshots stay as replica data (R2 S2 scope).
             // Lockstep: the repo catalog entry goes with the job, otherwise
             // the next upsert re-registers it (R2 S2 delete asymmetry).
+            // NOT ATOMIC (same as the /repos guard): the open-PR listing and
+            // the row delete are separate transactions; this narrows, not
+            // closes, the orphan path. Fail-closed: an unreadable PR store
+            // also keeps the row.
             // EXCEPT when open PRs still reference the name: job deletion
             // must never be blocked, but dropping the row would leave those
             // tickets addressable only through the flat route. Keep the row

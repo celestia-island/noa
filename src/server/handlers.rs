@@ -38,6 +38,10 @@ pub struct AppState {
     /// PR store — cached for the same reason as `repo_registry`:
     /// `PrStore::new` runs an `ensure_table` write transaction, so building
     /// one per request blocks an async worker on redb's writer lock.
+    /// KNOWN GAP: the mirror-job routes still build `MirrorJobStore` (and
+    /// through it a `RepoRegistry`) per request, and the ref/snapshot/
+    /// workspace/object stores do the same — caching every store type is a
+    /// follow-up, not a claim this field generalises.
     pub pr_store: crate::server::pr_store::PrStore,
 }
 

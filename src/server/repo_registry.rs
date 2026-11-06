@@ -133,10 +133,23 @@ impl RepoRegistry {
                     table.get(name.as_str())?.map(|g| g.value().to_vec());
                 // origin AND created_us are preserved on update —
                 // created_us means "at registration" (R2 S2).
-                let (origin, created_us) = match &existing {
+                let (origin, created_us, description, default_branch) = match &existing {
                     Some(bytes) => {
                         let old: RepoEntry = rmp_serde::from_slice(bytes)?;
-                        (old.origin, old.created_us)
+                        // A re-registration (mirror upsert, clone self-heal)
+                        // must not wipe operator-authored metadata: keep the
+                        // old description when the new call has none, and
+                        // keep the old branch when the new one is empty.
+                        (
+                            old.origin,
+                            old.created_us,
+                            description.or(old.description),
+                            if default_branch.is_empty() {
+                                old.default_branch
+                            } else {
+                                default_branch
+                            },
+                        )
                     }
                     None => (
                         origin,
@@ -144,6 +157,8 @@ impl RepoRegistry {
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_micros() as i64,
+                        description,
+                        default_branch,
                     ),
                 };
                 let entry = RepoEntry {
@@ -281,6 +296,23 @@ pub async fn register_repo(
 }
 
 pub async fn delete_repo(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    // A live mirror job re-registers the row on its next upsert and any clone
+    // of the still-present scratch clone self-heals it back — deleting the
+    // row underneath a job would be a 204 that silently undoes itself.
+    let has_job = match crate::server::mirror_store::MirrorJobStore::new(Arc::clone(&state.db)) {
+        Ok(store) => store.get(&name).await.map(|job| job.is_some()),
+        Err(e) => Err(e),
+    };
+    match has_job {
+        Ok(true) => {
+            return json_err(
+                StatusCode::CONFLICT,
+                &format!("repo '{name}' still has a mirror job; delete the job first"),
+            );
+        }
+        Ok(false) => {}
+        Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
     // Existence first: a ghost name must answer 404, not a 409 about PRs of
     // a repo the catalog denies (POST /api/v1/prs accepts any repo string,
     // so such orphan PRs are creatable and must not reshape this answer).
@@ -291,13 +323,18 @@ pub async fn delete_repo(State(state): State<AppState>, Path(name): Path<String>
         }
         Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
-    // Guard (W2b review): deleting the catalog row orphans any open PRs —
+    // Guard (W2b review). NOT ATOMIC: the open-PR listing and the row delete
+    // are separate redb transactions, so a concurrent `POST /api/v1/prs`
+    // can still slip an open PR in between. The guard narrows the orphan
+    // path, it does not close it; the cost of an orphan is addressability
+    // (the flat route keeps serving it), never data loss.
+    // Deleting the catalog row orphans any open PRs —
     // merge_pr never consults the catalog, so those tickets stay merge-able
     // throughout; what the delete costs is their ADDRESSABILITY (the scoped
     // view 404s while the flat route still serves them) and it lets a
     // later re-registration of the same name silently adopt them. Refuse
-    // while open PRs exist; closing them is the operator's call (close every
-    // open PR, then delete — the allow path stays reachable).
+    // while open PRs exist; settling them is the operator's call (close OR
+    // merge every open PR, then delete — the allow path stays reachable).
     match state.pr_store.list(Some(&name), None, Some("open")).await {
         Ok(open) if !open.is_empty() => {
             return json_err(

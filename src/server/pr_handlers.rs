@@ -120,10 +120,12 @@ pub async fn create_pr(
 /// List filters + pagination for the PR list routes.
 ///
 /// Pagination fields are INLINED rather than `#[serde(flatten)]`-ing
-/// `PaginationParams`: `serde_urlencoded` (axum's `Query`) cannot
-/// deserialize a flattened struct, so any `?limit=`/`?offset=` request was
-/// answered with 400 instead of being honoured (found while pinning the
-/// repo-scoped route; the flat route had the same latent bug).
+/// `PaginationParams`: `serde_urlencoded` (axum's `Query`) buffers unknown
+/// values as strings, so a flattened NON-STRING scalar (`usize` here) fails
+/// to deserialize — every `?limit=`/`?offset=` request was answered with 400
+/// instead of being honoured (found while pinning the repo-scoped route; the
+/// flat route had the same latent bug). String-only flattened fields would
+/// have survived; the conclusion holds either way — inline the fields.
 #[derive(serde::Deserialize)]
 pub struct ListPrsParams {
     #[serde(default = "super::handlers::default_limit")]
@@ -142,9 +144,10 @@ pub struct ListPrsParams {
 /// (`GET /api/v1/repos` → `{"repos": …}`). Rationale: the payload is a list
 /// of PRs regardless of which path reached it; one PR list, one shape.
 ///
-/// Identity: the path segment pins `repo`. A `repo` query parameter is
-/// REJECTED (400) rather than silently ignored — a contradicting filter
-/// that answers 200 with another repo's rows is a lie.
+/// Identity: the path segment pins `repo`. A *contradicting* `repo` query
+/// parameter is rejected (400) rather than silently ignored — a filter that
+/// answers 200 with another repo's rows is a lie. An equal value is
+/// accepted (it agrees with the path).
 ///
 /// 404 when the name isn't in the repo catalog. Note the deliberate
 /// asymmetry: `POST /api/v1/prs` accepts any `repo` string (the catalog is
@@ -152,6 +155,22 @@ pub struct ListPrsParams {
 /// reachable through `GET /api/v1/prs?repo=…` and `GET /api/v1/prs/{n}`
 /// even though this view 404s. That is why the catalog must be treated as
 /// the canonical registry rather than as an authorization boundary.
+const PR_STATES: [&str; 3] = ["open", "closed", "merged"];
+
+fn validate_state(
+    state: Option<&str>,
+) -> Result<(), (axum::http::StatusCode, Json<serde_json::Value>)> {
+    if let Some(v) = state {
+        if !PR_STATES.contains(&v) {
+            return Err(bad_request(format!(
+                "state must be one of {} (got {v:?})",
+                PR_STATES.join("|")
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub async fn list_repo_prs(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -163,6 +182,7 @@ pub async fn list_repo_prs(
             super::handlers::MAX_LIMIT
         )));
     }
+    validate_state(params.state.as_deref())?;
     // The path owns the repo: a contradicting query filter is a client bug.
     if let Some(query_repo) = params.repo.as_deref() {
         if query_repo != name {
@@ -197,6 +217,7 @@ pub async fn list_prs(
             super::handlers::MAX_LIMIT
         )));
     }
+    validate_state(params.state.as_deref())?;
     let store = pr_store(&state);
     let mut records = store
         .list(

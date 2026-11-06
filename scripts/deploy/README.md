@@ -103,10 +103,11 @@ GET    /api/v1/repos/{name}/prs            PRs of one repo -> bare PrRecord[]
                                             404 for an unregistered name — after input
                                             validation, so a bad ?limit= answers 400 first)
 DELETE /api/v1/repos/{name}                remove the catalog row
-                                           (409 while OPEN PRs exist — close them first;
-                                            deleting the MIRROR JOB never blocks but keeps
-                                            the row while open PRs exist, so the scratch
-                                            clone may be gone while the row survives)
+                                           (409 while OPEN PRs exist — close OR merge them
+                                            first; deleting the MIRROR JOB never blocks but
+                                            keeps the row while open PRs exist — or when the
+                                            open-PR check itself fails — so the scratch clone
+                                            may be gone while the row survives)
 ```
 
 Read-only git serving shares the same namespace: `git clone

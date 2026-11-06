@@ -692,6 +692,84 @@ async fn test_repo_scoped_pr_routes() {
         "ghost repo must 404, not 409"
     );
 
+    // A live mirror job blocks the catalog delete (its next upsert and any
+    // clone of the scratch clone would re-register the row).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::DELETE, "/api/v1/repos/pilot", None))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::CONFLICT,
+        "a live mirror job must block the row delete"
+    );
+
+    // Unknown `state` values are rejected instead of silently matching
+    // nothing (this route is the guard's diagnostic; a typo must not read as
+    // "no open PRs").
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/pilot/prs?state=Open", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // A manual description survives a mirror re-registration (origin and
+    // created_us already did; the operator's text must not be wiped).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/repos",
+            Some(
+                serde_json::json!({
+                    "name": "described",
+                    "description": "operator text",
+                })
+                .to_string(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/jobs",
+            Some(
+                serde_json::json!({
+                    "name": "described",
+                    "remote_url": f.origin_url,
+                    "github_slug": "celestia-island/noa",
+                    "branches": ["master"],
+                    "enabled": true,
+                })
+                .to_string(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/described", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let described = body_json(resp).await;
+    assert_eq!(
+        described["description"], "operator text",
+        "mirror re-registration must keep the manual description"
+    );
+    assert_eq!(described["origin"], "manual", "origin survives too");
+
     // A SECOND pilot PR so skip/take is actually regress-locked (with only
     // one PR a dropped limit/offset would look identical).
     let create3 = serde_json::json!({
