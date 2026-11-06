@@ -497,9 +497,14 @@ async fn test_repo_scoped_pr_routes() {
 
     // Filters are wired, not just accepted: values that match nothing must
     // return [] (a dropped base/state wiring would return the 2 pilot PRs).
-    for (q, why) in [
-        ("?base=nope", "base dropped"),
-        ("?state=closed", "state dropped"),
+    // Positive AND negative per filter: the negative pins kill a dropped
+    // wiring, the positive pins kill a SWAPPED one (base<->state are
+    // adjacent same-typed Option<&str> args, so a swap compiles silently).
+    for (q, want_len, why) in [
+        ("?base=nope", 0, "base dropped"),
+        ("?state=closed", 0, "state dropped"),
+        ("?base=mirror.pilot.master", 2, "base swapped into state"),
+        ("?state=open", 2, "state swapped into base"),
     ] {
         let path = format!("/api/v1/repos/pilot/prs{q}");
         let resp = f
@@ -509,11 +514,11 @@ async fn test_repo_scoped_pr_routes() {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK, "{why}");
-        let none = body_json(resp).await;
+        let listed = body_json(resp).await;
         assert_eq!(
-            none.as_array().unwrap().len(),
-            0,
-            "filter not applied ({why})"
+            listed.as_array().unwrap().len(),
+            want_len,
+            "filter mis-wired ({why})"
         );
     }
 
