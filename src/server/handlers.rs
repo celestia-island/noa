@@ -112,8 +112,9 @@ pub(crate) fn default_limit() -> usize {
     100
 }
 
-/// Upper bound for list pagination; shared so the validation messages and
-/// the bound itself cannot drift between handlers.
+/// Upper bound for list pagination on the PR routes. NOTE: the snapshot and
+/// workspace list handlers still hardcode their own 1000 — migrating them
+/// here is a follow-up, not a claim this const already unifies everything.
 pub(crate) const MAX_LIMIT: usize = 1000;
 
 pub(crate) fn err_json(msg: impl std::fmt::Display) -> (StatusCode, Json<ApiError>) {

@@ -281,10 +281,21 @@ pub async fn register_repo(
 }
 
 pub async fn delete_repo(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    // Existence first: a ghost name must answer 404, not a 409 about PRs of
+    // a repo the catalog denies (POST /api/v1/prs accepts any repo string,
+    // so such orphan PRs are creatable and must not reshape this answer).
+    match state.repo_registry.get(&name).await {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return json_err(StatusCode::NOT_FOUND, &format!("repo '{name}' not found"));
+        }
+        Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
     // Guard (W2b review): deleting the catalog row would orphan any open
     // PRs — the name can be re-registered by clone traffic or a mirror job
     // and those stale tickets would silently become merge-able again. Refuse
-    // while open PRs exist; closing/merging them is the operator's call.
+    // while open PRs exist; closing/merging them is the operator's call
+    // (close every open PR, then delete — the allow path stays reachable).
     let prs = match crate::server::pr_store::PrStore::new(Arc::clone(&state.db)) {
         Ok(store) => store.list(Some(&name), None, Some("open")).await,
         Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
