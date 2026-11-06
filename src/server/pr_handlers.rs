@@ -126,6 +126,29 @@ pub struct ListPrsParams {
     pub state: Option<String>,
 }
 
+/// Repo-scoped PR listing (W2b): `/api/v1/repos/{name}/prs` — the catalog
+/// entry name is the PR `repo` value; this is the chest-facing view.
+pub async fn list_repo_prs(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Query(params): Query<ListPrsParams>,
+) -> ApiResult<Vec<PrRecord>> {
+    if params.pagination.limit == 0 || params.pagination.limit > 1000 {
+        return Err(bad_request("limit must be between 1 and 1000"));
+    }
+    // 404 when the repo isn't in the catalog (consistent with GET repos/{name}).
+    match state.repo_registry.get(&name).await.map_err(err_json)? {
+        Some(_) => {}
+        None => return Err(not_found(format!("repo '{name}' not found"))),
+    }
+    let store = pr_store(&state).map_err(err_json)?;
+    let records = store
+        .list(Some(&name), None, params.state.as_deref())
+        .await
+        .map_err(err_json)?;
+    Ok(Json(records))
+}
+
 pub async fn list_prs(
     State(state): State<AppState>,
     Query(params): Query<ListPrsParams>,

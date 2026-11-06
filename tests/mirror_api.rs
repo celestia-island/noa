@@ -340,6 +340,97 @@ async fn test_repo_catalog_routes() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_repo_scoped_pr_routes() {
+    let f = make_fixture().await;
+
+    // Register the repo first.
+    let register = serde_json::json!({"name": "pilot"});
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/repos",
+            Some(register.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // base/head workspaces must exist (create_pr validates them) — use the
+    // mirror-imported workspaces (a job run materialises mirror.pilot.master
+    // and friends).
+    let job_create = serde_json::json!({
+        "name": "pilot",
+        "remote_url": f.origin_url,
+        "github_slug": "celestia-island/noa",
+        "branches": ["master"],
+        "enabled": true,
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/jobs",
+            Some(job_create.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/run",
+            Some(serde_json::json!({ "job": "pilot" }).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let job = wait_job_ok(&f.app, "pilot").await;
+    assert_eq!(job["last_status"], "ok", "{job}");
+
+    // Create a PR with repo="pilot" via the flat API.
+    let create = serde_json::json!({
+        "title": "pilot pr",
+        "body": "context",
+        "base": "mirror.pilot.master",
+        "head": "mirror.pilot.master",
+        "author": "tester",
+        "repo": "pilot",
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::POST, "/api/v1/prs", Some(create.to_string())))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED, "{:?}", resp);
+
+    // Repo-scoped list shows it.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/pilot/prs", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let prs = body_json(resp).await;
+    assert_eq!(prs.as_array().unwrap().len(), 1);
+
+    // Ghost repo → 404.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/ghost/prs", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_git_http_clone_end_to_end() {
     let f = make_fixture().await;
     // Create + run the job so the scratch clone exists and is current.
