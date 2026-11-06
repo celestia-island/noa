@@ -30,6 +30,11 @@ pub struct MirrorJob {
     /// Tracked branches. Each becomes ref `mirror/<name>/<branch>` and
     /// workspace `mirror.<name>.<sanitized branch>`.
     pub branches: Vec<String>,
+    /// Opt-in tag replication: every remote tag is imported as ref
+    /// `mirror/<name>/tags/<tag>` (tags are part of the authority set the
+    /// mirror must hold before a GitHub flip).
+    #[serde(default)]
+    pub tags: bool,
     /// Opt-in canary push (W1a-2): after replication, push the first
     /// tracked branch's commit to `noa-mirror-canary` on the remote (git
     /// transport first, Git Data API fallback). Meaningful for https
@@ -119,6 +124,10 @@ impl MirrorJob {
                 || b.contains(']')
                 || b.contains("__")
                 || b.ends_with(".lock")
+                // `tags/…` collides with the tag ref namespace
+                // mirror/<job>/tags/<tag> (Round A S3).
+                || b == "tags"
+                || b.starts_with("tags/")
                 || b.chars().any(|c| c.is_ascii_control())
                 || !seen.insert(b.as_str())
             {
@@ -277,6 +286,7 @@ mod tests {
             remote_url: "https://github.com/celestia-island/noa.git".into(),
             github_slug: "celestia-island/noa".into(),
             branches: vec!["master".into()],
+            tags: false,
             canary_push: false,
             enabled: true,
             last_run_us: None,
