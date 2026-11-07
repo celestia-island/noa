@@ -2173,3 +2173,189 @@ async fn test_snapshot_export_serializes_into_scratch() {
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }
 }
+
+/// Slice 7 — the merge-time verify gate: a repo policy demanding a
+/// verification claim blocks the PR merge (422) until a kind="verify" run
+/// on the PR head's tree identity exists.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_merge_gate_requires_verify_claim() {
+    use libnoa::object::{ObjectStore, TreeEntries, TreeEntry};
+    use libnoa::snapshot::SnapshotStore as _;
+
+    let f = make_fixture().await;
+
+    // Register the repo (runs are repo-scoped).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/repos",
+            Some(serde_json::json!({ "name": "pilot", "default_branch": "master" }).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Real blobs + trees via the stores: base tree (a.txt), head tree
+    // (a.txt + the policy demanding a verify claim).
+    let obj_store = libnoa::object::RedbObjectStore::new(Arc::clone(&f.db)).unwrap();
+    let snap_store = libnoa::snapshot::RedbSnapshotStore::new(Arc::clone(&f.db)).unwrap();
+    let a_id = obj_store.put_blob(b"base\n").await.unwrap();
+    let policy_id = obj_store
+        .put_blob(b"[merge]\nrequire_verify_claim = true\n")
+        .await
+        .unwrap();
+    let base_tree = obj_store
+        .put_tree(&TreeEntries(vec![TreeEntry {
+            name: "a.txt".to_string(),
+            kind: libnoa::object::EntryKind::Blob,
+            id: a_id.0.clone(),
+        }]))
+        .await
+        .unwrap();
+    let head_tree = obj_store
+        .put_tree(&TreeEntries(vec![
+            TreeEntry {
+                name: "a.txt".to_string(),
+                kind: libnoa::object::EntryKind::Blob,
+                id: a_id.0.clone(),
+            },
+            TreeEntry {
+                name: ".noa/policy.toml".to_string(),
+                kind: libnoa::object::EntryKind::Blob,
+                id: policy_id.0.clone(),
+            },
+        ]))
+        .await
+        .unwrap();
+
+    // Snapshots + workspaces.
+    let ts = 1794078000000000u64;
+    let mk_snap = |tree: String, ws: &str, msg: &str| {
+        let id =
+            libnoa::snapshot::content_addressed_snapshot_id_with_ts(&tree, &[], ws, "t", msg, ts);
+        libnoa::snapshot::Snapshot {
+            id: id.clone(),
+            tree_hash: tree,
+            parents: vec![],
+            workspace: ws.to_string(),
+            author: "t".to_string(),
+            timestamp: ts,
+            message: msg.to_string(),
+        }
+    };
+    let base_snap = mk_snap(base_tree.0.clone(), "master", "base");
+    let head_snap = mk_snap(head_tree.0.clone(), "feature", "head");
+    snap_store.store(&base_snap).await.unwrap();
+    snap_store.store(&head_snap).await.unwrap();
+    let mgr = libnoa::workspace::WorkspaceManager::new(Arc::clone(&f.db)).unwrap();
+    mgr.create(&libnoa::workspace::Workspace {
+        name: "master".to_string(),
+        head: base_snap.id.clone(),
+        base: base_snap.id.clone(),
+        agent_id: None,
+        last_seq: 0,
+        created_at: ts,
+        updated_at: ts,
+    })
+    .await
+    .unwrap();
+    mgr.create(&libnoa::workspace::Workspace {
+        name: "feature".to_string(),
+        head: head_snap.id.clone(),
+        base: base_snap.id.clone(),
+        agent_id: None,
+        last_seq: 0,
+        created_at: ts,
+        updated_at: ts,
+    })
+    .await
+    .unwrap();
+
+    // Create the PR.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/prs",
+            Some(
+                serde_json::json!({
+                    "repo": "pilot",
+                    "title": "feature",
+                    "body": "",
+                    "base": "master",
+                    "head": "feature",
+                    "author": "agent-a",
+                })
+                .to_string(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED, "{:?}", resp);
+
+    // Merge WITHOUT a claim → 422.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/prs/1/merge",
+            Some(r#"{"squash": true}"#.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{:?}",
+        resp
+    );
+    let err = body_json(resp).await;
+    assert!(
+        err["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("verification claim"),
+        "{err:?}"
+    );
+
+    // Record the verify claim (head identity = the noa tree hash, 64 hex)
+    // and merge again → passes the gate.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/repos/pilot/runs",
+            Some(
+                serde_json::json!({
+                    "head_sha": head_tree.0,
+                    "kind": "verify",
+                    "status": "success",
+                    "actor": "verify-account",
+                    "summary": "verify: rounds=3 c3=3 gates=2",
+                })
+                .to_string(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED, "{:?}", resp);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/prs/1/merge",
+            Some(r#"{"squash": true}"#.to_string()),
+        ))
+        .await
+        .unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    eprintln!("DBG-2ND-MERGE body: {}", String::from_utf8_lossy(&bytes));
+}
