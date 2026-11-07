@@ -55,8 +55,19 @@ async fn main() -> anyhow::Result<()> {
     }
     let db = Arc::new(redb::Database::builder().create(&app.db_path)?);
 
-    let api_token =
-        std::env::var("NOA_API_TOKEN").map_err(|_| anyhow::anyhow!("NOA_API_TOKEN environment variable is required. The server will not start without authentication configured."))?;
+    let api_token = std::env::var("NOA_API_TOKEN")
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "NOA_API_TOKEN environment variable is required. The server will not start without authentication configured."
+            )
+        })?
+        .trim()
+        .to_string();
+    if api_token.is_empty() {
+        // An empty token compares equal to an empty Basic password — the
+        // /git surface would become anonymously readable (S1, #146 review).
+        anyhow::bail!("NOA_API_TOKEN is set but empty — set a real token");
+    }
 
     let github_broker = GithubBroker::from_env().unwrap_or_else(|e| {
         eprintln!("github broker misconfigured (routes stay disabled): {e}");

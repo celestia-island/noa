@@ -129,7 +129,9 @@ impl UserRegistry {
     }
 
     /// Creates a user and returns the ONE-TIME raw token. Stores only the
-    /// sha256. Overwrites the token (and keeps the role) if the user exists.
+    /// sha256. If the user exists, both the token AND the role are
+    /// overwritten (`created_us` is preserved); callers must therefore pass
+    /// the intended role on every rotation.
     pub async fn create(&self, name: &str, role: &str) -> Result<(UserEntry, String)> {
         validate_name(name)?;
         validate_role(role)?;
