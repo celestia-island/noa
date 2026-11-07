@@ -4,6 +4,7 @@ mod handlers;
 pub mod mirror;
 pub mod mirror_github;
 pub mod mirror_store;
+pub mod policy;
 mod pr_handlers;
 pub mod pr_store;
 pub mod repo_registry;
