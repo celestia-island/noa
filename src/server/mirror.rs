@@ -144,9 +144,6 @@ impl MirrorEngine {
             }
             Err(e) => {
                 let msg = format!("{e:#}");
-                // Lane unknown on error — recorded as None (never-run is
-                // distinguishable from "ran but lane unrecorded" only in
-                // logs; acceptable for an error wave).
                 store
                     .record_run(&job.name, "error", &msg, None)
                     .await
@@ -272,6 +269,10 @@ impl MirrorEngine {
         };
         let detail = format!("{summary}; {}", notes.join(" "));
         if failed > 0 {
+            // Error waves record lane=None (the recorded lane would be
+            // stale mid-wave anyway); the full lane info is in the log
+            // lines and the detail notes. Follow-up S2: thread the lane
+            // through the error return.
             anyhow::bail!("{detail}");
         }
         Ok((detail, lane))

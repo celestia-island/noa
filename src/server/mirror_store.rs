@@ -359,6 +359,8 @@ mod tests {
         assert_eq!(got.branches, vec!["master", "dev-x"]);
         assert_eq!(got.last_status.as_deref(), Some("ok"));
         assert!(got.last_run_us.is_some());
+        // W1e: the recorded lane survives a config-only update.
+        assert_eq!(got.last_lane.as_deref(), Some("git"));
     }
 
     #[tokio::test]
