@@ -1,0 +1,5 @@
+# noa's own push policy (slice 5 dogfood — the family's red line 1,
+# now machine-enforced at the wave): credential-shaped content never
+# enters noa's authority and never back-flows to GitHub.
+[push]
+block_credentials = true
