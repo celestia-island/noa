@@ -1717,14 +1717,16 @@ async fn test_backup_export_and_restore_drill() {
 
     // Export (admin route, env-selected out dir).
     let backup_dir = f._tmp.path().join("backup");
-    std::env::set_var("NOA_EXPORT_DIR", &backup_dir);
     let resp = f
         .app
         .clone()
-        .oneshot(req(Method::POST, "/api/v1/admin/export", None))
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/admin/export",
+            Some(serde_json::json!({ "out": backup_dir.to_string_lossy() }).to_string()),
+        ))
         .await
         .unwrap();
-    std::env::remove_var("NOA_EXPORT_DIR");
     let manifest = body_json(resp).await;
     assert_eq!(
         manifest.get("error").and_then(|e| e.as_str()).unwrap_or(""),

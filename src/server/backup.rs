@@ -239,9 +239,22 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     Ok(digest.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// POST /api/v1/admin/export — admin-only live export.
-pub async fn export_handler(State(state): State<AppState>) -> ApiResult<serde_json::Value> {
-    let out_dir = std::env::var("NOA_EXPORT_DIR").unwrap_or_else(|_| "noa-backup".to_string());
+/// POST /api/v1/admin/export — admin-only live export. The output
+/// directory comes from the REQUEST body (`{"out": "<dir>"}`): the
+/// production drill caught the server-env design reading the curling
+/// client's env, not the server's (the in-process test passed by sharing
+/// one process env — against the real server the env never arrived).
+#[derive(serde::Deserialize, Default)]
+pub struct ExportRequest {
+    #[serde(default)]
+    pub out: Option<String>,
+}
+
+pub async fn export_handler(
+    State(state): State<AppState>,
+    axum::Json(body): axum::Json<ExportRequest>,
+) -> ApiResult<serde_json::Value> {
+    let out_dir = body.out.unwrap_or_else(|| "noa-backup".to_string());
     match export_state(&state, Path::new(&out_dir)).await {
         Ok(manifest) => Ok(Json(manifest)),
         Err(e) => Err(err_json(e)),
