@@ -275,15 +275,25 @@ pub async fn handle_git_http(State(state): State<AppState>, req: Request) -> Res
     // W2c: the credential resolves to the bootstrap identity (NOA_API_TOKEN)
     // or a registered user token — any of them may read. Pushes are refused
     // downstream regardless of identity (write direction is a later slice).
+    // W2a2: the push path needs can_write — resolve the credential to an
+    // identity (bootstrap token compares directly; user tokens via the
+    // registry) and carry the WRITE permission separately from the read
+    // authorization, so a reader-role user cannot push through /git
+    // (the REST write role's git-direction twin).
+    let mut can_write = false;
     let authorized = match git_credential(req.headers()) {
         // Empty credential vs empty configured token compares equal — a
         // server started with `NOA_API_TOKEN=""` must NOT become anonymous
         // readable (S1: the pre-W2c guard was lost in the refactor).
         Some(token) if !token.is_empty() && !state.api_token.is_empty() => {
             if crate::server::constant_time_eq(token.as_bytes(), state.api_token.as_bytes()) {
+                can_write = true;
+                true
+            } else if let Some(identity) = state.user_registry.resolve(&token).await {
+                can_write = identity.can_write();
                 true
             } else {
-                state.user_registry.resolve(&token).await.is_some()
+                false
             }
         }
         _ => false,
@@ -374,11 +384,13 @@ pub async fn handle_git_http(State(state): State<AppState>, req: Request) -> Res
             .as_deref()
             .map(|q| q.contains("service=git-receive-pack"))
             .unwrap_or(false);
-    if is_receive_request && !authorized {
-        return json_error_response(
-            StatusCode::FORBIDDEN,
-            "push requires an authenticated identity",
-        );
+    if is_receive_request {
+        if !authorized {
+            return json_error_response(StatusCode::UNAUTHORIZED, "push requires authentication");
+        }
+        if !can_write {
+            return json_error_response(StatusCode::FORBIDDEN, "push requires the write role");
+        }
     }
     match run_backend(
         &state,
