@@ -6,6 +6,7 @@ pub mod mirror_store;
 mod pr_handlers;
 pub mod pr_store;
 pub mod repo_registry;
+pub mod run_registry;
 pub mod user_registry;
 
 use std::{
@@ -226,6 +227,10 @@ pub fn router(state: AppState) -> Router {
             get(repo_registry::get_repo).delete(repo_registry::delete_repo),
         )
         .route("/api/v1/repos/{name}/prs", get(pr_handlers::list_repo_prs))
+        .route(
+            "/api/v1/repos/{name}/runs",
+            get(run_registry::list_runs).post(run_registry::record_run),
+        )
         .route(
             "/api/v1/mirror/jobs",
             get(mirror::list_jobs).post(mirror::upsert_job),
