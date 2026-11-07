@@ -94,6 +94,33 @@ async fn auth_middleware(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
+    {
+        // Rate limit FIRST (W2c review): identity resolution scans the user
+        // table per attempt, so bad-token requests must be throttled too —
+        // they are exactly the traffic an attacker can generate cheaply.
+        let key = req
+            .extensions()
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|c| c.0.ip().to_string())
+            .unwrap_or_else(|| {
+                req.headers()
+                    .get("x-forwarded-for")
+                    .or_else(|| req.headers().get("x-real-ip"))
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| {
+                        s.split(',')
+                            .next()
+                            .map(|s| s.trim().to_string())
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_else(|| "unknown".to_string())
+            });
+
+        if !state.rate_limiter.check(&key).await {
+            return Err(StatusCode::TOO_MANY_REQUESTS);
+        }
+    }
+
     let auth_header = req
         .headers()
         .get("Authorization")
@@ -138,30 +165,6 @@ async fn auth_middleware(
     }
 
     req.extensions_mut().insert(identity);
-
-    {
-        let key = req
-            .extensions()
-            .get::<ConnectInfo<SocketAddr>>()
-            .map(|c| c.0.ip().to_string())
-            .unwrap_or_else(|| {
-                req.headers()
-                    .get("x-forwarded-for")
-                    .or_else(|| req.headers().get("x-real-ip"))
-                    .and_then(|v| v.to_str().ok())
-                    .map(|s| {
-                        s.split(',')
-                            .next()
-                            .map(|s| s.trim().to_string())
-                            .unwrap_or_default()
-                    })
-                    .unwrap_or_else(|| "unknown".to_string())
-            });
-
-        if !state.rate_limiter.check(&key).await {
-            return Err(StatusCode::TOO_MANY_REQUESTS);
-        }
-    }
 
     Ok(next.run(req).await)
 }
