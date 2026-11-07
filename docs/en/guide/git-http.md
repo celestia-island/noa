@@ -20,7 +20,8 @@ environment variables, and error shapes are fully under control.
 ## Behavior details
 
 - **Protocol negotiation**: the client's `Git-Protocol` header is passed through to the child
-  process (v2 enabled on demand; empty defaults to v0). This is exactly why the direct-drive
+  process — this is the **git wire protocol's upstream version** (gitprotocol-v2, git's own
+  standard, NOT a noa version); empty defaults to v0. This is exactly why the direct-drive
   implementation replaces git-http-backend — the CGI wrapper drops that header on the POST path,
   silently downgrading to v0 and breaking clones.
 - **Advertisement preamble**: the `# service=` pkt-line (length header computed dynamically from
