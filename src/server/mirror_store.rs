@@ -13,7 +13,7 @@ use redb::{ReadableDatabase, ReadableTable, TableDefinition};
 
 use crate::error::Result;
 
-const MIRROR_JOBS: TableDefinition<&str, &[u8]> = TableDefinition::new("mirror_jobs");
+pub(crate) const MIRROR_JOBS: TableDefinition<&str, &[u8]> = TableDefinition::new("mirror_jobs");
 
 /// A scheduled replication job. `remote_url` must not embed credentials —
 /// the engine injects auth via `GIT_ASKPASS` at run time so secrets never

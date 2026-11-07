@@ -36,6 +36,10 @@ fn git(cwd: &Path, args: &[&str]) {
 
 struct Fixture {
     _tmp: tempfile::TempDir,
+    /// The redb file's parent, kept alive so the backup lane can copy the
+    /// database BY PATH (a dropped TempDir deletes the dir while the open
+    /// fd keeps working — everything but path-based access).
+    db_dir: tempfile::TempDir,
     app: axum::Router,
     origin_url: String,
     scratch: std::path::PathBuf,
@@ -75,9 +79,17 @@ async fn make_fixture() -> Fixture {
     };
     let state = AppState::new(db)
         .with_api_token(TEST_API_TOKEN.to_string())
+        .with_db_path(
+            db_dir
+                .path()
+                .join("mirror-api.redb")
+                .to_string_lossy()
+                .to_string(),
+        )
         .with_mirror_config(mirror_cfg.clone());
     Fixture {
         _tmp: tmp,
+        db_dir,
         app: router(state),
         origin_url: format!("file://{}", origin.display()),
         scratch: mirror_cfg.scratch_dir,
@@ -1658,5 +1670,131 @@ async fn test_receive_pack_and_backflow() {
                 .unwrap();
             String::from_utf8_lossy(&out.stdout).to_string()
         }
+    );
+}
+
+/// Slice 2 — the backup/restore DRILL: live export under the write lock,
+/// offline import into a fresh location, and the restored instance answers
+/// with the same jobs. This is the acceptance gate for the whole lane.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_backup_export_and_restore_drill() {
+    let f = make_fixture().await;
+    // One job + one completed wave so the export carries real content.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/jobs",
+            Some(
+                serde_json::json!({
+                    "name": "pilot",
+                    "remote_url": f.origin_url,
+                    "github_slug": "celestia-island/noa",
+                    "branches": ["master"],
+                    "tags": true,
+                    "enabled": true,
+                })
+                .to_string(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/run",
+            Some(serde_json::json!({ "job": "pilot" }).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let job = wait_job_ok(&f.app, "pilot").await;
+    let detail_before = job["last_detail"].as_str().unwrap_or("").to_string();
+
+    // Export (admin route, env-selected out dir).
+    let backup_dir = f._tmp.path().join("backup");
+    std::env::set_var("NOA_EXPORT_DIR", &backup_dir);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::POST, "/api/v1/admin/export", None))
+        .await
+        .unwrap();
+    std::env::remove_var("NOA_EXPORT_DIR");
+    let manifest = body_json(resp).await;
+    assert_eq!(
+        manifest.get("error").and_then(|e| e.as_str()).unwrap_or(""),
+        "",
+        "export failed: {manifest:?}"
+    );
+    assert!(manifest.get("files").is_some(), "no manifest: {manifest:?}");
+    let names: Vec<&str> = manifest["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        names.contains(&"noa.redb"),
+        "db artifact missing: {names:?}"
+    );
+    assert!(
+        names.contains(&"pilot.bundle"),
+        "scratch bundle missing: {names:?}"
+    );
+    assert_eq!(manifest["schema"], "noa.backup/1");
+    assert!(backup_dir.join("noa.redb").exists());
+    assert!(backup_dir.join("pilot.bundle").exists());
+    assert!(backup_dir.join("manifest.json").exists());
+
+    // Reader role must NOT export.
+    // (fixture has no users; the admin gate is exercised by the 200 above
+    // with the bootstrap admin token — the reader-403 case is covered by
+    // the RBAC matrix test.)
+
+    // Offline restore into a FRESH location.
+    let new_root = f._tmp.path().join("restored");
+    let new_db = new_root.join("restored.redb");
+    let new_scratch = new_root.join("scratch");
+    libnoa::server::backup::import_state(&backup_dir, &new_db, &new_scratch)
+        .expect("restore must succeed");
+    assert!(new_db.exists());
+    assert!(new_scratch.join("pilot.git").exists());
+
+    // The restored instance answers with the same job state.
+    let db2 = Arc::new(
+        redb::Database::builder()
+            .create(&new_db)
+            .expect("restored db must open"),
+    );
+    let state2 = AppState::new(db2)
+        .with_api_token(TEST_API_TOKEN.to_string())
+        .with_mirror_config(libnoa::server::mirror::MirrorConfig {
+            interval_secs: 900,
+            scratch_dir: new_scratch.clone(),
+            token_env: String::new(),
+            github_api_base: String::new(),
+        });
+    let app2 = libnoa::server::router(state2);
+    let resp = app2
+        .oneshot(req(Method::GET, "/api/v1/mirror/jobs", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let jobs = body_json(resp).await;
+    let restored = jobs
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|j| j["name"] == "pilot")
+        .expect("pilot job must survive the restore");
+    assert_eq!(
+        restored["last_detail"].as_str().unwrap_or(""),
+        detail_before,
+        "wave detail must round-trip"
     );
 }
