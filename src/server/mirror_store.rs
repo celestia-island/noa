@@ -170,7 +170,6 @@ impl MirrorJobStore {
     pub async fn upsert(&self, mut job: MirrorJob) -> Result<MirrorJob> {
         job.validate()?;
         let db = self.db.clone();
-        let first_branch = job.branches.first().cloned().unwrap_or_default();
         let job_for_registry = job.clone();
         let returned_job = tokio::task::spawn_blocking(move || {
             let txn = db.begin_write()?;
@@ -195,13 +194,8 @@ impl MirrorJobStore {
         // W2b: the repo catalog follows the mirror lockstep (async context —
         // the registry registers in its own spawn_blocking).
         let reg = &self.registry;
-        reg.register(
-            &job_for_registry.name,
-            None,
-            first_branch.as_str(),
-            "mirror",
-        )
-        .await?;
+        reg.register(&job_for_registry.name, None, None, "mirror")
+            .await?;
         Ok(returned_job)
     }
 
