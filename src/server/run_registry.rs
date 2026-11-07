@@ -76,8 +76,12 @@ pub struct RunRecord {
 const RUN_STATUSES: [&str; 5] = ["queued", "running", "success", "failure", "cancelled"];
 
 fn validate_run(run: &RunRecord) -> Result<(), String> {
-    if run.head_sha.len() != 40 || !run.head_sha.bytes().all(|c| c.is_ascii_hexdigit()) {
-        return Err("head_sha must be 40 hex chars".to_string());
+    // Head identity accepts BOTH worlds: a git commit sha (40 hex) or a
+    // noa tree hash (64 hex) — merge-time verify claims are made against
+    // whichever identity the claimer holds.
+    let hex_ok = run.head_sha.len() == 40 || run.head_sha.len() == 64;
+    if !hex_ok || !run.head_sha.bytes().all(|c| c.is_ascii_hexdigit()) {
+        return Err("head_sha must be 40 or 64 hex chars".to_string());
     }
     if run.kind.is_empty() || run.kind.len() > 64 {
         return Err("kind must be 1..=64 chars".to_string());

@@ -43,6 +43,41 @@ l'authentification par jeton porteur (bearer) ; les lectures `/git/{repo}/*` l'e
 aussi (les requêtes non authentifiées reçoivent une erreur 401 accompagnée d'un défi
 `Basic`).
 
+## Le flux de travail natif noa (recommandé)
+
+Le CLI `noa` est le point d'entrée de premier rang — un clone est un dépôt où `.git` et
+`.noa` coexistent (git gère les sources, noa gère les données d'agents) :
+
+```bash
+noa clone http://<token>@127.0.0.1:3016/git/hello --path hello
+cd hello
+noa workspace create agent-a     # a per-agent isolated workspace
+# … edit files …
+noa snapshot create -m "change" -a agent-a
+noa log                          # this workspace's snapshot history
+noa push                         # publishes the workspace snapshot (serialized to a git commit)
+```
+
+`noa push` publie **l'état de l'instantané de l'espace de travail** (il crée un commit
+`[noa export]`) — pas les commits de `.git`. Les deux voies sont parallèles ; ne les
+mélangez pas (exécutez `noa snapshot create` avant de pousser, sinon vous publiez un
+instantané périmé). L'authentification est injectée depuis les variables d'environnement
+`NOA_GIT_USER` + `NOA_GIT_PASS`. Le répertoire entier (y compris `.git/noa`) se copie
+sur une autre machine et continue de fonctionner.
+
+## La voie de compatibilité git (tout outil git fonctionne)
+
+Le même endpoint `/git/{repo}` parle aussi le HTTP intelligent standard de git — git
+brut, CI et farm fonctionnent sans modification :
+
+```bash
+git clone http://<token>@127.0.0.1:3016/git/hello
+```
+
+Les pushs (receive-pack) exigent le rôle d'écriture ; un push atterri **déclenche
+immédiatement la vague d'import** (le retour suit sur la même vague). C'est la forme de
+transition qui garde farm/CNB à zéro changement.
+
 ## Votre premier miroir (importer un dépôt GitHub dans noa)
 
 ```bash
@@ -71,22 +106,14 @@ Une fois la vague terminée, le dépôt est clonable via noa :
 git clone http://<your-token>@127.0.0.1:3016/git/hello
 ```
 
-## Votre premier push (autorité d'écriture)
+## Sauvegarde et migration
 
-Les pushs passent par le chemin receive-pack de `/git/{repo}` et exigent une identité
-authentifiée :
+Tout l'état du serveur s'exporte en un répertoire portable (voir
+[Déploiement](../reference/deploy.md) § sauvegarde) : un instantané redb cohérent + un
+bundle git clonable par dépôt + un manifeste sha256 ; `noa-server --import-state <dir>`
+restaure hors ligne. Le critère d'acceptation est l'exercice : export → restauration sur
+une autre machine → service → réconciliation.
 
-```bash
-cd hello
-echo "hello noa" > README.md
-git add -A && git commit -m "hello noa"
-git push origin master
-```
-
-Le push atterrit dans le scratch du miroir ; la vague de miroir suivante l'importe
-dans le système d'instantanés/références de noa et, si la tâche a `backflow` activé,
-l'état est également renvoyé vers l'origine (GitHub) — la forme de transition
-« autorité noa + miroir GitHub ».
 
 ## Pour aller plus loin
 

@@ -52,14 +52,33 @@ redb مكتبة ملف واحد — مثيل واحد يملك ملف قاعدة
 مجلدات ومنافذ (مثل وضع النسختين `chest-demo` + chest الإنتاجي)؛ نقل الإعدادات
 بين النسخ عبر RPC import / export، أبداً بنسخ ملفات الإعداد.
 
+## النسخ الاحتياطي والاستعادة
+
+حالة الخادم بأكملها = ملف redb + مجلد scratch + env (بيانات الاعتماد **مستبعدة عمدًا** — استعادة بيانات الاعتماد هي إعادة تجهيز وليست نسخًا أبدًا).
+
+```bash
+# export (admin; live is fine — the write lock makes the copy consistent)
+curl -X POST -H "Authorization: Bearer $ADMIN" -H "Content-Type: application/json" \
+  -d '{"out": "/srv/noa-backup/nightly"}' \
+  http://127.0.0.1:3016/api/v1/admin/export
+
+# artifacts: noa.redb (consistent snapshot) + {job}.bundle (cloneable per-repo
+# file) + manifest.json (sha256)
+
+# restore (offline — restore before the database ever opens)
+noa-server --db-path /new/noa.redb --import-state /srv/noa-backup/nightly --port 3016
+```
+
+تتحقق الاستعادة أولًا من sha256 لكل ناتج (النسخة نصف التالفة لا تكتب شيئًا)؛ ويُحتفظ بالـ scratch الموجود (قد يكون متقدمًا — الموجة التالية تطابقه). **بوابة القبول هي التمرين**: تصدير → استعادة على آلة أخرى → تشغيل الخدمة → مطابقة. يُنصح بمؤقّت systemd للتصدير الدوري.
+
 ## التحقق بعد النشر
 
 ```bash
-# المصادقة والجهوزية
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3016/api/v1/prs   # المتوقع 401
-# موجة مرآة
+# Auth and readiness
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3016/api/v1/prs   # expect 401
+# Mirror wave
 curl -X POST -H "Authorization: Bearer $T" -H "Content-Type: application/json" \
-  -d '{"job":"noa"}' http://127.0.0.1:3016/api/v1/mirror/run               # المتوقع 202
+  -d '{"job":"noa"}' http://127.0.0.1:3016/api/v1/mirror/run               # expect 202
 ```
 
 تفاصيل المرآة ودلالات الـ back-flow في

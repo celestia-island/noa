@@ -44,6 +44,31 @@ L'attribution des ports se lit dans le registre du workspace (`_ledger/ports-and
 
 redb est une base à fichier unique — une instance, un fichier de base. Plusieurs instances = plusieurs répertoires et plusieurs ports (comme le mode double instance de `chest-demo` et du chest de production) ; le transport de configuration entre instances passe par RPC import / export, sans copie de fichiers de configuration.
 
+## Sauvegarde et restauration
+
+Tout l'état du serveur = le fichier redb + le répertoire scratch + l'env (les identifiants
+sont **délibérément exclus** — restaurer des identifiants, c'est reconfigurer, jamais
+copier).
+
+```bash
+# export (admin; live is fine — the write lock makes the copy consistent)
+curl -X POST -H "Authorization: Bearer $ADMIN" -H "Content-Type: application/json" \
+  -d '{"out": "/srv/noa-backup/nightly"}' \
+  http://127.0.0.1:3016/api/v1/admin/export
+
+# artifacts: noa.redb (consistent snapshot) + {job}.bundle (cloneable per-repo
+# file) + manifest.json (sha256)
+
+# restore (offline — restore before the database ever opens)
+noa-server --db-path /new/noa.redb --import-state /srv/noa-backup/nightly --port 3016
+```
+
+La restauration vérifie d'abord le sha256 de chaque artefact (une sauvegarde à moitié
+corrompue n'écrit rien) ; un scratch existant est conservé (il peut être en avance — la
+vague suivante réconcilie). **Le critère d'acceptation, c'est l'exercice** : export →
+restauration sur une autre machine → service → réconciliation. Un timer systemd pour des
+exports planifiés est recommandé.
+
 ## Vérifications après déploiement
 
 ```bash

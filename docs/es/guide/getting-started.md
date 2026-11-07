@@ -38,6 +38,42 @@ curl -H "Authorization: Bearer <your-token>" http://127.0.0.1:3016/api/v1/repos
 
 Una respuesta `[]` significa que el servicio está listo. Todos los endpoints REST exigen autenticación bearer; lo mismo vale para las rutas de lectura de `/git/{repo}/*` (una petición no autenticada recibe un 401 y un challenge `Basic`).
 
+## El flujo de trabajo nativo de noa (recomendado)
+
+El CLI `noa` es la puerta de entrada de primera clase — lo que se clona es un repositorio
+donde `.git` y `.noa` coexisten (git gestiona el código fuente, noa gestiona los datos de
+los agentes):
+
+```bash
+noa clone http://<token>@127.0.0.1:3016/git/hello --path hello
+cd hello
+noa workspace create agent-a     # a per-agent isolated workspace
+# … edit files …
+noa snapshot create -m "change" -a agent-a
+noa log                          # this workspace's snapshot history
+noa push                         # publishes the workspace snapshot (serialized to a git commit)
+```
+
+`noa push` publica **el estado de la instantánea del espacio de trabajo** (genera un
+commit `[noa export]`), no los commits de `.git`. Las dos vías son paralelas; no las
+mezcles (ejecuta `noa snapshot create` antes de hacer push, o publicarás una instantánea
+obsoleta). La autenticación se inyecta desde las variables de entorno `NOA_GIT_USER` +
+`NOA_GIT_PASS`. El directorio completo (incluido `.git/noa`) se copia a otra máquina y
+sigue funcionando.
+
+## La vía de compatibilidad git (cualquier herramienta git sirve)
+
+El mismo endpoint `/git/{repo}` también habla el smart HTTP estándar de git — git normal,
+CI y farm funcionan sin cambios:
+
+```bash
+git clone http://<token>@127.0.0.1:3016/git/hello
+```
+
+Los push (receive-pack) requieren el rol de escritura; un push que aterriza **dispara
+inmediatamente la ola de importación** (el reflujo continúa en la misma ola). Esta es la
+forma de transición que mantiene a farm/CNB sin cambios.
+
 ## Primer espejo (incorporar un repositorio de GitHub a noa)
 
 ```bash
@@ -66,18 +102,14 @@ Cuando la ola termina, el repositorio ya se puede clonar a través de noa:
 git clone http://<your-token>@127.0.0.1:3016/git/hello
 ```
 
-## Primer push (escribir la autoridad)
+## Copia de seguridad y migración
 
-El push va por la ruta receive-pack de `/git/{repo}` y requiere una identidad autenticada:
+Todo el estado del servidor se exporta a un directorio portátil (véase
+[Despliegue](../reference/deploy.md) § copia de seguridad): una instantánea consistente
+de redb + un bundle git clonable por repositorio + un manifiesto sha256;
+`noa-server --import-state <dir>` restaura sin conexión. El criterio de aceptación es el
+simulacro: exportar → restaurar en otra máquina → servir → conciliar.
 
-```bash
-cd hello
-echo "hello noa" > README.md
-git add -A && git commit -m "hello noa"
-git push origin master
-```
-
-El push aterriza en el scratch del espejo; la siguiente ola del espejo lo incorpora automáticamente al sistema de instantáneas/referencias de noa y, si el job tiene `backflow` activado, también empuja el estado de vuelta al origen (GitHub) — esa es la forma de transición «noa como autoridad + GitHub como espejo».
 
 ## Siguientes pasos
 

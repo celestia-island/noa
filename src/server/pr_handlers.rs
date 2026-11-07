@@ -304,6 +304,7 @@ pub async fn merge_pr(
         .await
         .map_err(err_json)?
         .ok_or_else(|| not_found(format!("base workspace not found: {}", record.base)))?;
+
     let head_ws = mgr
         .get(&record.head)
         .await
@@ -317,6 +318,44 @@ pub async fn merge_pr(
     // the snapshot pinned when the PR was created (stale once either head
     // advances). Fall back to the pinned snapshot only when the heads share
     // no DAG ancestor, preserving the previous behavior for such histories.
+    // Slice 7 — the merge-time verify gate (the strong form of "declare
+    // on merge"): when the repo-carried policy demands it, a verification
+    // claim (a kind="verify" run on the PR head's tree identity) must
+    // exist server-side before the merge proceeds.
+    {
+        let obj_store = state.object_store().map_err(err_json)?;
+        let snap_store = state.snapshot_store().map_err(err_json)?;
+        let head_snap = snap_store.get(&head_ws.head).await.map_err(err_json)?;
+        let policy =
+            crate::server::policy::load_policy_from_noa_tree(&obj_store, &head_snap.tree_hash)
+                .await;
+        if policy
+            .merge
+            .as_ref()
+            .is_some_and(|m| m.require_verify_claim)
+        {
+            let runs = state
+                .run_registry
+                .list(&record.repo, 1000, 0)
+                .await
+                .map_err(err_json)?;
+            let claimed = runs
+                .iter()
+                .any(|r| r.kind == "verify" && r.head_sha == head_snap.tree_hash);
+            if !claimed {
+                return Err((
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(serde_json::json!({
+                        "error": format!(
+                            "merge blocked: no verification claim for PR #{} (a kind=verify run on head {} is required by .noa/policy.toml)",
+                            number, head_snap.tree_hash
+                        )
+                    })),
+                ));
+            }
+        }
+    }
+
     let merge_base_id = find_merge_base(&snap_store, &base_ws.head, &head_ws.head)
         .await
         .map_err(err_json)?;

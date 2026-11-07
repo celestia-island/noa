@@ -16,7 +16,7 @@
 
 ## Détails de comportement
 
-- **Négociation de protocole** : l'en-tête `Git-Protocol` du client est transmis tel quel au sous-processus (v2 activé à la demande ; vide = v0 par défaut). C'est précisément la raison pour laquelle l'implémentation directe remplace git-http-backend — l'enrobage CGI abandonne cet en-tête sur le chemin POST, dégrade silencieusement en v0 et casse le clone.
+- **Négociation de protocole** : l'en-tête `Git-Protocol` du client est transmis tel quel au sous-processus — il s'agit ici de la **version amont du protocole filaire de git** (gitprotocol-v2, une norme de git lui-même, pas un numéro de version de noa) ; vide = v0 par défaut. C'est précisément la raison pour laquelle l'implémentation directe remplace git-http-backend — l'enrobage CGI abandonne cet en-tête sur le chemin POST, dégrade silencieusement en v0 et casse le clone.
 - **Préambule d'annonce** : pkt-line `# service=` (en-tête de longueur calculé dynamiquement selon le nom du service) + flush ; les réponses RPC sont sans préambule.
 - **Content-Type** : `application/x-git-{upload,receive}-pack[-advertisement]` strictement distingués.
 - **Corps de requête** : le corps du POST est écrit directement sur le stdin du sous-processus ; `Content-Encoding: gzip` est décompressé automatiquement
@@ -27,7 +27,7 @@
 
 ## Sémantique du push
 
-Le push atterrit dans les références locales du scratch ; la vague de miroir fait ensuite :
+Le push atterrit dans les références locales du scratch ; **un receive-pack réussi déclenche immédiatement la vague d'import de la tâche** (sans attendre l'ordonnanceur) — le contenu poussé est visible aussitôt sur le plan de l'API (références/instantanés/espaces de travail). La vague fait ensuite :
 
 1. l'import des références avancées du scratch dans le système de références de noa (instantanés/espaces de travail) ;
 2. si `backflow` est activé, le push de l'état vers l'origine.
