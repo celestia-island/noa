@@ -9,11 +9,11 @@ vérifications de fidélité du miroir reposent précisément là-dessus).
 ## Le modèle à trois couches
 
 ```
-Workspace   —— one isolated workspace per agent; agents cannot see each other
+Workspace          — one isolated workspace per agent, invisible to each other
    │ head points to
-Snapshot    —— content-addressed commit (SHA-256), DAG structure (multi-parent = merge)
+Snapshot           — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)
    │ tree_hash points to
-ObjectStore —— blob / tree / symlink / gitlink, git-object-algebra compatible
+ObjectStore        — blob / tree / symlink / gitlink, git object-algebra compatible
 ```
 
 - **Les espaces de travail** sont la primitive d'isolation centrale de noa : plusieurs

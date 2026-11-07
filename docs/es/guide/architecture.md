@@ -5,11 +5,11 @@ noa es un sistema de control de versiones distribuido nativo para agentes. No es
 ## El modelo de tres capas
 
 ```
-工作区（Workspace）   —— 每个智能体一个隔离工作区，互不可见
-   │ head 指向
-快照（Snapshot）      —— 内容寻址的提交（SHA-256），DAG 结构（可多父 = 合并）
-   │ tree_hash 指向
-对象（ObjectStore）   —— blob / tree / symlink / gitlink，git 对象代数兼容
+Workspace          — one isolated workspace per agent, invisible to each other
+   │ head points to
+Snapshot           — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)
+   │ tree_hash points to
+ObjectStore        — blob / tree / symlink / gitlink, git object-algebra compatible
 ```
 
 - **El espacio de trabajo** es la primitiva central de aislamiento de noa: varios agentes mantienen, dentro del mismo repositorio, un espacio de trabajo y un head propios e independientes, sin pisarse entre sí. Los espacios de nombres del sistema como `mirror.<job>.<branch>` también existen en forma de espacio de trabajo.

@@ -15,8 +15,8 @@ Ante modificaciones de ambas partes en un mismo archivo, primero se hace un barr
 use libnoa::merge::line_merge::{merge_lines, LineMerge};
 
 match merge_lines(base, ours, theirs) {
-    LineMerge::Clean(merged) => { /* 自动解决 */ }
-    LineMerge::Conflict { merged, ours, theirs, base } => { /* 结构化冲突 */ }
+    LineMerge::Clean(merged) => { /* auto-resolved */ }
+    LineMerge::Conflict { merged, ours, theirs, base } => { /* structured conflict */ }
 }
 ```
 

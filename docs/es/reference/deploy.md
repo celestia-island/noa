@@ -47,11 +47,11 @@ redb es una base de archivo único — una instancia, un archivo de base. Varias
 ## Verificación tras el despliegue
 
 ```bash
-# 鉴权与就绪
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3016/api/v1/prs   # 期望 401
-# 镜像波次
+# Auth and readiness
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3016/api/v1/prs   # expect 401
+# Mirror wave
 curl -X POST -H "Authorization: Bearer $T" -H "Content-Type: application/json" \
-  -d '{"job":"noa"}' http://127.0.0.1:3016/api/v1/mirror/run               # 期望 202
+  -d '{"job":"noa"}' http://127.0.0.1:3016/api/v1/mirror/run               # expect 202
 ```
 
 Detalles del espejo y semántica del reflujo: ver [Espejo y reflujo](../guide/mirror.md).

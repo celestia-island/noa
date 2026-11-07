@@ -5,9 +5,9 @@
 ## ガイド
 
 - [クイックスタート](./guide/getting-started.md)
-- [アーキテクチャ](./guide/architecture.md)
+- [アーキテクチャ概観](./guide/architecture.md)
 - [ミラーと還流](./guide/mirror.md)
-- [RBAC](./guide/rbac.md)
+- [権限とユーザー](./guide/rbac.md)
 - [git-http プロトコル](./guide/git-http.md)
 - [マージと競合](./guide/merge.md)
 - [CI 実行記録](./guide/ci-runs.md)
@@ -20,4 +20,4 @@
 
 ## 設計
 
-- [PR プラットフォーム設計](./designs/pr-platform.md)
+- [PR プラットフォーム設計](../en/designs/pr-platform.md)

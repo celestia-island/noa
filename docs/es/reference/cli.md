@@ -25,10 +25,10 @@
 
 ```bash
 noa init
-noa workspace create agent-a      # 智能体 A 的隔离工作区
-# … 在工作区内编辑 …
-noa snapshot -m "agent-a 的变更"
-noa log                           # 只看到本工作区的父链
+noa workspace create agent-a      # agent A's isolated workspace
+# … edit inside the workspace …
+noa snapshot -m "agent-a's changes"
+noa log                           # sees only this workspace's parent chain
 ```
 
 Varios agentes hacen cada uno su `workspace create`, sin ver jamás el head ni el contenido de los demás — esta es la diferencia fundamental entre noa y el flujo de ramas tradicional: la unidad de aislamiento es el espacio de trabajo, no la referencia.

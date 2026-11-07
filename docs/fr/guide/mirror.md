@@ -48,10 +48,10 @@ Quand `pr_heads: true`, chaque vague tire en plus `refs/pull/<N>/head` et l'impo
 ## Reflux (backflow)
 
 ```text
-scratch 本地引用 ──atomic push──▶ origin
+scratch local refs ──atomic push──▶ origin
   +refs/heads/*:refs/heads/*
   +refs/tags/*:refs/tags/*
-  +refs/pull-heads/*:refs/noa/pr/*     （仅当 scratch 存在 pull-heads）
+  +refs/pull-heads/*:refs/noa/pr/*     (only when pull-heads exist in the scratch)
 ```
 
 - **Identifiants** : le token résolu depuis `token_env` (`NOA_MIRROR_GH_TOKEN` par défaut) est incorporé sous la forme `x-access-token:<token>` dans une URL de push à usage unique ; le token n'est jamais écrit dans la configuration du scratch.

@@ -24,9 +24,9 @@ La configuración mínima solo necesita un token de API (credencial de arranque 
 
 ```bash
 export NOA_API_TOKEN="<your-token>"
-export NOA_MIRROR_SCRATCH_DIR=/var/lib/noa/mirror-cache   # 镜像 scratch 根目录
-export NOA_MIRROR_ENABLED=1                               # 启用镜像调度（默认 900s）
-export NOA_MIRROR_GH_TOKEN="<github-pat>"                 # 可选：回流 / canary 推送凭据
+export NOA_MIRROR_SCRATCH_DIR=/var/lib/noa/mirror-cache   # mirror scratch root
+export NOA_MIRROR_ENABLED=1                               # enable mirror scheduling (default 900s)
+export NOA_MIRROR_GH_TOKEN="<github-pat>"                 # optional: back-flow / canary push credential
 noa-server --host 0.0.0.0 --port 3016
 ```
 

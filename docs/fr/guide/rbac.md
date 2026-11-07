@@ -11,7 +11,7 @@ Formes d'authentification (identiques sur les deux canaux) :
 
 ```text
 Authorization: Bearer <token>
-Authorization: Basic <base64(any-user:token)>     # git 客户端惯例：用户名任意
+Authorization: Basic <base64(any-user:token)>     # git client convention: any username
 ```
 
 Un serveur à token vide (`NOA_API_TOKEN=""`) ne dégénère pas en lecture anonyme — le démarrage est refusé immédiatement, et la garde de non-vide avant comparaison constitue une double défense.
@@ -30,16 +30,16 @@ Un serveur à token vide (`NOA_API_TOKEN=""`) ne dégénère pas en lecture anon
 ## REST de gestion des utilisateurs
 
 ```bash
-# 创建（admin）
+# Create (admin)
 curl -X POST -H "Authorization: Bearer $ADMIN" -H "Content-Type: application/json" \
   -d '{"name":"alice","role":"operator","token":"<alice-token>"}' \
   http://127.0.0.1:3016/api/v1/users
 
-# 列表（admin）／单个
+# List (admin) / single
 curl -H "Authorization: Bearer $ADMIN" http://127.0.0.1:3016/api/v1/users
 curl -H "Authorization: Bearer $ADMIN" http://127.0.0.1:3016/api/v1/users/alice
 
-# 删除（admin）
+# Delete (admin)
 curl -X DELETE -H "Authorization: Bearer $ADMIN" \
   http://127.0.0.1:3016/api/v1/users/alice
 ```
@@ -53,10 +53,10 @@ Règles :
 ## Exemple du canal git
 
 ```bash
-# 读（任意已认证身份；公开仓用占位用户名即可）
+# Read (any authenticated identity; public repos work with a placeholder username)
 git clone http://<token>@noa.example.com:3016/git/noa
 
-# 写（需要 operator/admin）
+# Write (requires operator/admin)
 git push origin master
 ```
 

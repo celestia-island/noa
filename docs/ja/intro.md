@@ -2,7 +2,7 @@
 
 <h1 align="center">Noa</h1>
 
-<p align="center"><strong>AIネイティブな分散バージョン管理システム</strong></p>
+<p align="center"><strong>エージェントネイティブな分散バージョン管理システム</strong></p>
 
 <div align="center">
 
@@ -25,23 +25,25 @@
 
 </div>
 
-エージェントごとのワークスペース隔離、SHA-256 内容アドレス指定スナップショット、完全な git スマート HTTP サーバー（clone/fetch/**push**）、ミラーと還流レーンを内蔵したセルフホストフォージ、同一内容リネーム検出つきの行レベル 3ウェイマージ、マルチユーザー RBAC、CI 実行記録 API——すべて単一バイナリ + 埋め込みストレージに収まっています。
+エージェントごとのワークスペース隔離、SHA-256 内容アドレス指定スナップショット、完全な git スマートプロトコルサーバー（clone/fetch/push）、ミラーと還流を内蔵したセルフホストフォージ、正確なリネーム検出つきの行レベル 3ウェイマージ、マルチユーザー RBAC、CI 実行記録 API——すべて単一バイナリ + 埋め込みストレージに組み込まれています。
 
 ## ドキュメント
 
-ドキュメント一式はこのリポジトリに含まれています（[noa.docs.celestia.world](https://noa.docs.celestia.world) でも公開）。**简体中文（簡体字中国語）が原文（source of truth）**で、その他の言語はそこから同期されます。
+日本語ドキュメント一式はこのリポジトリの `docs/ja/` にあります（[noa.docs.celestia.world](https://noa.docs.celestia.world) でも公開されています）:
 
 | ドキュメント | 内容 |
 |---|---|
 | [クイックスタート](./guide/getting-started.md) | ビルド、サーバーの起動、最初の clone/push |
-| [アーキテクチャ](./guide/architecture.md) | ワークスペース / スナップショット / 参照モデル |
-| [ミラーと還流](./guide/mirror.md) | 二つのレーン、PR head、還流、カナリア |
-| [権限とユーザー / RBAC](./guide/rbac.md) | ロール、トークン、権限の強制 |
-| [git-http プロトコル](./guide/git-http.md) | スマートプロトコルのエンドポイント、push のセマンティクス |
-| [マージと競合](./guide/merge.md) | 行レベル diff3、同一内容リネーム、縮退時の動作 |
-| [CI 実行記録](./guide/ci-runs.md) | 実行記録、chest との統合 |
+| [アーキテクチャ概観](./guide/architecture.md) | ワークスペース / スナップショット / 参照モデル、サーバーコンポーネント |
+| [ミラーと還流](./guide/mirror.md) | 二つのレーン、PR head、還流とカナリア、忠実度検証 |
+| [権限とユーザー](./guide/rbac.md) | ロール、トークン、REST と git の両チャネルでの権限強制 |
+| [git-http プロトコル](./guide/git-http.md) | スマートプロトコルのエンドポイント、push のセマンティクス、プロトコルネゴシエーション |
+| [マージと競合](./guide/merge.md) | 行レベル diff3、同一内容リネーム、縮退のセマンティクス |
+| [CI 実行記録](./guide/ci-runs.md) | runs API、chest との統合 |
 | [HTTP API リファレンス](./reference/http-api.md) | すべての REST エンドポイント |
-| [CLI リファレンス](./reference/cli.md) | コマンド一覧 |
-| [デプロイ](./reference/deploy.md) | systemd、環境変数、ロールアウト |
+| [CLI リファレンス](./reference/cli.md) | コマンドラインの全容 |
+| [デプロイ](./reference/deploy.md) | systemd、環境変数、デプロイの三点セット |
+
+原文（source of truth）は `docs/zh-Hans/` の簡体字中国語版で、その他の言語はそこから逐次翻訳されています。
 
 ソース: [noa](https://github.com/celestia-island/noa)。

@@ -48,10 +48,10 @@ Con `pr_heads: true`, cada ola descarga además `refs/pull/<N>/head` y lo import
 ## Reflujo (backflow)
 
 ```text
-scratch 本地引用 ──atomic push──▶ origin
+scratch local refs ──atomic push──▶ origin
   +refs/heads/*:refs/heads/*
   +refs/tags/*:refs/tags/*
-  +refs/pull-heads/*:refs/noa/pr/*     （仅当 scratch 存在 pull-heads）
+  +refs/pull-heads/*:refs/noa/pr/*     (only when pull-heads exist in the scratch)
 ```
 
 - **Credenciales**: el token resuelto desde `token_env` (`NOA_MIRROR_GH_TOKEN` por defecto) se incrusta como `x-access-token:<token>` en una URL de push de un solo uso; el token no queda en la configuración del scratch.
