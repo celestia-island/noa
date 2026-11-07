@@ -54,6 +54,29 @@ redb는 단일 파일 스토어입니다 — 인스턴스 하나, 데이터베�
 듀얼 인스턴스 모드); 인스턴스 간 설정 전송은 RPC import / export로 하며,
 설정 파일 복사로 하지 않습니다.
 
+## 백업과 복원
+
+서버 상태 전체 = redb 파일 + 스크래치 디렉터리 + env(자격 증명은 **의도적으로
+제외됩니다** — 자격 증명의 복원은 재설정이지 복사가 아닙니다).
+
+```bash
+# export (admin; live is fine — the write lock makes the copy consistent)
+curl -X POST -H "Authorization: Bearer $ADMIN" -H "Content-Type: application/json" \
+  -d '{"out": "/srv/noa-backup/nightly"}' \
+  http://127.0.0.1:3016/api/v1/admin/export
+
+# artifacts: noa.redb (consistent snapshot) + {job}.bundle (cloneable per-repo
+# file) + manifest.json (sha256)
+
+# restore (offline — restore before the database ever opens)
+noa-server --db-path /new/noa.redb --import-state /srv/noa-backup/nightly --port 3016
+```
+
+복원은 먼저 모든 산출물의 sha256을 검증합니다(절반쯤 손상된 백업은 아무 파일도
+쓰지 않습니다); 기존 스크래치는 유지됩니다(앞서 있을 수 있으며 다음 웨이브가
+대조합니다). **수용 게이트는 리허설입니다**: 내보내기 → 다른 머신에서 복원 → 구동 →
+대조. 정기 내보내기에는 systemd timer를 권장합니다.
+
 ## 배포 후 검증
 
 ```bash

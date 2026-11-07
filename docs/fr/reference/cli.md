@@ -35,14 +35,14 @@ Plusieurs agents font chacun leur `workspace create`, sans jamais voir le head n
 
 ## Coopération avec le serveur
 
-Le push/pull/fetch/clone du CLI interopère avec le protocole intelligent `/git/*` du serveur (sémantique compatible git). Quand le distant pointe vers un noa-server :
+Le push/pull/fetch/clone du CLI interopère avec le protocole intelligent `/git/*` du serveur (sémantique compatible git). Pour un distant authentifié, les variables d'environnement `NOA_GIT_USER` + `NOA_GIT_PASS` injectent les identifiants (injection pour clone/push/pull ; le token ne sert qu'au transport et **n'est jamais écrit** dans `.git/noa/config`). Quand le distant pointe vers un noa-server :
 
 ```bash
 noa remote add origin http://noa.example.com:3016/git/noa
 noa push origin master
 ```
 
-Le push passe par receive-pack et exige une identité authentifiée (le token fait office de mot de passe ; le rôle doit autoriser l'écriture).
+Le push passe par receive-pack et exige une identité authentifiée (le token fait office de mot de passe ; le rôle doit autoriser l'écriture). Notez que `noa push` publie **l'instantané courant de l'espace de travail** (sérialisé côté client en commit git `[noa export]`) — après vos modifications, exécutez d'abord `noa snapshot create` puis poussez ; pousser directement des changements non instantanés publie un instantané périmé.
 
 ## verify et le registre
 

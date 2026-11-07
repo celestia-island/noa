@@ -24,9 +24,9 @@ cargo build --release --locked
 
 ```bash
 export NOA_API_TOKEN="<your-token>"
-export NOA_MIRROR_SCRATCH_DIR=/var/lib/noa/mirror-cache   # 鏡像 scratch 根目錄
-export NOA_MIRROR_ENABLED=1                               # 啟用鏡像排程（預設 900s）
-export NOA_MIRROR_GH_TOKEN="<github-pat>"                 # 選用：回流 / canary 推送憑證
+export NOA_MIRROR_SCRATCH_DIR=/var/lib/noa/mirror-cache   # mirror scratch root
+export NOA_MIRROR_ENABLED=1                               # enable mirror scheduling (default 900s)
+export NOA_MIRROR_GH_TOKEN="<github-pat>"                 # optional: back-flow / canary push credential
 noa-server --host 0.0.0.0 --port 3016
 ```
 
@@ -38,6 +38,32 @@ curl -H "Authorization: Bearer <your-token>" http://127.0.0.1:3016/api/v1/repos
 
 回傳 `[]` 即代表伺服器就緒。所有 REST 端點都要求 bearer 驗證；`/git/{repo}/*` 的讀取路徑同理
 （未驗證的請求會收到 401 與 `Basic` challenge）。
+
+## noa 原生工作流（推薦）
+
+`noa` CLI 是第一等入口——clone 下來的是 `.git` 與 `.noa` 共存的儲存庫（git 管原始碼、noa 管智慧型代理資料）：
+
+```bash
+noa clone http://<token>@127.0.0.1:3016/git/hello --path hello
+cd hello
+noa workspace create agent-a     # a per-agent isolated workspace
+# … edit files …
+noa snapshot create -m "change" -a agent-a
+noa log                          # this workspace's snapshot history
+noa push                         # publishes the workspace snapshot (serialized to a git commit)
+```
+
+`noa push` 發布的是**工作區快照態**（產生 `[noa export]` 提交），不是 `.git` 裡的提交——兩條車道並行，別混用（先 `noa snapshot create` 再 push，否則會推舊快照）。驗證用 `NOA_GIT_USER` + `NOA_GIT_PASS` 環境變數注入。整個目錄（含 `.git/noa`）拷到別台機器照常運作。
+
+## git 相容車道（任何 git 工具都能用）
+
+同樣的 `/git/{repo}` 端點也說標準 git smart HTTP——stock git、CI、farm 無感可用：
+
+```bash
+git clone http://<token>@127.0.0.1:3016/git/hello
+```
+
+推送（receive-pack）需要可寫角色；落地的推送會**立即觸發匯入波**（回流在同一波次接續）。這就是 farm/CNB 零改動的過渡形態。
 
 ## 第一次鏡像（把一個 GitHub 儲存庫納入 noa）
 
@@ -67,19 +93,12 @@ curl -X POST -H "Authorization: Bearer <your-token>" \
 git clone http://<your-token>@127.0.0.1:3016/git/hello
 ```
 
-## 第一次推送（寫入權威）
+## 備份與遷移
 
-推送走 `/git/{repo}` 的 receive-pack 路徑，需要已驗證的身分：
+伺服器全部狀態可匯出為單一可攜目錄（詳見[部署](../reference/deploy.md)的備份一節）：
+redb 一致快照 + 每儲存庫一個 git bundle + sha256 清單；`noa-server --import-state <dir>` 離線還原，
+驗收標準是演練：匯出 → 異機還原 → 起服對帳。
 
-```bash
-cd hello
-echo "hello noa" > README.md
-git add -A && git commit -m "hello noa"
-git push origin master
-```
-
-推送落進鏡像 scratch；下一個鏡像波次會自動把它納入 noa 的快照/引用體系，若該 job 開啟了
-`backflow`，還會把狀態推回 origin（GitHub）——這就是「noa 權威 + GitHub 鏡像」的過渡形態。
 
 ## 下一步
 

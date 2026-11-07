@@ -35,14 +35,14 @@ noa log                           # sees only this workspace's parent chain
 
 ## サーバーとの連携
 
-CLI の push/pull/fetch/clone はサーバーの `/git/*` スマートプロトコルと相互運用します（同じ git 互換のセマンティクス）。リモートを noa-server に向けると:
+CLI の push/pull/fetch/clone はサーバーの `/git/*` スマートプロトコルと相互運用します（同じ git 互換のセマンティクス）。認証付きリモートに対しては、`NOA_GIT_USER` + `NOA_GIT_PASS` 環境変数から認証情報を注入します（clone/push/pull のいずれにも注入。トークンは転送にのみ使われ、**`.git/noa/config` には決して書き込まれません**）。リモートを noa-server に向けると:
 
 ```bash
 noa remote add origin http://noa.example.com:3016/git/noa
 noa push origin master
 ```
 
-push は receive-pack を通り、認証済みのアイデンティティを必要とします（トークンがパスワードを兼ねます。ロールは書き込み可能でなければなりません）。
+push は receive-pack を通り、認証済みのアイデンティティを必要とします（トークンがパスワードを兼ねます。ロールは書き込み可能でなければなりません）。`noa push` が公開するのは**現在のワークスペースのスナップショット**である点に注意してください（クライアント側で `[noa export]` git コミットへシリアライズされます）——編集したらまず `noa snapshot create` を実行してから push してください。スナップショット化していない変更をそのまま push すると、古いスナップショットが公開されます。
 
 ## verify と台帳
 

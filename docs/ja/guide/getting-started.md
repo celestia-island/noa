@@ -38,6 +38,32 @@ curl -H "Authorization: Bearer <your-token>" http://127.0.0.1:3016/api/v1/repos
 
 `[]` が返ればサービスの準備完了です。すべての REST エンドポイントは Bearer 認証を要求します。`/git/{repo}/*` 配下の読み取り系パスも同様です（認証のないリクエストは `Basic` チャレンジ付きの 401 を受け取ります）。
 
+## noa ネイティブワークフロー（推奨）
+
+`noa` CLI は第一級の入口です——clone してくるのは `.git` と `.noa` が共存するリポジトリです（git がソースを、noa がエージェントデータを管理します）:
+
+```bash
+noa clone http://<token>@127.0.0.1:3016/git/hello --path hello
+cd hello
+noa workspace create agent-a     # a per-agent isolated workspace
+# … edit files …
+noa snapshot create -m "change" -a agent-a
+noa log                          # this workspace's snapshot history
+noa push                         # publishes the workspace snapshot (serialized to a git commit)
+```
+
+`noa push` が公開するのは**ワークスペースのスナップショット状態**（`[noa export]` コミットを生成）であり、`.git` のコミットではありません。2 つのレーンは並行で、混在させないでください（push の前に `noa snapshot create` を実行しないと、古いスナップショットが公開されます）。認証は `NOA_GIT_USER` + `NOA_GIT_PASS` 環境変数から注入されます。ディレクトリ全体（`.git/noa` を含む）を別のマシンへコピーしても、そのまま動き続けます。
+
+## git 互換レーン（どの git ツールでも使える）
+
+同じ `/git/{repo}` エンドポイントは標準の git スマート HTTP も話します——素の git、CI、farm もそのまま使えます:
+
+```bash
+git clone http://<token>@127.0.0.1:3016/git/hello
+```
+
+push（receive-pack）には書き込みロールが必要です。着地した push は**即座にインポートウェーブをトリガーします**（還流は同じウェーブで続きます）。これが farm/CNB をゼロ変更に保つ過渡形態です。
+
 ## 最初のミラー（GitHub リポジトリを noa に取り込む）
 
 ```bash
@@ -66,18 +92,9 @@ curl -X POST -H "Authorization: Bearer <your-token>" \
 git clone http://<your-token>@127.0.0.1:3016/git/hello
 ```
 
-## 最初の push（書き込み権威）
+## バックアップと移行
 
-push は `/git/{repo}` 配下の receive-pack 経路を通り、認証済みのアイデンティティを必要とします:
-
-```bash
-cd hello
-echo "hello noa" > README.md
-git add -A && git commit -m "hello noa"
-git push origin master
-```
-
-push はミラーのスクラッチに着地し、次のミラーウェーブがそれを自動的に noa のスナップショット/参照システムへ取り込みます。ジョブで `backflow` が有効な場合は、その状態を元（GitHub）へも push し返します——これが「noa が権威 + GitHub はミラー」という過渡形態です。
+サーバーの状態全体を、持ち運び可能な 1 つのディレクトリへエクスポートできます（詳細は[デプロイ](../reference/deploy.md)のバックアップ節）: redb の一貫性スナップショット + リポジトリごとに 1 つの git バンドル + sha256 マニフェスト。`noa-server --import-state <dir>` でオフライン復元します。受け入れの基準はリハーサルです: エクスポート → 別マシンで復元 → 起動して照合。
 
 ## 次のステップ
 

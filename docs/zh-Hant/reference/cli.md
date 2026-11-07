@@ -26,10 +26,10 @@
 
 ```bash
 noa init
-noa workspace create agent-a      # 智慧型代理 A 的隔離工作區
-# … 在工作區內編輯 …
-noa snapshot -m "agent-a 的變更"
-noa log                           # 只看得到本工作區的父鏈
+noa workspace create agent-a      # agent A's isolated workspace
+# … edit inside the workspace …
+noa snapshot -m "agent-a's changes"
+noa log                           # sees only this workspace's parent chain
 ```
 
 多個智慧型代理各自 `workspace create`，互不可見對方的 head 與內容——這是 noa 與傳統
@@ -37,15 +37,18 @@ noa log                           # 只看得到本工作區的父鏈
 
 ## 伺服器端協同
 
-CLI 的 push/pull/fetch/clone 與伺服器端 `/git/*` 智慧協定互通（同 git 相容語意）。遠端
-指向 noa-server 時：
+CLI 的 push/pull/fetch/clone 與伺服器端 `/git/*` 智慧協定互通（同 git 相容語意）；對需要驗證的
+遠端，以 `NOA_GIT_USER` + `NOA_GIT_PASS` 環境變數注入憑證（clone/push/pull 皆注入；token 僅用於
+傳輸、**永不落盤** `.git/noa/config`）。遠端指向 noa-server 時：
 
 ```bash
 noa remote add origin http://noa.example.com:3016/git/noa
 noa push origin master
 ```
 
-推送走 receive-pack，需要已驗證身分（token 即密碼；角色需可寫）。
+推送走 receive-pack，需要已驗證身分（token 即密碼；角色需可寫）。注意 `noa push` 發布的是
+**目前工作區快照**（用戶端側序列化為 `[noa export]` git 提交）——編輯後先 `noa snapshot create`
+再 push；直接 push 未快照的改動會發布舊快照。
 
 ## verify 與帳本
 

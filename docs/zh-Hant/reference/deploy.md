@@ -47,14 +47,33 @@ Restart=on-failure
 redb 是單檔資料庫——一個實例一個資料庫檔案。多實例 = 多目錄多連接埠（如 `chest-demo` 與
 正式環境 chest 的雙實例模式）；跨實例的設定搬運走 RPC import / export，不複製設定檔。
 
+## 備份與還原
+
+伺服器全部狀態 = redb 檔案 + scratch 目錄 + env（憑證**刻意排除**——還原憑證是重新設定，不是複製）。
+
+```bash
+# export (admin; live is fine — the write lock makes the copy consistent)
+curl -X POST -H "Authorization: Bearer $ADMIN" -H "Content-Type: application/json" \
+  -d '{"out": "/srv/noa-backup/nightly"}' \
+  http://127.0.0.1:3016/api/v1/admin/export
+
+# artifacts: noa.redb (consistent snapshot) + {job}.bundle (cloneable per-repo
+# file) + manifest.json (sha256)
+
+# restore (offline — restore before the database ever opens)
+noa-server --db-path /new/noa.redb --import-state /srv/noa-backup/nightly --port 3016
+```
+
+還原會先校驗全部產物的 sha256（半損的備份一個檔案都不落位）；既有的 scratch 會保留（可能領先，下一波對帳）。**驗收 = 還原演練**：匯出 → 異機還原 → 起服 → jobs/儲存庫目錄/波次明細對帳。建議以 systemd timer 定時匯出。
+
 ## 部署後核驗
 
 ```bash
-# 驗證與就緒
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3016/api/v1/prs   # 預期 401
-# 鏡像波次
+# Auth and readiness
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3016/api/v1/prs   # expect 401
+# Mirror wave
 curl -X POST -H "Authorization: Bearer $T" -H "Content-Type: application/json" \
-  -d '{"job":"noa"}' http://127.0.0.1:3016/api/v1/mirror/run               # 預期 202
+  -d '{"job":"noa"}' http://127.0.0.1:3016/api/v1/mirror/run               # expect 202
 ```
 
 鏡像細節與回流語意見[鏡像與回流](../guide/mirror.md)。
