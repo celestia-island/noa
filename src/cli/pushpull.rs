@@ -24,16 +24,24 @@ fn validate_svn_url(url: &str) -> Result<()> {
     Ok(())
 }
 
-fn inject_git_creds(url: &str) -> String {
-    if url.starts_with("https://") || url.starts_with("http://") {
-        if let Ok(user) = std::env::var("NOA_GIT_USER") {
-            if let Ok(pass) = std::env::var("NOA_GIT_PASS") {
-                let rest = url
-                    .strip_prefix("https://")
-                    .or_else(|| url.strip_prefix("http://"))
-                    .unwrap_or(url);
-                return format!("https://{user}:{pass}@{rest}");
-            }
+pub(crate) fn inject_git_creds(url: &str) -> String {
+    let creds = std::env::var("NOA_GIT_USER")
+        .ok()
+        .zip(std::env::var("NOA_GIT_PASS").ok());
+    inject_creds_into(url, creds.as_ref().map(|(u, p)| (u.as_str(), p.as_str())))
+}
+
+/// Pure credential injection: `http(s)://` URLs get `user:pass@` userinfo
+/// (the ORIGINAL scheme is preserved — the old code forced https, breaking
+/// local http servers); everything else passes through untouched.
+fn inject_creds_into(url: &str, creds: Option<(&str, &str)>) -> String {
+    let Some((user, pass)) = creds else {
+        return url.to_string();
+    };
+    for scheme in ["https", "http"] {
+        let prefix = format!("{scheme}://");
+        if let Some(rest) = url.strip_prefix(&prefix) {
+            return format!("{scheme}://{user}:{pass}@{rest}");
         }
     }
     url.to_string()
@@ -316,5 +324,46 @@ mod tests {
     fn test_validate_svn_url_invalid_scheme() {
         assert!(validate_svn_url("ftp://example.com/repo").is_err());
         assert!(validate_svn_url("git://example.com/repo").is_err());
+    }
+}
+
+#[cfg(test)]
+mod creds_tests {
+    use super::inject_creds_into;
+
+    #[test]
+    fn non_http_urls_pass_through_untouched() {
+        assert_eq!(
+            inject_creds_into("/local/path", Some(("a", "b"))),
+            "/local/path"
+        );
+        assert_eq!(
+            inject_creds_into("file:///tmp/x.git", Some(("a", "b"))),
+            "file:///tmp/x.git"
+        );
+        assert_eq!(
+            inject_creds_into("ssh://git@h/x.git", Some(("a", "b"))),
+            "ssh://git@h/x.git"
+        );
+    }
+
+    #[test]
+    fn no_credentials_passes_through() {
+        assert_eq!(
+            inject_creds_into("http://127.0.0.1:3490/git/hello", None),
+            "http://127.0.0.1:3490/git/hello"
+        );
+    }
+
+    #[test]
+    fn credentials_inject_preserving_the_scheme() {
+        assert_eq!(
+            inject_creds_into("http://127.0.0.1:3490/git/hello", Some(("agent", "tok"))),
+            "http://agent:tok@127.0.0.1:3490/git/hello"
+        );
+        assert_eq!(
+            inject_creds_into("https://example.com/x.git", Some(("agent", "tok"))),
+            "https://agent:tok@example.com/x.git"
+        );
     }
 }
