@@ -939,6 +939,30 @@ async fn test_repo_scoped_pr_routes() {
         "ghost repo must 404, not 409"
     );
 
+    // W1g: a tracked branch named pr/<x> collides with the PR-head namespace
+    // while pr_heads is on → upsert rejected (pins the collision guard).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/jobs",
+            Some(
+                serde_json::json!({
+                    "name": "pr-collision",
+                    "remote_url": f.origin_url,
+                    "github_slug": "celestia-island/noa",
+                    "branches": ["master", "pr/7"],
+                    "pr_heads": true,
+                    "enabled": true,
+                })
+                .to_string(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{:?}", resp);
+
     // A live mirror job blocks the catalog delete (its next upsert and any
     // clone of the scratch clone would re-register the row). Use a job-only
     // repo: with open PRs present the PR guard would answer 409 anyway, so

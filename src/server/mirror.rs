@@ -865,6 +865,15 @@ impl MirrorEngine {
             let Some(n) = refname.strip_prefix("refs/pull-heads/") else {
                 continue;
             };
+            // Non-GitHub origins can push shapes the refspec glob captures
+            // across levels (refs/pull/a/b/head → capture "a/b"). A PR head
+            // is numeric by contract — anything else is junk: skip it LOUDLY
+            // (a silent skip would vanish it from the upstream set and the
+            // reconcile would delete a stored ref).
+            if n.is_empty() || !n.bytes().all(|c| c.is_ascii_digit()) {
+                failures.push(format!("pr ref {refname}: non-numeric PR number"));
+                continue;
+            }
             upstream.push((n.to_string(), sha.to_string()));
             let ref_name = format!("mirror/{}/pr/{n}", job.name);
             let ws_name = format!("mirror.{}.pr.{n}", job.name);
@@ -889,14 +898,18 @@ impl MirrorEngine {
 
     /// W1g API lane: open PRs via the REST listing (paginated), each head
     /// imported through the API commit importer.
+    ///
+    /// Deliberately does NOT reconcile: the listing is OPEN-only, while
+    /// GitHub persists `refs/pull/<N>/head` after a PR closes/merges —
+    /// reconciling against it would silently DELETE stored PR refs that
+    /// still exist upstream (lane divergence; the git lane owns reconcile
+    /// because it sees the full persistent set).
     async fn replicate_pr_heads_api(&self, job: &MirrorJob) -> Result<Vec<String>> {
         let client = self.api_client()?;
         let pulls = client.list_open_pull_heads(&job.github_slug).await?;
         let mut imported = Vec::new();
         let mut failures: Vec<String> = Vec::new();
-        let mut upstream: Vec<(String, String)> = Vec::new();
         for (n, sha) in pulls {
-            upstream.push((n.to_string(), sha.clone()));
             let ref_name = format!("mirror/{}/pr/{n}", job.name);
             let ws_name = format!("mirror.{}.pr.{n}", job.name);
             match self
@@ -907,7 +920,6 @@ impl MirrorEngine {
                 Err(e) => failures.push(format!("pr#{n}: {e:#}")),
             }
         }
-        self.reconcile_pr_refs(job, &upstream).await?;
         if !failures.is_empty() {
             anyhow::bail!(
                 "{} PR head(s) failed: {}",

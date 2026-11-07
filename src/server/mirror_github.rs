@@ -324,9 +324,16 @@ impl GitDataClient {
             for item in items {
                 let number = item["number"].as_u64().unwrap_or_default();
                 let sha = item["head"]["sha"].as_str().unwrap_or_default().to_string();
-                if number > 0 && sha.len() == 40 {
-                    out.push((number, sha));
+                // Malformed entries are LOUD, not silently dropped: a silent
+                // drop vanishes the item from the returned set and the
+                // caller's reconcile would delete a stored ref for it.
+                if number == 0 || sha.len() != 40 {
+                    anyhow::bail!(
+                        "malformed pull entry (number={number:?}, sha len {})",
+                        sha.len()
+                    );
                 }
+                out.push((number, sha));
             }
             if page_len < 100 {
                 break;
