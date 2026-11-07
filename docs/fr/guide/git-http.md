@@ -39,3 +39,4 @@ Le push n'exige donc aucun hook particulier — les trois voies (lecture, récep
 - Le push ne fournit pas de sémantique de suppression (une suppression côté noa n'est pas renvoyée à l'origine — asymétrie connue).
 - Le dumb HTTP (`/info/refs` en fichier brut) n'est pas servi.
 - Le reflux des PR heads atterrit sous `refs/noa/pr/<N>` (GitHub refuse les pushes `refs/pull/*`).
+- Les pushes de reflux ont pour source les objets git du scratch — les **commits natifs de noa** (instantanés purs d'espace de travail n'ayant jamais transité par le scratch) sont hors du périmètre du reflux tant que le sérialiseur instantané → objets git n'existe pas (voir [Architecture](./architecture.md)).

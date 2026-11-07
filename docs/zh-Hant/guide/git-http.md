@@ -44,3 +44,6 @@ CGI 包裝，因此協定協商、環境變數與錯誤形狀完全可控。
 - 推送不提供刪除語意（noa 側刪除不回傳 origin——已知不對稱）。
 - 不支援 dumb HTTP（`/info/refs` 裸檔案）。
 - PR heads 回流落在 `refs/noa/pr/<N>`（GitHub 拒絕 `refs/pull/*` 推送）。
+- 回流推送的來源是 scratch 的 git 物件——**noa 原生生產的提交**（純工作區快照，
+  未經過 scratch）**不在回流範圍內**，直至快照 → git 物件序列化能力落地（見
+  [架構總覽](./architecture.md)）。
