@@ -54,3 +54,7 @@ credentials 401 + `Basic` challenge, reader role 403.
   known asymmetry).
 - dumb HTTP (raw `/info/refs` files) is not served.
 - PR heads land in `refs/noa/pr/<N>` on back-flow (GitHub refuses `refs/pull/*` pushes).
+- Back-flow pushes source from the scratch's git objects — **noa-native
+  commits** (pure workspace snapshots that never passed through the scratch)
+  are outside the back-flow scope until the snapshot → git-object serializer
+  lands (see [Architecture](./architecture.md)).
