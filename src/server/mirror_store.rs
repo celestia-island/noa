@@ -35,6 +35,11 @@ pub struct MirrorJob {
     /// mirror must hold before a GitHub flip).
     #[serde(default)]
     pub tags: bool,
+    /// W1g: also mirror GitHub PR heads (`refs/pull/<N>/head`) into
+    /// `mirror/<job>/pr/<N>` — the transition-history slice (noa carries the
+    /// full PR record before the authority switch).
+    #[serde(default)]
+    pub pr_heads: bool,
     /// Opt-in canary push (W1a-2): after replication, push the first
     /// tracked branch's commit to `noa-mirror-canary` on the remote (git
     /// transport first, Git Data API fallback). Meaningful for https
@@ -315,6 +320,7 @@ mod tests {
             github_slug: "celestia-island/noa".into(),
             branches: vec!["master".into()],
             tags: false,
+            pr_heads: false,
             canary_push: false,
             enabled: true,
             last_run_us: None,

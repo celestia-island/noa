@@ -354,6 +354,82 @@ async fn test_repo_catalog_routes() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_pr_heads_mirror_scope() {
+    let f = make_fixture().await;
+    // The fixture origin is a bare repo at <tmp>/origin.git (origin_url is
+    // its file:// form) — model GitHub's refs/pull/<N>/head on it.
+    let origin_dir = f.origin_url.strip_prefix("file://").unwrap().to_string();
+
+    // A PR head ref on the origin (GitHub models refs/pull/<N>/head).
+    let out = std::process::Command::new("git")
+        .args([
+            "-C",
+            &origin_dir,
+            "update-ref",
+            "refs/pull/7/head",
+            "refs/heads/master",
+        ])
+        .output()
+        .expect("update-ref on origin");
+    assert!(out.status.success(), "update-ref failed");
+
+    // Register a mirror job WITH pr_heads on.
+    let job_create = serde_json::json!({
+        "name": "pilot",
+        "remote_url": f.origin_url,
+        "github_slug": "celestia-island/noa",
+        "branches": ["master"],
+        "tags": true,
+        "pr_heads": true,
+        "enabled": true,
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/jobs",
+            Some(job_create.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/run",
+            Some(serde_json::json!({ "job": "pilot" }).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let job = wait_job_ok(&f.app, "pilot").await;
+    assert_eq!(job["last_status"], "ok", "{job}");
+    assert_eq!(job["last_lane"], "git", "{job}");
+    // The wave note carries the imported PR head.
+    assert!(
+        (job["last_detail"].as_str().unwrap_or("")).contains("pr-heads=1"),
+        "pr-heads note missing: {job}"
+    );
+
+    // The imported PR workspace is user-visible through the workspaces API.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/workspaces", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let workspaces = body_json(resp).await.to_string();
+    assert!(
+        workspaces.contains("mirror.pilot.pr.7"),
+        "PR workspace missing from workspaces list: {workspaces}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_user_roles_and_enforcement() {
     let f = make_fixture().await;
     let bootstrap = TEST_API_TOKEN.to_string();

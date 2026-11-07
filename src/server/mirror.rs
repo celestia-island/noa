@@ -217,6 +217,35 @@ impl MirrorEngine {
                 }
             }
         }
+        // W1g: PR heads (refs/pull/<N>/head) — the transition-history slice.
+        // Both lanes, same structure as the tags block above.
+        if job.pr_heads {
+            let pr_result = match lane {
+                "git" => self.replicate_pr_heads_git(job, &scratch).await,
+                _ => self.replicate_pr_heads_api(job).await,
+            };
+            match pr_result {
+                Ok(names) if names.is_empty() => {}
+                Ok(names) => {
+                    let shown: Vec<&str> = names.iter().take(20).map(String::as_str).collect();
+                    let more = if names.len() > 20 {
+                        format!(" +{}", names.len() - 20)
+                    } else {
+                        String::new()
+                    };
+                    notes.push(format!(
+                        "pr-heads={} ({}{})",
+                        names.len(),
+                        shown.join(","),
+                        more
+                    ));
+                }
+                Err(e) => {
+                    failed += 1;
+                    notes.push(format!("pr-heads=FAILED: {e:#}"));
+                }
+            }
+        }
         for branch in &job.branches {
             let result = match (lane, git_lane.as_ref()) {
                 ("git", Ok(())) => self.replicate_branch(job, &scratch, branch).await,
@@ -801,6 +830,114 @@ impl MirrorEngine {
     /// upstream. `--prune --prune-tags` only cleans the scratch clone; the
     /// mirror store must follow or upstream-deleted tags keep serving from
     /// the authority set forever (Round D F1 / Round E S1).
+    /// W1g git lane: fetches `refs/pull/<N>/head` for every PR and imports
+    /// each head as `mirror/<job>/pr/<N>` (+ a per-PR workspace). The fetch
+    /// refspec is explicit — the scratch's default refspec never carries
+    /// pull refs. Reconciles stale PR refs like the tags lane.
+    async fn replicate_pr_heads_git(&self, job: &MirrorJob, scratch: &Path) -> Result<Vec<String>> {
+        self.git(
+            scratch,
+            &[
+                "fetch",
+                "--prune",
+                "origin",
+                "+refs/pull/*/head:refs/pull-heads/*",
+            ],
+        )
+        .await?;
+        let out = self
+            .git_stdout(
+                scratch,
+                &[
+                    "for-each-ref",
+                    "--format=%(objectname) %(refname)",
+                    "refs/pull-heads",
+                ],
+            )
+            .await?;
+        let mut imported = Vec::new();
+        let mut failures: Vec<String> = Vec::new();
+        let mut upstream: Vec<(String, String)> = Vec::new();
+        for line in out.lines() {
+            let Some((sha, refname)) = line.split_once(' ') else {
+                continue;
+            };
+            let Some(n) = refname.strip_prefix("refs/pull-heads/") else {
+                continue;
+            };
+            upstream.push((n.to_string(), sha.to_string()));
+            let ref_name = format!("mirror/{}/pr/{n}", job.name);
+            let ws_name = format!("mirror.{}.pr.{n}", job.name);
+            match self
+                .import_git_commit_at(scratch, sha, &ref_name, &ws_name)
+                .await
+            {
+                Ok(_) => imported.push(n.to_string()),
+                Err(e) => failures.push(format!("pr#{n}: {e:#}")),
+            }
+        }
+        self.reconcile_pr_refs(job, &upstream).await?;
+        if !failures.is_empty() {
+            anyhow::bail!(
+                "{} PR head(s) failed: {}",
+                failures.len(),
+                failures.join("; ")
+            );
+        }
+        Ok(imported)
+    }
+
+    /// W1g API lane: open PRs via the REST listing (paginated), each head
+    /// imported through the API commit importer.
+    async fn replicate_pr_heads_api(&self, job: &MirrorJob) -> Result<Vec<String>> {
+        let client = self.api_client()?;
+        let pulls = client.list_open_pull_heads(&job.github_slug).await?;
+        let mut imported = Vec::new();
+        let mut failures: Vec<String> = Vec::new();
+        let mut upstream: Vec<(String, String)> = Vec::new();
+        for (n, sha) in pulls {
+            upstream.push((n.to_string(), sha.clone()));
+            let ref_name = format!("mirror/{}/pr/{n}", job.name);
+            let ws_name = format!("mirror.{}.pr.{n}", job.name);
+            match self
+                .import_api_commit(&client, job, &sha, &ref_name, &ws_name, &format!("pr#{n}"))
+                .await
+            {
+                Ok(_) => imported.push(n.to_string()),
+                Err(e) => failures.push(format!("pr#{n}: {e:#}")),
+            }
+        }
+        self.reconcile_pr_refs(job, &upstream).await?;
+        if !failures.is_empty() {
+            anyhow::bail!(
+                "{} PR head(s) failed: {}",
+                failures.len(),
+                failures.join("; ")
+            );
+        }
+        Ok(imported)
+    }
+
+    /// Reconciles `mirror/<job>/pr/<N>` refs against the live upstream set
+    /// (same semantics as `reconcile_tag_refs`, PR namespace).
+    async fn reconcile_pr_refs(&self, job: &MirrorJob, live: &[(String, String)]) -> Result<()> {
+        let prefix = format!("mirror/{}/pr/", job.name);
+        let ref_store = RedbRefStore::new(Arc::clone(&self.db))?;
+        let mut removed = Vec::new();
+        for (name, _) in ref_store.list().await? {
+            let stale = name
+                .strip_prefix(&prefix)
+                .is_some_and(|n| !live.iter().any(|(ln, _)| ln == n));
+            if stale && ref_store.delete(&name).await? {
+                removed.push(name.strip_prefix(&prefix).unwrap_or(&name).to_string());
+            }
+        }
+        if !removed.is_empty() {
+            tracing::info!("mirror {}: pruned stale PR refs {removed:?}", job.name);
+        }
+        Ok(())
+    }
+
     async fn reconcile_tag_refs(&self, job: &MirrorJob, live: &[String]) -> Result<()> {
         let prefix = format!("mirror/{}/tags/", job.name);
         let ref_store = RedbRefStore::new(Arc::clone(&self.db))?;
@@ -1344,6 +1481,7 @@ mod tests {
                 github_slug: "celestia-island/noa".into(),
                 branches: vec!["master".into()],
                 tags: false,
+                pr_heads: false,
                 canary_push: false,
                 enabled: true,
                 last_run_us: None,
@@ -1425,6 +1563,7 @@ mod tests {
             github_slug: "celestia-island/noa".into(),
             branches: vec!["master".into()],
             tags: false,
+            pr_heads: false,
             canary_push: false,
             enabled: true,
             last_run_us: None,
@@ -1486,6 +1625,7 @@ mod tests {
                 // regression must fail this test (master would never import).
                 branches: vec!["ghost".into(), "master".into()],
                 tags: false,
+                pr_heads: false,
                 canary_push: false,
                 enabled: true,
                 last_run_us: None,
@@ -1832,6 +1972,7 @@ mod tests {
                 github_slug: "celestia-island/noa".into(),
                 branches: vec!["master".into()],
                 tags: false,
+                pr_heads: false,
                 canary_push: false,
                 enabled: true,
                 last_run_us: None,
@@ -2018,6 +2159,7 @@ mod tests {
                 github_slug: "celestia-island/noa".into(),
                 branches: vec!["master".into()],
                 tags: false,
+                pr_heads: false,
                 canary_push: false,
                 enabled: true,
                 last_run_us: None,
@@ -2061,6 +2203,7 @@ mod tests {
             .upsert(MirrorJob {
                 last_lane: None,
                 tags: true,
+                pr_heads: false,
                 ..job
             })
             .await
@@ -2234,6 +2377,7 @@ mod tests {
                 github_slug: "celestia-island/noa".into(),
                 branches: vec!["master".into()],
                 tags: true,
+                pr_heads: false,
                 canary_push: false,
                 enabled: true,
                 last_run_us: None,
@@ -2367,6 +2511,7 @@ mod tests {
                 github_slug: "celestia-island/noa".into(),
                 branches: vec!["master".into()],
                 tags: false,
+                pr_heads: false,
                 canary_push: false,
                 enabled: true,
                 last_run_us: None,
@@ -2408,6 +2553,7 @@ mod tests {
                 github_slug: "celestia-island/noa".into(),
                 branches: vec!["master".into()],
                 tags: false,
+                pr_heads: false,
                 canary_push: false,
                 enabled: true,
                 last_run_us: None,
