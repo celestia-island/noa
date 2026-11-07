@@ -572,8 +572,13 @@ pub async fn clone_git_to_noa(url: &str, target: &Path) -> Result<()> {
     let url_owned = url.to_string();
     let target = target.to_path_buf();
 
+    // Clone WITH credentials (an authenticated remote must clone
+    // non-interactively — without this, git prompts and dies headless;
+    // found by the slice-1 dogfood), but STORE the clean URL below — the
+    // token must never persist into .noa/config.
+    let url_for_clone = crate::cli::pushpull::inject_git_creds(url);
     let status = tokio::task::spawn_blocking({
-        let url = url_owned.clone();
+        let url = url_for_clone.clone();
         let target = target.clone();
         move || {
             Command::new("git")
