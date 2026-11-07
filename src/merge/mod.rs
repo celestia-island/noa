@@ -264,6 +264,7 @@ pub async fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
                     // merged tree (test_merge_conflict_returns_409 caught
                     // exactly that).
                     (Some(b), Some(o), Some(t)) if b.is_empty() && o.is_empty() && t.is_empty() => {
+                        has_conflicts = true;
                         entries.insert(
                             path.clone(),
                             MergedEntry::Conflict {
