@@ -177,6 +177,47 @@ pub async fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
         std::collections::BTreeMap::new();
     let mut has_conflicts = false;
 
+    // W2④ slice 2: exact-content rename detection. A path deleted on one
+    // side whose base blob id reappears as a NEW path on that same side is a
+    // pure rename; combined with the other side MODIFYING the old path, the
+    // modification applies AT THE NEW PATH (the classic rename+edit case
+    // that previously produced a delete/create conflict pair). Renames with
+    // a modified payload, renames to targets the other side also touched,
+    // and both-sides-renamed are NOT claimed — they fall through to the
+    // structured conflict (similarity heuristics are a later slice).
+    fn detect_renames(
+        base_map: &std::collections::HashMap<String, TreeEntry>,
+        side_map: &std::collections::HashMap<String, TreeEntry>,
+        other_map: &std::collections::HashMap<String, TreeEntry>,
+    ) -> std::collections::HashMap<String, String> {
+        let mut renames = std::collections::HashMap::new();
+        for (p, b) in base_map {
+            // Source deleted on this side, base entry is a blob.
+            if side_map.contains_key(p) || b.kind != EntryKind::Blob {
+                continue;
+            }
+            for (q, e) in side_map {
+                // Target: a NEW blob path on this side, absent in base and
+                // untouched by the other side (target collisions are not
+                // rename targets — they stay structured conflicts).
+                if base_map.contains_key(q) || other_map.contains_key(q) {
+                    continue;
+                }
+                if e.kind == EntryKind::Blob && e.id == b.id {
+                    renames.insert(p.clone(), q.clone());
+                }
+            }
+        }
+        renames
+    }
+    let ours_renames = detect_renames(&base_map, &ours_map, &theirs_map);
+    let theirs_renames = detect_renames(&base_map, &theirs_map, &ours_map);
+    let claimed_targets: std::collections::BTreeSet<&str> = ours_renames
+        .values()
+        .chain(theirs_renames.values())
+        .map(String::as_str)
+        .collect();
+
     let all_paths: std::collections::BTreeSet<String> = base_map
         .keys()
         .chain(ours_map.keys())
@@ -185,6 +226,11 @@ pub async fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
         .collect();
 
     for path in all_paths {
+        // W2④ slice 2: rename targets are claimed by the rename application
+        // below — skip them as ordinary adds.
+        if claimed_targets.contains(path.as_str()) {
+            continue;
+        }
         let base_entry = base_map.get(&path);
         let ours_entry = ours_map.get(&path);
         let theirs_entry = theirs_map.get(&path);
@@ -235,6 +281,50 @@ pub async fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
 
         let ours_change = compute_change(base_entry, ours_entry);
         let theirs_change = compute_change(base_entry, theirs_entry);
+
+        // W2④ slice 2: rename+modify resolution. One side pure-renamed this
+        // path (deleted here, exact base content reappearing at a claimed
+        // new path) while the other side MODIFIED it → the modification
+        // applies AT THE NEW PATH (both-sides-renamed and rename-vs-delete
+        // stay structured conflicts).
+        let ours_delete_theirs_modify = matches!(
+            (&ours_change, &theirs_change),
+            (Change::Deleted, Change::Modified(_))
+        );
+        let theirs_delete_ours_modify = matches!(
+            (&ours_change, &theirs_change),
+            (Change::Modified(_), Change::Deleted)
+        );
+        if ours_delete_theirs_modify && !theirs_renames.contains_key(path.as_str()) {
+            if let Some(new_path) = ours_renames.get(path.as_str()) {
+                if let Change::Modified(t) = &theirs_change {
+                    entries.insert(
+                        new_path.clone(),
+                        MergedEntry::Clean(TreeEntry {
+                            name: new_path.clone(),
+                            kind: t.kind,
+                            id: t.id.clone(),
+                        }),
+                    );
+                    continue;
+                }
+            }
+        }
+        if theirs_delete_ours_modify && !ours_renames.contains_key(path.as_str()) {
+            if let Some(new_path) = theirs_renames.get(path.as_str()) {
+                if let Change::Modified(o) = &ours_change {
+                    entries.insert(
+                        new_path.clone(),
+                        MergedEntry::Clean(TreeEntry {
+                            name: new_path.clone(),
+                            kind: o.kind,
+                            id: o.id.clone(),
+                        }),
+                    );
+                    continue;
+                }
+            }
+        }
 
         // W2④: Blob×Blob both-modified — try a line-level three-way merge
         // first. A clean line merge resolves the file automatically (this is
@@ -602,6 +692,60 @@ mod tests {
         assert!(result.has_conflicts());
         let tree = result.into_tree_entries(&ConflictResolution::Theirs);
         assert_eq!(tree.0[0].id, "h2");
+    }
+
+    #[tokio::test]
+    async fn test_rename_plus_other_side_modify_resolves_at_new_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = std::sync::Arc::new(
+            redb::Database::builder()
+                .create(dir.path().join("m.redb"))
+                .unwrap(),
+        );
+        let store = crate::object::RedbObjectStore::new(db).unwrap();
+        let base = TreeEntries(vec![entry("a.txt", "h1")]);
+        let ours = TreeEntries(vec![entry("b.txt", "h1")]); // pure rename
+        let theirs = TreeEntries(vec![entry("a.txt", "h2")]); // modify in place
+        let result = merge_trees_recursive(base, ours, theirs, store, &ConflictResolution::Theirs)
+            .await
+            .unwrap();
+        assert!(
+            !result.has_conflicts(),
+            "pure rename + other-side modify must resolve at the new path"
+        );
+        let tree = result.into_tree_entries(&ConflictResolution::Theirs);
+        assert_eq!(
+            tree.0.len(),
+            1,
+            "old path gone, new path present: {:?}",
+            tree.0
+        );
+        assert_eq!(tree.0[0].name, "b.txt");
+        assert_eq!(
+            tree.0[0].id, "h2",
+            "theirs' modified content lands at b.txt"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rename_target_collision_stays_structured_conflict() {
+        // base {a→h1}; ours renames a→b; theirs modifies a AND creates b.
+        // The target b is touched by theirs → NOT a rename claim; the
+        // delete-vs-modify on a stays a structured conflict.
+        let dir = tempfile::tempdir().unwrap();
+        let db = std::sync::Arc::new(
+            redb::Database::builder()
+                .create(dir.path().join("m.redb"))
+                .unwrap(),
+        );
+        let store = crate::object::RedbObjectStore::new(db).unwrap();
+        let base = TreeEntries(vec![entry("a.txt", "h1")]);
+        let ours = TreeEntries(vec![entry("b.txt", "h1")]);
+        let theirs = TreeEntries(vec![entry("a.txt", "h2"), entry("b.txt", "h7")]);
+        let result = merge_trees_recursive(base, ours, theirs, store, &ConflictResolution::Theirs)
+            .await
+            .unwrap();
+        assert!(result.has_conflicts(), "target collision must conflict");
     }
 
     #[test]
