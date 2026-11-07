@@ -38,8 +38,11 @@ the workspace, not the ref.
 
 ## Server coordination
 
-The CLI's push/pull/fetch/clone interoperate with the server's `/git/*` smart protocol (the same
-git-compatible semantics). With the remote pointing at noa-server:
+The CLI's push/pull/fetch/clone interoperate with the server's `/git/*` smart
+protocol (git-compatible semantics); against authenticated remotes the
+`NOA_GIT_USER` + `NOA_GIT_PASS` environment variables inject credentials
+(clone/push/pull all inject; the token is transport-only and **never
+persists** into `.git/noa/config`). With a remote pointing at noa-server:
 
 ```bash
 noa remote add origin http://noa.example.com:3016/git/noa
