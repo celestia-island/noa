@@ -44,3 +44,6 @@ CGI 包装，因此协议协商、环境变量与错误形状完全可控。
 - 推送不提供删除语义（noa 侧删除不回传 origin——已知不对称）。
 - dumb HTTP（`/info/refs` 裸文件）不服务。
 - PR heads 回流落在 `refs/noa/pr/<N>`（GitHub 拒绝 `refs/pull/*` 推送）。
+- 回流推送的来源是 scratch 的 git 对象——**noa 原生产生的提交**（纯工作区快照，
+  未经过 scratch）**不在回流范围内**，直至快照 → git 对象序列化能力落地（见
+  [架构总览](./architecture.md)）。

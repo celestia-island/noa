@@ -66,7 +66,7 @@ Con `canary_push: true`, cada ola empuja al origen una referencia sonda `noa-mir
 
 ## Verificación de fidelidad
 
-Cada commit importado se concilia entrada por entrada: el conjunto de rutas, el kind de las entradas y el OID de los blobs (`git_blob_oid` igual que en git) deben coincidir exactamente; cualquier diferencia hace fallar esa entrada y entra en el detalle de errores de la ola. El reflujo depende de este invariante — los objetos de noa y los de git se corresponden uno a uno, ningún push necesita capa de conversión.
+Cada commit importado se concilia entrada por entrada: el conjunto de rutas, el kind de las entradas y el OID de los blobs (`git_blob_oid` igual que en git) deben coincidir exactamente; cualquier diferencia hace fallar esa entrada y entra en el detalle de errores de la ola. El reflujo depende de este invariante: para el contenido importado de git, los objetos git del scratch y los objetos noa se corresponden uno a uno a nivel de blob — ningún push necesita capa de conversión. **Límite**: los commits nativos de noa (instantáneas puras de espacio de trabajo) no tienen forma de objeto git y quedan fuera del alcance del reflujo (ver el límite exacto en [Arquitectura](./architecture.md)).
 
 ## Limpieza de referencias caducadas (reconcile)
 

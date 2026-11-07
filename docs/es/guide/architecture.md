@@ -38,7 +38,7 @@ El import y el reflujo parten de que «el álgebra de objetos de git no cambia»
 - árbol: el import concilia cada entrada por ruta/kind/oid (verificación de fidelidad);
 - commit: la cadena de padres la mantienen las olas del espejo (`noa_<sha>` direccionado por contenido + enlace de padres).
 
-Por eso el push de reflujo noa → git no necesita ninguna capa de conversión: los objetos de git del clon scratch se corresponden uno a uno con los objetos de noa.
+Por eso el push de reflujo noa → git para el contenido importado de git no necesita capa de conversión (los objetos de git del clon scratch se usan tal cual). **Límite**: el contenido nativo de noa no tiene forma de objeto git — su reflujo directo requiere un serializador de instantánea → objetos git (limitación conocida).
 
 ## El papel del scratch del espejo
 

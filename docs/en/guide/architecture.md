@@ -12,7 +12,8 @@ Workspace          — one isolated workspace per agent, invisible to each other
    │ head points to
 Snapshot           — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)
    │ tree_hash points to
-ObjectStore        — blob / tree / symlink / gitlink, git object-algebra compatible
+ObjectStore        — blob / tree / symlink / gitlink (blobs byte-compatible with git;
+                     trees/commits use noa's own SHA-256 addressing)
 ```
 
 - **Workspace** is noa's core isolation primitive: multiple agents each hold their own workspace
@@ -40,17 +41,26 @@ directory; no external database required.
 All server state lives in one redb database; the server is stateless down to "the directory is
 everything".
 
-## git object compatibility
+## The precise boundary of git compatibility
 
-Both import and back-flow assume the git object algebra stays invariant:
+Compatibility is layered — stated exactly:
 
-- blob: the raw content is the git blob body (`git_blob_oid(content)` matches git);
-- tree: imports are cross-checked item by item by path/kind/oid (fidelity verification);
-- commit: the parent chain is maintained by mirror waves (`noa_<sha>` content addressing + parent
-  links).
+- **blobs: byte-compatible.** The raw content IS the git blob body;
+  `git_blob_oid(content)` matches git (the mirror fidelity check reconciles
+  blob by blob on exactly this);
+- **trees: semantically equivalent, IDs are not.** Paths/kinds/per-blob OIDs
+  correspond exactly, but noa's tree IDs are its own SHA-256 content
+  addressing, not git's tree-object format;
+- **commits: noa's own model.** Snapshot IDs look like `noa_<sha256>`, not git
+  commit objects.
 
-Back-flow pushes from noa → git therefore need no conversion layer: the git objects in the scratch
-clone map one-to-one onto noa objects.
+The git-form representation lives in the **mirror scratch's real git repo**.
+Back-flow pushes use the scratch's git objects directly (zero conversion for
+content that was imported from git); **noa-native content** (pure workspace
+snapshots that never passed through the scratch) has no git-object form —
+back-flowing it directly requires a snapshot → git-object serializer. That is
+a known limitation (in the current implementation such refs do not appear in
+back-flow pushes).
 
 ## The role of the mirror scratch
 
