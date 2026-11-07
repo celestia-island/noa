@@ -208,6 +208,17 @@ pub async fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
                 }
             }
         }
+        // 1:1 assignment (R2): a target claimed by MULTIPLE sources
+        // (base{a:h1,c:h1} both deleted, Q added with h1) would make the
+        // cross-side modifications race by loop order — refuse every claim
+        // on an ambiguous target; the sources fall back to structured
+        // conflicts (conservative, no silent loss).
+        let mut target_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for q in renames.values() {
+            *target_counts.entry(q.clone()).or_insert(0) += 1;
+        }
+        renames.retain(|_, q| target_counts.get(q).copied().unwrap_or(0) == 1);
         renames
     }
     let ours_renames = detect_renames(&base_map, &ours_map, &theirs_map);
@@ -325,11 +336,79 @@ pub async fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
                 }
             }
         }
+        // Pure rename, other side UNCHANGED at the source: the target is
+        // claimed-skipped, so the rename itself must be written here (R2 S0:
+        // without this arm the renamed file silently vanished while the
+        // merge reported clean).
+        if let (Change::Deleted, Change::Unchanged, Some(new_path), Some(b)) = (
+            compute_change(base_entry, ours_entry),
+            compute_change(base_entry, theirs_entry),
+            ours_renames.get(path.as_str()),
+            base_entry,
+        ) {
+            entries.insert(
+                new_path.clone(),
+                MergedEntry::Clean(TreeEntry {
+                    name: new_path.clone(),
+                    kind: b.kind,
+                    id: b.id.clone(),
+                }),
+            );
+            continue;
+        }
+        if let (Change::Unchanged, Change::Deleted, Some(new_path), Some(b)) = (
+            compute_change(base_entry, ours_entry),
+            compute_change(base_entry, theirs_entry),
+            theirs_renames.get(path.as_str()),
+            base_entry,
+        ) {
+            entries.insert(
+                new_path.clone(),
+                MergedEntry::Clean(TreeEntry {
+                    name: new_path.clone(),
+                    kind: b.kind,
+                    id: b.id.clone(),
+                }),
+            );
+            continue;
+        }
+
         // Rename vs delete: one side pure-renamed, the other deleted the old
         // path — the rename SURVIVES with its base content (git rename-aware
         // behavior: the deletion targeted a path the deleter didn't know had
         // moved). Without this arm the claimed target is skipped by the walk
         // and the file silently vanishes from the merged tree.
+        // (R2) Both sides renamed the same source to different targets →
+        // structured conflict AT THE SOURCE (each side's view = its target
+        // entry; the targets themselves stay claimed-skipped). Without the
+        // registration the (D,D) fall-through plus the skip yields an EMPTY
+        // tree reported clean.
+        let ours_ren = ours_renames.get(path.as_str());
+        let theirs_ren = theirs_renames.get(path.as_str());
+        if let (Some(ours_t), Some(theirs_t)) = (ours_ren, theirs_ren) {
+            has_conflicts = true;
+            let mk = |name: &str, kind: EntryKind, id: &str| TreeEntry {
+                name: name.to_string(),
+                kind,
+                id: id.to_string(),
+            };
+            let (o_entry, t_entry, b_entry) = (
+                ours_map.get(ours_t).map(|e| mk(ours_t, e.kind, &e.id)),
+                theirs_map
+                    .get(theirs_t)
+                    .map(|e| mk(theirs_t, e.kind, &e.id)),
+                base_entry.map(|b| mk(path.as_str(), b.kind, &b.id)),
+            );
+            entries.insert(
+                path.clone(),
+                MergedEntry::Conflict {
+                    ours: o_entry,
+                    theirs: t_entry,
+                    base: b_entry,
+                },
+            );
+            continue;
+        }
         if let (Change::Deleted, Change::Deleted, Some(new_path), Some(b)) = (
             compute_change(base_entry, ours_entry),
             compute_change(base_entry, theirs_entry),
@@ -761,6 +840,104 @@ mod tests {
         assert_eq!(
             tree.0[0].id, "h2",
             "theirs' modified content lands at b.txt"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pure_rename_other_side_unchanged_survives() {
+        // R2 S0 regression: base{a:h1}, ours renames a→b, theirs UNCHANGED
+        // at a → b must exist with h1 (the earlier claimed-skip dropped it
+        // silently while reporting clean).
+        let dir = tempfile::tempdir().unwrap();
+        let db = std::sync::Arc::new(
+            redb::Database::builder()
+                .create(dir.path().join("m.redb"))
+                .unwrap(),
+        );
+        let store = crate::object::RedbObjectStore::new(db).unwrap();
+        let base = TreeEntries(vec![entry("a.txt", "h1")]);
+        let ours = TreeEntries(vec![entry("b.txt", "h1")]);
+        let theirs = TreeEntries(vec![entry("a.txt", "h1")]);
+        let result = merge_trees_recursive(base, ours, theirs, store, &ConflictResolution::Theirs)
+            .await
+            .unwrap();
+        assert!(!result.has_conflicts(), "{result:?}");
+        let tree = result.into_tree_entries(&ConflictResolution::Theirs);
+        assert_eq!(tree.0.len(), 1, "b.txt must exist: {:?}", tree.0);
+        assert_eq!(tree.0[0].name, "b.txt");
+        assert_eq!(tree.0[0].id, "h1");
+    }
+
+    #[tokio::test]
+    async fn test_both_sides_rename_different_targets_conflict() {
+        // R2: base{a:h1}, ours a→b, theirs a→c → NOT two silent keeps; the
+        // source stays a structured conflict (targets claimed-skipped).
+        let dir = tempfile::tempdir().unwrap();
+        let db = std::sync::Arc::new(
+            redb::Database::builder()
+                .create(dir.path().join("m.redb"))
+                .unwrap(),
+        );
+        let store = crate::object::RedbObjectStore::new(db).unwrap();
+        let base = TreeEntries(vec![entry("a.txt", "h1")]);
+        let ours = TreeEntries(vec![entry("b.txt", "h1")]);
+        let theirs = TreeEntries(vec![entry("c.txt", "h1")]);
+        let result = merge_trees_recursive(base, ours, theirs, store, &ConflictResolution::Theirs)
+            .await
+            .unwrap();
+        assert!(
+            result.has_conflicts(),
+            "rename/rename must conflict: {result:?}"
+        );
+        // Resolution = Theirs → theirs' target lands, ours' does not; the
+        // property that matters: EXACTLY ONE target survives (no double-
+        // write, no silent vanish).
+        let tree = result.into_tree_entries(&ConflictResolution::Theirs);
+        assert!(
+            !tree.0.iter().any(|e| e.name == "b.txt"),
+            "ours' target must not land under Theirs resolution: {:?}",
+            tree.0
+        );
+        assert_eq!(
+            tree.0.iter().filter(|e| e.name == "c.txt").count(),
+            1,
+            "theirs' target resolves exactly once: {:?}",
+            tree.0
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ambiguous_double_claim_refused() {
+        // R2: base{a:h1,c:h1}; ours deletes both + adds Q:h1 (ambiguous);
+        // theirs modifies both sources → no rename claims (1:1 refused) →
+        // both sources conflict; their modified content must NOT race.
+        let dir = tempfile::tempdir().unwrap();
+        let db = std::sync::Arc::new(
+            redb::Database::builder()
+                .create(dir.path().join("m.redb"))
+                .unwrap(),
+        );
+        let store = crate::object::RedbObjectStore::new(db).unwrap();
+        let base = TreeEntries(vec![entry("a.txt", "h1"), entry("c.txt", "h1")]);
+        let ours = TreeEntries(vec![entry("q.txt", "h1")]);
+        let theirs = TreeEntries(vec![entry("a.txt", "h2"), entry("c.txt", "h3")]);
+        let result = merge_trees_recursive(base, ours, theirs, store, &ConflictResolution::Theirs)
+            .await
+            .unwrap();
+        assert!(
+            result.has_conflicts(),
+            "ambiguous claims must conflict: {result:?}"
+        );
+        let tree = result.into_tree_entries(&ConflictResolution::Theirs);
+        assert!(
+            tree.0.iter().any(|e| e.name == "a.txt" && e.id == "h2"),
+            "a's modification must survive as the resolution: {:?}",
+            tree.0
+        );
+        assert!(
+            tree.0.iter().any(|e| e.name == "c.txt" && e.id == "h3"),
+            "c's modification must survive: {:?}",
+            tree.0
         );
     }
 
