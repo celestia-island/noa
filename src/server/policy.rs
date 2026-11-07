@@ -28,6 +28,17 @@ use serde::Deserialize;
 pub struct PushPolicy {
     #[serde(default)]
     pub push: Option<PushRules>,
+    #[serde(default)]
+    pub merge: Option<MergeRules>,
+}
+
+/// Merge-time rules (slice 7): the strong form of "declare on merge" —
+/// the merge is BLOCKED until a verification claim exists server-side for
+/// the PR head (a run record with kind "verify" and the head sha).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct MergeRules {
+    #[serde(default)]
+    pub require_verify_claim: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -186,4 +197,51 @@ fn credential_shape(content: &[u8]) -> Option<&'static str> {
         }
     }
     None
+}
+
+/// Reads the policy from a NOA snapshot tree (the merge-time source: the
+/// base workspace's content governs the merge). Handles both storage
+/// shapes — flat names containing `/` (the importer's form) and nested
+/// `Tree` entries (the snapshot engine's form).
+pub async fn load_policy_from_noa_tree<O>(store: &O, tree_hash: &str) -> PushPolicy
+where
+    O: crate::object::ObjectStore + Clone + 'static,
+{
+    use crate::object::{BlobId, EntryKind, TreeId};
+    let store = store.clone();
+    let root = TreeId(tree_hash.to_string());
+    let found = tokio::task::spawn(async move {
+        let mut pending = vec![root];
+        let mut policy_blob: Option<Vec<u8>> = None;
+        while let Some(id) = pending.pop() {
+            let tree = store.get_tree(&id).await?;
+            for e in tree.0 {
+                match e.kind {
+                    EntryKind::Tree => {
+                        pending.push(TreeId(e.id.clone()));
+                    }
+                    EntryKind::Gitlink => {}
+                    _ => {
+                        if (e.name == ".noa/policy.toml" || e.name == "policy.toml")
+                            && policy_blob.is_none()
+                        {
+                            policy_blob = Some(store.get_blob(&BlobId(e.id.clone())).await?);
+                        }
+                    }
+                }
+            }
+        }
+        Ok::<_, anyhow::Error>(policy_blob)
+    })
+    .await
+    .ok()
+    .and_then(|r| r.ok())
+    .flatten();
+    match found {
+        Some(bytes) => toml::from_str(&String::from_utf8_lossy(&bytes)).unwrap_or_else(|e| {
+            tracing::warn!("policy.toml malformed, treating as empty: {e}");
+            PushPolicy::default()
+        }),
+        None => PushPolicy::default(),
+    }
 }
