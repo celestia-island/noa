@@ -66,7 +66,7 @@ Quand `canary_push: true`, chaque vague pousse vers l'origine une référence so
 
 ## Vérification de fidélité
 
-Chaque commit importé fait l'objet d'une réconciliation entrée par entrée : l'ensemble des chemins, le kind des entrées et l'OID des blobs (`git_blob_oid` identique à git) doivent correspondre exactement ; tout écart fait échouer l'entrée et alimente le détail d'erreurs de la vague. Le reflux repose sur cet invariant — les objets de noa et les objets de git correspondent un à un, aucun push n'a besoin de couche de conversion.
+Chaque commit importé fait l'objet d'une réconciliation entrée par entrée : l'ensemble des chemins, le kind des entrées et l'OID des blobs (`git_blob_oid` identique à git) doivent correspondre exactement ; tout écart fait échouer l'entrée et alimente le détail d'erreurs de la vague. Le reflux repose sur cet invariant : pour le contenu importé depuis git, les objets git du scratch et les objets noa correspondent un à un au niveau des blobs — aucun push n'a besoin de couche de conversion. **Limite** : les commits natifs de noa (instantanés purs d'espace de travail) n'ont pas de forme d'objet git et ne relèvent pas du périmètre du reflux (voir la frontière exacte dans [Architecture](./architecture.md)).
 
 ## Nettoyage des références périmées (reconcile)
 

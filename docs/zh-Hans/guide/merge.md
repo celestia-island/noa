@@ -52,5 +52,8 @@ match merge_lines(base, ours, theirs) {
 
 ## git 兼容性
 
-合并结果满足 git 对象代数：解决后的树可直接回写 scratch 并回流（回流推送 + 忠实度
-校验全程无转换）。
+合并结果的 blob 条目与 git 对象代数一致（blob OID 逐字节对应）。但**解决后的树本身
+是 noa 原生树**（noa SHA-256 寻址）：它不会自动出现在 scratch 里——要把它推回 origin
+需要快照 → git 对象的序列化能力（`export_noa_to_git` 的对象级导出是后续切片；现有的
+工作树导出路线可手动完成同样的事）。在此之前，合并结果留在 noa 引用体系内，通过
+工作区/快照照常可读。

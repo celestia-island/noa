@@ -85,8 +85,11 @@ makes the wave fail loudly.
 
 Every imported commit is cross-checked item by item: the path set, entry kind, and blob OID
 (`git_blob_oid` matches git) must match exactly; any difference fails that item and lands in the
-wave's error details. Back-flow depends on this invariant — noa objects map one-to-one onto git
-objects, so pushes need no conversion layer.
+wave's error details. Back-flow depends on this invariant: for content imported from git, the
+scratch's git objects and noa objects correspond one-to-one at the blob layer,
+so pushes need no conversion. **Boundary**: noa-native commits (pure workspace
+snapshots) have no git-object form and are outside the back-flow push scope
+(see [Architecture](./architecture.md) for the precise boundary).
 
 ## Stale-ref cleanup (reconcile)
 

@@ -55,7 +55,7 @@ ObjectStore        — blob / tree / symlink / gitlink, git object-algebra compa
   부모 링크).
 
 따라서 noa → git 백플로우 푸시에는 변환 계층이 전혀 필요 없습니다:
-스크래치 클론의 git 객체가 noa 객체와 1:1로 대응합니다.
+git에서 가져온 콘텐츠의 noa → git 백플로우 푸시에는 변환 계층이 필요 없습니다(스크래치 클론의 git 객체가 그대로 사용됨). **경계**: noa 네이티브로 생성된 콘텐츠에는 git 객체 형태가 없어 직접 백플로우가 불가하며 스냅샷→git 객체 직렬화기가 필요합니다(알려진 제한).
 
 ## 미러 스크래치의 역할
 

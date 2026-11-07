@@ -60,5 +60,11 @@ blobs) degrades the same way.
 
 ## git compatibility
 
-Merge results satisfy the git object algebra: the resolved tree can be written straight back to
-the scratch and back-flowed (back-flow push + fidelity verification, zero conversion throughout).
+The merged result's blob entries match the git object algebra (blob OIDs
+byte-for-byte). The **resolved tree itself is noa-native** (noa SHA-256
+addressing): it does not automatically appear in the scratch — pushing it back
+to the origin needs snapshot → git-object serialization (the object-level
+export is a later slice; the existing working-tree export route achieves the
+same thing manually). Until then, merged results live in noa's ref system,
+readable as usual through workspaces/snapshots.
+

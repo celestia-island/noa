@@ -56,7 +56,7 @@ reste inchangée » :
   `noa_<sha>` + arêtes parentales).
 
 La voie de retour noa → git n'exige donc aucune couche de conversion : les objets git
-du scratch correspondent un à un aux objets de noa.
+du scratch sont utilisés directement — pour le contenu importé de git, aucun push de reflux n'a besoin de couche de conversion. **Limite** : le contenu natif de noa n'a pas de forme d'objet git — son reflux direct nécessite un sérialiseur instantané → objets git (limitation connue).
 
 ## Rôle du scratch du miroir
 
