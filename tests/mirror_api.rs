@@ -757,6 +757,27 @@ async fn test_repo_scoped_pr_routes() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
+    // The description cap applies even when default_branch is absent (the
+    // mirror/clone callers pass None and previously skipped the whole
+    // payload validation).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/repos",
+            Some(
+                serde_json::json!({
+                    "name": "toobig",
+                    "description": "x".repeat(513),
+                })
+                .to_string(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
     // A manual description survives a mirror re-registration (origin and
     // created_us already did; the operator's text must not be wiped).
     let resp = f

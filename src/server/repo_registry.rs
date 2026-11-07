@@ -90,14 +90,22 @@ impl RepoRegistry {
         Ok(())
     }
 
-    /// Validates an update payload (description length + branch shape).
-    fn validate_payload(name: &str, description: Option<&str>, default_branch: &str) -> Result<()> {
-        Self::validate(name)?;
+    /// Validates the description length (cap applies regardless of whether
+    /// a branch was supplied — found while threading the optional branch:
+    /// mirror/clone callers pass `None` and were skipping this check).
+    fn validate_description(description: Option<&str>) -> Result<()> {
         if let Some(d) = description {
             if d.len() > 512 {
                 anyhow::bail!("description must be at most 512 bytes");
             }
         }
+        Ok(())
+    }
+
+    /// Validates an update payload (description length + branch shape).
+    fn validate_payload(name: &str, description: Option<&str>, default_branch: &str) -> Result<()> {
+        Self::validate(name)?;
+        Self::validate_description(description)?;
         // Branch shape: git ref rules (informational field) — no control
         // chars, no leading dash, no "..", no spaces.
         if default_branch.is_empty()
@@ -133,7 +141,10 @@ impl RepoRegistry {
         origin: &str,
     ) -> Result<RepoEntry> {
         Self::validate(name)?;
+        Self::validate_description(description.as_deref())?;
         if let Some(b) = default_branch {
+            // validate_payload re-checks the description (cheap) and the
+            // branch shape, which only exists when a branch was supplied.
             Self::validate_payload(name, description.as_deref(), b)?;
         }
         let db = Arc::clone(&self.db);
