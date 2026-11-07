@@ -49,4 +49,10 @@ Quand la fusion au niveau des lignes est indisponible (blob manquant/endommagé/
 
 ## Compatibilité git
 
-Le résultat de fusion satisfait l'algèbre d'objets de git : l'arbre résolu peut être réécrit directement dans le scratch puis refluer (push de reflux + vérification de fidélité, sans aucune conversion).
+Les entrées blob du résultat de fusion satisfont l'algèbre d'objets de git (OID de blob
+identiques octet par octet). Mais **l'arbre résolu lui-même est natif de noa** (adressage
+SHA-256 propre à noa) : il n'apparaît pas automatiquement dans le scratch — le renvoyer
+vers l'origine exige une sérialisation instantané → objets git (l'export au niveau objet
+est une tranche ultérieure ; la voie d'export de l'arbre de travail existante permet de
+faire la même chose manuellement). D'ici là, les résultats de fusion vivent dans le
+système de références de noa, lisibles comme d'habitude via espaces de travail/instantanés.
