@@ -1232,14 +1232,49 @@ async fn resolve_remote_branch(scratch: &Path, branch: &str) -> Result<String> {
     let branch = branch.to_string();
     let oid = tokio::task::spawn_blocking(move || -> Result<String> {
         let repo = gix::open(&scratch).map_err(|e| anyhow::anyhow!("open scratch clone: {e}"))?;
-        let reference = repo
+        // Post-authority-flip semantics (slice 3), ANCESTRY-AWARE: a
+        // receive-pack push lands on the scratch's LOCAL head first
+        // (remotes/origin catches up only after the next fetch). Take the
+        // local tip only when it is the origin tip's DESCENDANT (equal or
+        // ahead = pushed content); when they diverged or local is behind,
+        // the origin tip wins — that is a legitimate origin move (e.g. the
+        // job's remote_url was repointed; pinned by
+        // test_url_update_repoints_existing_clone).
+        let local_ref = repo.find_reference(&format!("refs/heads/{branch}")).ok();
+        let origin_ref = repo
             .find_reference(&format!("refs/remotes/origin/{branch}"))
-            .map_err(|e| anyhow::anyhow!("branch '{branch}' not on origin: {e}"))?;
-        let id = reference
-            .try_id()
-            .ok_or_else(|| anyhow::anyhow!("branch '{branch}' has symbolic target"))?
-            .detach();
-        Ok(id.to_string())
+            .ok();
+        let local_id = local_ref.and_then(|r| r.try_id()).map(|id| id.detach());
+        let origin_id = origin_ref.and_then(|r| r.try_id()).map(|id| id.detach());
+        match (local_id, origin_id) {
+            (Some(l), Some(o)) => {
+                if l == o {
+                    return Ok(l.to_string());
+                }
+                let ahead = std::process::Command::new("git")
+                    .args([
+                        "-C",
+                        scratch.to_str().unwrap_or_default(),
+                        "merge-base",
+                        "--is-ancestor",
+                        &o.to_string(),
+                        &l.to_string(),
+                    ])
+                    .status()
+                    .map(|st| st.success())
+                    .unwrap_or(false);
+                if ahead {
+                    Ok(l.to_string())
+                } else {
+                    Ok(o.to_string())
+                }
+            }
+            (Some(l), None) => Ok(l.to_string()),
+            (None, Some(o)) => Ok(o.to_string()),
+            (None, None) => {
+                anyhow::bail!("branch '{branch}' not found in scratch (heads nor remotes/origin)")
+            }
+        }
     })
     .await??;
     Ok(oid)
@@ -1316,7 +1351,7 @@ fn git_blob_oid(content: &[u8]) -> String {
 
 /// One mirror run at a time, ever (the scheduler tick, an API-triggered run
 /// and a manual run must not fetch the same scratch clone concurrently).
-static RUN_LOCK: Mutex<()> = Mutex::const_new(());
+pub(crate) static RUN_LOCK: Mutex<()> = Mutex::const_new(());
 
 pub fn spawn_scheduler(db: Arc<redb::Database>, cfg: MirrorConfig) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
