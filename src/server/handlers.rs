@@ -35,6 +35,9 @@ pub struct AppState {
     /// one-time at construction, so /git read-path requests don't issue
     /// write transactions (R2 S1).
     pub repo_registry: crate::server::repo_registry::RepoRegistry,
+    /// Per-user token registry (W2c) — see repo_registry for the caching
+    /// rationale (ensure_table is a one-time write txn per construction).
+    pub user_registry: crate::server::user_registry::UserRegistry,
     /// PR store — cached for the same reason as `repo_registry`:
     /// `PrStore::new` runs an `ensure_table` write transaction, so building
     /// one per request blocks an async worker on redb's writer lock.
@@ -51,6 +54,8 @@ impl AppState {
         AppState {
             repo_registry: crate::server::repo_registry::RepoRegistry::new(Arc::clone(&db))
                 .expect("repo registry init is startup-critical"),
+            user_registry: crate::server::user_registry::UserRegistry::new(Arc::clone(&db))
+                .expect("user registry init is startup-critical"),
             pr_store: crate::server::pr_store::PrStore::new(Arc::clone(&db))
                 .expect("PR store init is startup-critical"),
             db,

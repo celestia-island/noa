@@ -77,34 +77,21 @@ fn json_error_response(code: StatusCode, msg: impl Into<String>) -> Response {
         .expect("static error parts")
 }
 
-fn git_auth_authorized(headers: &HeaderMap, state: &AppState) -> bool {
-    let token = &state.api_token;
-    if token.is_empty() {
-        return false;
+/// Extracts the raw credential git presented: Basic password or Bearer
+/// token (both carry the same secret in our scheme — username is ignored).
+fn git_credential(headers: &HeaderMap) -> Option<String> {
+    let v = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    if let Some(pass) = v.strip_prefix("Basic ") {
+        use base64::Engine;
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(pass)
+            .ok()?;
+        let creds = String::from_utf8(decoded).ok()?;
+        return creds
+            .split_once(':')
+            .map(|(_, password)| password.to_string());
     }
-    if let Some(v) = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-    {
-        if let Some(pass) = v.strip_prefix("Basic ") {
-            use base64::Engine;
-            if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(pass) {
-                if let Ok(creds) = String::from_utf8(decoded) {
-                    if let Some((_, password)) = creds.split_once(':') {
-                        return crate::server::constant_time_eq(
-                            password.as_bytes(),
-                            token.as_bytes(),
-                        );
-                    }
-                }
-            }
-            return false;
-        }
-        if let Some(bearer) = v.strip_prefix("Bearer ") {
-            return crate::server::constant_time_eq(bearer.as_bytes(), token.as_bytes());
-        }
-    }
-    false
+    v.strip_prefix("Bearer ").map(ToString::to_string)
 }
 
 /// Serves one smart-HTTP exchange by invoking `git upload-pack` directly
@@ -264,7 +251,20 @@ async fn run_backend(
 
 /// Entry point for every `/git/{repo}/*` request.
 pub async fn handle_git_http(State(state): State<AppState>, req: Request) -> Response {
-    if !git_auth_authorized(req.headers(), &state) {
+    // W2c: the credential resolves to the bootstrap identity (NOA_API_TOKEN)
+    // or a registered user token — any of them may read. Pushes are refused
+    // downstream regardless of identity (write direction is a later slice).
+    let authorized = match git_credential(req.headers()) {
+        Some(token) => {
+            if crate::server::constant_time_eq(token.as_bytes(), state.api_token.as_bytes()) {
+                true
+            } else {
+                state.user_registry.resolve(&token).await.is_some()
+            }
+        }
+        None => false,
+    };
+    if !authorized {
         // Stock git clients only offer URL/credential-helper credentials
         // when the 401 carries a Basic challenge (RFC 7617).
         return Response::builder()

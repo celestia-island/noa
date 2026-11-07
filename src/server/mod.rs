@@ -6,6 +6,7 @@ pub mod mirror_store;
 mod pr_handlers;
 pub mod pr_store;
 pub mod repo_registry;
+pub mod user_registry;
 
 use std::{
     collections::HashMap,
@@ -80,7 +81,7 @@ impl RateLimiter {
 
 async fn auth_middleware(
     axum::extract::State(state): axum::extract::State<AppState>,
-    req: Request,
+    mut req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
     // `/git/*` routes self-authorize (stock git clients speak Basic, not
@@ -93,24 +94,10 @@ async fn auth_middleware(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let auth_header = req
-        .headers()
-        .get("Authorization")
-        .and_then(|v| v.to_str().ok());
-
-    let authenticated = match auth_header {
-        Some(val) if val.starts_with("Bearer ") => {
-            let token = &val[7..];
-            constant_time_eq(token.as_bytes(), state.api_token.as_bytes())
-        }
-        _ => false,
-    };
-
-    if !authenticated {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-
     {
+        // Rate limit FIRST (W2c review): identity resolution scans the user
+        // table per attempt, so bad-token requests must be throttled too —
+        // they are exactly the traffic an attacker can generate cheaply.
         let key = req
             .extensions()
             .get::<ConnectInfo<SocketAddr>>()
@@ -133,6 +120,51 @@ async fn auth_middleware(
             return Err(StatusCode::TOO_MANY_REQUESTS);
         }
     }
+
+    let auth_header = req
+        .headers()
+        .get("Authorization")
+        .and_then(|v| v.to_str().ok());
+
+    // W2c: the bearer token resolves to EITHER the bootstrap identity
+    // (NOA_API_TOKEN, role admin) or a registered user (role from the
+    // user table). The resolved identity is inserted into the request
+    // extensions; write/admin handlers extract it and enforce.
+    let identity = match auth_header {
+        Some(val) if val.starts_with("Bearer ") => {
+            let token = &val[7..];
+            if constant_time_eq(token.as_bytes(), state.api_token.as_bytes()) {
+                Some(crate::server::user_registry::Identity::bootstrap())
+            } else {
+                state.user_registry.resolve(token).await
+            }
+        }
+        _ => None,
+    };
+
+    let Some(identity) = identity else {
+        return Err(StatusCode::UNAUTHORIZED);
+    };
+
+    // W2c role enforcement — centralized here so the policy is auditable in
+    // one place. Reader can GET; operator+ can write; admin for user
+    // management and destructive deletes.
+    let method = req.method().as_str();
+    let path = req.uri().path();
+    let is_write = matches!(method, "POST" | "PUT" | "DELETE" | "PATCH");
+    if is_write && !identity.can_write() {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    if path.starts_with("/api/v1/users") && method != "GET" && !identity.can_admin() {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let is_destructive_delete = method == "DELETE"
+        && (path.starts_with("/api/v1/repos/") || path.starts_with("/api/v1/mirror/jobs/"));
+    if is_destructive_delete && !identity.can_admin() {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    req.extensions_mut().insert(identity);
 
     Ok(next.run(req).await)
 }
@@ -176,6 +208,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/github/installations",
             get(github_broker::installations),
+        )
+        .route(
+            "/api/v1/users",
+            get(user_registry::list_users).post(user_registry::create_user),
+        )
+        .route(
+            "/api/v1/users/{name}",
+            get(user_registry::get_user).delete(user_registry::delete_user),
         )
         .route(
             "/api/v1/repos",
