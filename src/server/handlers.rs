@@ -46,6 +46,10 @@ pub struct AppState {
     /// workspace/object stores do the same — caching every store type is a
     /// follow-up, not a claim this field generalises.
     pub pr_store: crate::server::pr_store::PrStore,
+    /// CI-run records store (W1b) — cached for the same reason as
+    /// `repo_registry` (construction takes the writer lock once at startup
+    /// instead of per request).
+    pub run_registry: crate::server::run_registry::RunRegistry,
 }
 
 impl AppState {
@@ -58,6 +62,7 @@ impl AppState {
                 .expect("user registry init is startup-critical"),
             pr_store: crate::server::pr_store::PrStore::new(Arc::clone(&db))
                 .expect("PR store init is startup-critical"),
+            run_registry: crate::server::run_registry::RunRegistry::new(Arc::clone(&db)),
             db,
             api_token: String::new(),
             rate_limiter: RateLimiter::new(1000, 60),

@@ -1355,3 +1355,132 @@ async fn test_git_http_auth_and_404() {
     let resp = f.app.clone().oneshot(push).await.unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
+
+/// W1b: the CI-run records API — record + list round-trip on a catalog
+/// repo, 404 for unknown repos, and validation rejects.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_runs_record_and_list() {
+    let f = make_fixture().await;
+
+    // Register a repo in the catalog first (runs are repo-scoped).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/repos",
+            Some(
+                serde_json::json!({
+                    "name": "pilot",
+                    "description": "runs test",
+                    "default_branch": "master",
+                })
+                .to_string(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED, "{:?}", resp);
+
+    // Record two runs.
+    for (i, sha) in ["a".repeat(40), "b".repeat(40)].iter().enumerate() {
+        let resp = f
+            .app
+            .clone()
+            .oneshot(req(
+                Method::POST,
+                "/api/v1/repos/pilot/runs",
+                Some(
+                    serde_json::json!({
+                        "head_sha": sha,
+                        "kind": "basic-check",
+                        "status": "success",
+                        "actor": "farm-runner-1",
+                    })
+                    .to_string(),
+                ),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED, "{:?}", resp);
+        let run = body_json(resp).await;
+        assert_eq!(run["number"], i as u64 + 1, "per-repo sequence");
+        assert_eq!(run["repo"], "pilot");
+    }
+
+    // List: newest first.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/repos/pilot/runs?limit=10", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list = body_json(resp).await;
+    assert_eq!(list.as_array().unwrap().len(), 2);
+    assert_eq!(list[0]["number"], 2, "newest first");
+    assert_eq!(list[1]["number"], 1);
+
+    // Unknown repo → 404.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/repos/nope/runs",
+            Some(
+                serde_json::json!({
+                    "head_sha": "a".repeat(40),
+                    "kind": "basic-check",
+                    "status": "success",
+                    "actor": "x",
+                })
+                .to_string(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // Invalid head_sha → 400.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/repos/pilot/runs",
+            Some(
+                serde_json::json!({
+                    "head_sha": "short",
+                    "kind": "basic-check",
+                    "status": "success",
+                    "actor": "x",
+                })
+                .to_string(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // Invalid status → 400.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/repos/pilot/runs",
+            Some(
+                serde_json::json!({
+                    "head_sha": "a".repeat(40),
+                    "kind": "basic-check",
+                    "status": "wat",
+                    "actor": "x",
+                })
+                .to_string(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
