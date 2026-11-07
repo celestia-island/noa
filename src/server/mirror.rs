@@ -246,6 +246,14 @@ impl MirrorEngine {
                 }
             }
         }
+        // Slice 5 — the policy gate runs BEFORE the back-flow lane so a
+        // violation can never reach the origin.
+        if lane == "git" {
+            if let Err(e) = self.policy_gate(job, &scratch).await {
+                anyhow::bail!("push policy rejected the wave: {e:#}");
+            }
+        }
+
         // W2a2 back-flow: push the mirrored state back to the origin
         // (authority-flip transition form). Git lane only — the API lane
         // cannot push refs.
@@ -543,6 +551,83 @@ impl MirrorEngine {
         Ok(())
     }
 
+    /// Slice 5 — the push-policy gate, run in `execute` BEFORE the
+    /// back-flow lane: a repo-carried `.noa/policy.toml` (read from each
+    /// branch's NEW tree) is checked against the content pushed since the
+    /// origin tip. A violation reverts the offending scratch head to the
+    /// origin tip and FAILS the wave — the back-flow lane is never
+    /// reached, so violating content neither enters noa nor reaches the
+    /// origin (documented eventual rejection: the transport accepted the
+    /// push; noa refuses it at the gate).
+    async fn policy_gate(&self, job: &MirrorJob, scratch: &Path) -> Result<()> {
+        for branch in &job.branches {
+            let base_ref = format!("refs/remotes/origin/{branch}");
+            let Ok(prev_oid) = self.git_stdout(scratch, &["rev-parse", &base_ref]).await else {
+                continue; // no origin tip yet (first import) — nothing to gate
+            };
+            let prev_oid = prev_oid.trim().to_string();
+            let Ok(oid) = resolve_remote_branch(scratch, branch).await else {
+                continue;
+            };
+            if oid == prev_oid {
+                continue; // nothing new on this branch
+            }
+            let scratch_str = scratch.to_string_lossy().to_string();
+            let oid_for_policy = oid.clone();
+            let policy = tokio::task::spawn_blocking(move || {
+                crate::server::policy::load_policy(
+                    std::path::Path::new(&scratch_str),
+                    &oid_for_policy,
+                )
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("policy load join: {e}"))?;
+            let checks_enabled = policy
+                .push
+                .as_ref()
+                .is_some_and(|r| r.block_credentials || r.commit_message_format.is_some());
+            if !checks_enabled {
+                continue;
+            }
+            let scratch_str = scratch.to_string_lossy().to_string();
+            let policy_for_check = policy.clone();
+            let prev_clone = prev_oid.clone();
+            let oid_clone = oid.clone();
+            let violations = tokio::task::spawn_blocking(move || {
+                crate::server::policy::check_update(
+                    std::path::Path::new(&scratch_str),
+                    &prev_clone,
+                    &oid_clone,
+                    &policy_for_check,
+                )
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("policy check join: {e}"))?;
+            if !violations.is_empty() {
+                // Revert the scratch head to the origin tip: the violating
+                // content leaves the scratch (the next fetch confirms the
+                // origin state).
+                // update-ref works in a BARE repo (reset --hard does not).
+                let _ = self
+                    .git(
+                        scratch,
+                        &["update-ref", &format!("refs/heads/{branch}"), &base_ref],
+                    )
+                    .await;
+                anyhow::bail!(
+                    "push policy rejected {}: {}",
+                    violations.len(),
+                    violations
+                        .iter()
+                        .map(|v| format!("[{}] {}", v.check, v.detail))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                );
+            }
+        }
+        Ok(())
+    }
+
     async fn replicate_branch(
         &self,
         job: &MirrorJob,
@@ -554,6 +639,7 @@ impl MirrorEngine {
         let oid = resolve_remote_branch(scratch, branch).await?;
         let ref_store = RedbRefStore::new(Arc::clone(&self.db))?;
         let prev = ref_store.get(&ref_name).await?;
+
         let opts = ImportOptions {
             workspace: ws_name,
             head_ref: ref_name,

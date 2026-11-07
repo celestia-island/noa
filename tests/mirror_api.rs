@@ -39,7 +39,7 @@ struct Fixture {
     /// The redb file's parent, kept alive so the backup lane can copy the
     /// database BY PATH (a dropped TempDir deletes the dir while the open
     /// fd keeps working — everything but path-based access).
-    db_dir: tempfile::TempDir,
+    _db_dir: tempfile::TempDir,
     app: axum::Router,
     origin_url: String,
     scratch: std::path::PathBuf,
@@ -89,7 +89,7 @@ async fn make_fixture() -> Fixture {
         .with_mirror_config(mirror_cfg.clone());
     Fixture {
         _tmp: tmp,
-        db_dir,
+        _db_dir: db_dir,
         app: router(state),
         origin_url: format!("file://{}", origin.display()),
         scratch: mirror_cfg.scratch_dir,
@@ -1787,5 +1787,224 @@ async fn test_backup_export_and_restore_drill() {
         restored["last_detail"].as_str().unwrap_or(""),
         detail_before,
         "wave detail must round-trip"
+    );
+}
+
+/// Slice 5 — the push policy pipeline: a repo-carried `.noa/policy.toml`
+/// with `block_credentials` rejects a PEM-carrying push at the import
+/// wave; the scratch head reverts to the origin tip and the violation
+/// never reaches the fixture origin.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_push_policy_blocks_credentials() {
+    let f = make_fixture().await;
+    let create = serde_json::json!({
+        "name": "pilot",
+        "remote_url": f.origin_url,
+        "github_slug": "celestia-island/noa",
+        "branches": ["master"],
+        "tags": false,
+        "backflow": true,
+        "enabled": true,
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/jobs",
+            Some(create.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/run",
+            Some(serde_json::json!({ "job": "pilot" }).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let _ = wait_job_ok(&f.app, "pilot").await;
+
+    // Serve on a loopback port; clone through noa.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let app = f.app.clone();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let url = format!("http://mirror:{TEST_API_TOKEN}@127.0.0.1:{port}/git/pilot");
+    let work = f._tmp.path().join("policy-work");
+    let out = std::process::Command::new("git")
+        .args(["clone", &url, work.to_str().unwrap()])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(["-C", work.to_str().unwrap()])
+            .args(args)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@noa.local")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@noa.local")
+            .output()
+            .unwrap()
+    };
+    let hookless = ["-c", "core.hooksPath=/dev/null"];
+
+    // Push 1 (clean): carry the policy file itself. The gitmoji format is
+    // NOT enabled, so plain subjects pass.
+    std::fs::create_dir_all(work.join(".noa")).unwrap();
+    std::fs::write(
+        work.join(".noa/policy.toml"),
+        "[push]\nblock_credentials = true\n",
+    )
+    .unwrap();
+    assert!(git(&[hookless[0], hookless[1], "add", "-A"])
+        .status
+        .success());
+    assert!(
+        git(&[hookless[0], hookless[1], "commit", "-m", "carry the policy"])
+            .status
+            .success()
+    );
+    let out = git(&[hookless[0], hookless[1], "push", "origin", "master"]);
+    assert!(
+        out.status.success(),
+        "clean push must pass: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Wait for the post-receive wave to land push 1 on the fixture origin.
+    let clean_head = String::from_utf8(
+        std::process::Command::new("git")
+            .args(["-C", work.to_str().unwrap(), "rev-parse", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string();
+    let origin_dir = f.origin_url.strip_prefix("file://").unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
+        let o = std::process::Command::new("git")
+            .args(["-C", origin_dir, "rev-parse", "refs/heads/master"])
+            .output()
+            .unwrap();
+        if String::from_utf8_lossy(&o.stdout).trim() == clean_head {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+
+    // Push 2 (violation): a PEM private key lands in the tree.
+    std::fs::write(
+        work.join("leaked.key"),
+        "-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----\n",
+    )
+    .unwrap();
+    assert!(git(&[hookless[0], hookless[1], "add", "-A"])
+        .status
+        .success());
+    assert!(git(&[
+        hookless[0],
+        hookless[1],
+        "commit",
+        "-m",
+        "accidentally leak a key"
+    ])
+    .status
+    .success());
+    let out = git(&[hookless[0], hookless[1], "push", "origin", "master"]);
+    assert!(
+        out.status.success(),
+        "the transport accepts the push (rejection is at the wave): {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // The wave must reject: job status error naming the policy; the
+    // scratch head reverted to the origin tip; the fixture origin never
+    // sees the PEM commit.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let resp = f
+            .app
+            .clone()
+            .oneshot(req(Method::GET, "/api/v1/mirror/jobs", None))
+            .await
+            .unwrap();
+        let jobs = body_json(resp).await;
+        let job = jobs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|j| j["name"] == "pilot")
+            .unwrap();
+        let detail = job["last_detail"].as_str().unwrap_or("");
+        if job["last_status"] == "error" && detail.contains("push policy rejected") {
+            assert!(detail.contains("block_credentials"), "{detail}");
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            panic!("wave never rejected the violating push: {job}");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+
+    // Fixture origin stays at the clean head (the PEM never back-flowed).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(Method::GET, "/api/v1/mirror/jobs", None))
+        .await
+        .unwrap();
+    let dbg_jobs = body_json(resp).await;
+    eprintln!(
+        "DBG-FINAL job: {:?}",
+        dbg_jobs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|j| j["name"] == "pilot")
+            .map(|j| j["last_detail"].clone())
+    );
+    eprintln!("DBG-FINAL clean_head={clean_head}");
+    let o = std::process::Command::new("git")
+        .args(["-C", origin_dir, "rev-parse", "refs/heads/master"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&o.stdout).trim(),
+        clean_head,
+        "the violating commit must never reach the origin"
+    );
+
+    // The scratch head reverted to the origin tip.
+    let s = std::process::Command::new("git")
+        .args([
+            "-C",
+            f.scratch.join("pilot.git").to_str().unwrap(),
+            "rev-parse",
+            "refs/heads/master",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&s.stdout).trim(),
+        clean_head,
+        "the scratch head must revert to the origin tip"
     );
 }
