@@ -109,6 +109,20 @@ impl MirrorJob {
         if self.branches.is_empty() {
             anyhow::bail!("mirror job must track at least one branch");
         }
+        // W1g: PR heads live at mirror/<job>/pr/<N> — a tracked branch named
+        // "pr/<x>" would write the same ref namespace (branch lane vs PR
+        // lane, last-writer-wins within a wave). Reject the collision shape
+        // outright; the operator can namespace real branches differently.
+        if self.pr_heads {
+            for b in &self.branches {
+                if b.starts_with("pr/") {
+                    anyhow::bail!(
+                        "branch {b:?} collides with the PR-head namespace \
+                         (mirror/<job>/pr/...) while pr_heads is on"
+                    );
+                }
+            }
+        }
         // Branch names feed workspace names via '/'→"__" replacement, so a
         // literal "__" inside a branch would collide with a slashed sibling
         // (R2 S2) — rejected here to keep the mapping injective. Duplicates

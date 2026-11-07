@@ -293,6 +293,11 @@ impl GitDataClient {
     /// Open PRs with their head commit SHA: `(number, head_sha)`. Paginated
     /// (up to 10 pages of 100) — the mirror needs every open PR head, not a
     /// single page.
+    /// The hard page cap — hitting it means the listing is TRUNCATED and
+    /// the caller must NOT reconcile against it (a truncated upstream set
+    /// would delete stored refs that are merely beyond the cap).
+    const PULL_PAGE_CAP: u32 = 10;
+
     pub async fn list_open_pull_heads(&self, slug: &str) -> Result<Vec<(u64, String)>> {
         let mut out = Vec::new();
         let mut page = 1u32;
@@ -327,8 +332,12 @@ impl GitDataClient {
                 break;
             }
             page += 1;
-            if page > 10 {
-                break;
+            if page > Self::PULL_PAGE_CAP {
+                anyhow::bail!(
+                    "open PRs exceed the {}-page listing cap — refusing a \
+                     truncated set (reconcile against it would delete refs)",
+                    Self::PULL_PAGE_CAP
+                );
             }
         }
         Ok(out)
