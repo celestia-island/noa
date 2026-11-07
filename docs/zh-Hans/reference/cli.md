@@ -37,15 +37,18 @@ noa log                           # 只看到本工作区的父链
 
 ## 服务端协同
 
-CLI 的 push/pull/fetch/clone 与服务端 `/git/*` 智能协议互通（同 git 兼容语义）。远端
-指向 noa-server 时：
+CLI 的 push/pull/fetch/clone 与服务端 `/git/*` 智能协议互通（同 git 兼容语义）；对认证远端，
+`NOA_GIT_USER` + `NOA_GIT_PASS` 环境变量注入凭据（clone/push/pull 都注入；token 只用于传输、
+**永不落盘** `.git/noa/config`）。远端指向 noa-server 时：
 
 ```bash
 noa remote add origin http://noa.example.com:3016/git/noa
 noa push origin master
 ```
 
-推送走 receive-pack，需要已认证身份（token 即密码；角色需可写）。
+推送走 receive-pack，需要已认证身份（token 即密码；角色需可写）。注意 `noa push` 发布的是
+**当前工作区快照**（客户端侧序列化为 `[noa export]` git 提交）——编辑后先 `noa snapshot create`
+再 push；直接 push 未快照的改动会发布旧快照。
 
 ## verify 与账本
 

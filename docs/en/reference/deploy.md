@@ -52,6 +52,25 @@ redb is a single-file store — one instance, one database file. Multiple instan
 directories, multiple ports (e.g. the `chest-demo` and production-chest dual-instance mode);
 cross-instance config transport goes through RPC import / export, never config-file copies.
 
+## Backup & restore
+
+The whole server state = the redb file + the scratch dir + env (credentials are **deliberately excluded** — restoring credentials is re-provisioning, never copying).
+
+```bash
+# export (admin; live is fine — the write lock makes the copy consistent)
+curl -X POST -H "Authorization: Bearer $ADMIN" -H "Content-Type: application/json" \
+  -d '{"out": "/srv/noa-backup/nightly"}' \
+  http://127.0.0.1:3016/api/v1/admin/export
+
+# artifacts: noa.redb (consistent snapshot) + {job}.bundle (cloneable per-repo
+# file) + manifest.json (sha256)
+
+# restore (offline — restore before the database ever opens)
+noa-server --db-path /new/noa.redb --import-state /srv/noa-backup/nightly --port 3016
+```
+
+Restore verifies every artifact's sha256 first (a half-corrupt backup writes nothing); an existing scratch is kept (it may be ahead — the next wave reconciles). **The acceptance gate is the drill**: export → restore on another machine → serve → reconcile. A systemd timer for scheduled exports is recommended.
+
 ## Post-deploy verification
 
 ```bash

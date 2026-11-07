@@ -1603,21 +1603,10 @@ async fn test_receive_pack_and_backflow() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // The next wave pushes the received state to the fixture origin. The
-    // run is ASYNC and wait_job_ok returns immediately (wave 1 left the
-    // status ok) — poll the OBSERVABLE: the fixture origin's master must
-    // converge to the pushed HEAD once wave 2's back-flow lands.
-    let resp = f
-        .app
-        .clone()
-        .oneshot(req(
-            Method::POST,
-            "/api/v1/mirror/run",
-            Some(serde_json::json!({ "job": "pilot" }).to_string()),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    // Slice 3: NO manual wave trigger — the receive-pack's completion
+    // must itself spawn the import wave (which then back-flows to the
+    // fixture origin). Polling the origin for the pushed HEAD proves the
+    // whole automatic chain: push → wave → import → back-flow.
     let pushed_head = std::process::Command::new("git")
         .args(["-C", work.to_str().unwrap(), "rev-parse", "HEAD"])
         .output()

@@ -41,6 +41,32 @@ A response of `[]` means the service is ready. All REST endpoints require bearer
 goes for the read paths under `/git/{repo}/*` (unauthenticated requests get a 401 with a `Basic`
 challenge).
 
+## The noa-native workflow (recommended)
+
+The `noa` CLI is the first-class entry — a clone is a repo where `.git` and `.noa` coexist (git manages the source, noa manages the agent data):
+
+```bash
+noa clone http://<token>@127.0.0.1:3016/git/hello --path hello
+cd hello
+noa workspace create agent-a     # a per-agent isolated workspace
+# … edit files …
+noa snapshot create -m "change" -a agent-a
+noa log                          # this workspace's snapshot history
+noa push                         # publishes the workspace snapshot (serialized to a git commit)
+```
+
+`noa push` publishes the **workspace snapshot state** (it creates a `[noa export]` commit) — not the `.git` commits. The two lanes are parallel; don't mix them (run `noa snapshot create` before pushing, or you publish a stale snapshot). Authentication injects from the `NOA_GIT_USER` + `NOA_GIT_PASS` environment variables. The whole directory (including `.git/noa`) copies to another machine and keeps working.
+
+## The git compatibility lane (any git tool works)
+
+The same `/git/{repo}` endpoint also speaks standard git smart HTTP — stock git, CI, farm work unmodified:
+
+```bash
+git clone http://<token>@127.0.0.1:3016/git/hello
+```
+
+Pushes (receive-pack) require the write role; a landed push **immediately triggers the import wave** (back-flow follows on the same wave). This is the transition form that keeps farm/CNB at zero change.
+
 ## First mirror (ingesting a GitHub repo into noa)
 
 ```bash
@@ -69,20 +95,14 @@ Once the wave finishes, the repo is cloneable through noa:
 git clone http://<your-token>@127.0.0.1:3016/git/hello
 ```
 
-## First push (write authority)
+## Backup & migration
 
-Pushes go through the receive-pack path under `/git/{repo}` and require an authenticated identity:
+The whole server state exports into one portable directory (see
+[Deployment](../reference/deploy.md) § backup): a consistent redb snapshot +
+one cloneable git bundle per repo + a sha256 manifest; `noa-server
+--import-state <dir>` restores offline. The acceptance gate is the drill:
+export → restore on another machine → serve → reconcile.
 
-```bash
-cd hello
-echo "hello noa" > README.md
-git add -A && git commit -m "hello noa"
-git push origin master
-```
-
-The push lands in the mirror scratch; the next mirror wave automatically ingests it into noa's
-snapshot/ref system, and if the job has `backflow` enabled it also pushes the state back to origin
-(GitHub) — the transitional shape of "noa as authority + GitHub mirror".
 
 ## Next steps
 

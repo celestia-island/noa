@@ -235,6 +235,24 @@ async fn run_backend(
     // not — D2 S1-class). Only the advertisement path; RPC responses carry
     // no preamble. Emitted as v0-shaped lines; a v2 client (GIT_PROTOCOL
     // forwarded) skips them per gitprotocol-v2.
+    // Slice 3: a landed receive-pack immediately triggers this repo's
+    // mirror wave — the push becomes visible on the API surface (refs/
+    // snapshots/workspaces) without waiting for the scheduler tick. The
+    // wave's global RUN_LOCK serializes against scheduler waves; an
+    // unknown job name (repo without a mirror job) is a no-op warn.
+    if backend == "receive-pack" && !wants_advertisement && output.status.success() {
+        let db = std::sync::Arc::clone(&state.db);
+        let cfg = state.mirror_config.clone();
+        let job = repo.to_string();
+        tokio::spawn(async move {
+            let _guard = crate::server::mirror::RUN_LOCK.lock().await;
+            let engine = crate::server::mirror::MirrorEngine::new(db, cfg);
+            if let Err(e) = engine.run_job(&job).await {
+                tracing::warn!("post-push import wave for '{job}' failed: {e:#}");
+            }
+        });
+    }
+
     let stdout = if wants_advertisement {
         let service = if backend == "receive-pack" {
             "git-receive-pack"
