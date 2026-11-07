@@ -35,6 +35,7 @@ fn git(cwd: &Path, args: &[&str]) {
 }
 
 struct Fixture {
+    db: Arc<redb::Database>,
     _tmp: tempfile::TempDir,
     /// The redb file's parent, kept alive so the backup lane can copy the
     /// database BY PATH (a dropped TempDir deletes the dir while the open
@@ -77,7 +78,7 @@ async fn make_fixture() -> Fixture {
         token_env: String::new(),
         github_api_base: String::new(),
     };
-    let state = AppState::new(db)
+    let state = AppState::new(std::sync::Arc::clone(&db))
         .with_api_token(TEST_API_TOKEN.to_string())
         .with_db_path(
             db_dir
@@ -88,6 +89,7 @@ async fn make_fixture() -> Fixture {
         )
         .with_mirror_config(mirror_cfg.clone());
     Fixture {
+        db: std::sync::Arc::clone(&db),
         _tmp: tmp,
         _db_dir: db_dir,
         app: router(state),
@@ -2007,4 +2009,167 @@ async fn test_push_policy_blocks_credentials() {
         clean_head,
         "the scratch head must revert to the origin tip"
     );
+}
+
+/// Slice 6 — the server-side snapshot→git serializer: a noa-NATIVE
+/// snapshot (never through the git transport) exports into the scratch as
+/// a real git commit, and the wave's back-flow carries it to the origin.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_snapshot_export_serializes_into_scratch() {
+    use libnoa::object::{BlobId, ObjectStore, TreeEntries, TreeEntry};
+    use libnoa::snapshot::SnapshotStore as _;
+
+    let f = make_fixture().await;
+    let create = serde_json::json!({
+        "name": "pilot",
+        "remote_url": f.origin_url,
+        "github_slug": "celestia-island/noa",
+        "branches": ["master"],
+        "tags": false,
+        "backflow": true,
+        "enabled": true,
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/jobs",
+            Some(create.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/run",
+            Some(serde_json::json!({ "job": "pilot" }).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let _ = wait_job_ok(&f.app, "pilot").await;
+
+    // Build a noa-native snapshot ON TOP of the imported tree: same tree
+    // plus one new blob (a file the git transport never carried).
+    let snap_store = libnoa::snapshot::RedbSnapshotStore::new(Arc::clone(&f.db)).unwrap();
+    let obj_store = libnoa::object::RedbObjectStore::new(Arc::clone(&f.db)).unwrap();
+    let imported_id = {
+        let ref_store = libnoa::refs::RedbRefStore::new(Arc::clone(&f.db)).unwrap();
+        use libnoa::refs::RefStore as _;
+        ref_store.get("mirror/pilot/master").await.unwrap().unwrap()
+    };
+    let imported = snap_store.get(&imported_id).await.unwrap();
+    let blob_id = obj_store.put_blob(b"noa-native content\n").await.unwrap();
+    let old_tree = obj_store
+        .get_tree(&libnoa::object::TreeId(imported.tree_hash.clone()))
+        .await
+        .unwrap();
+    let mut entries = old_tree.0.clone();
+    entries.push(TreeEntry {
+        name: "native.txt".to_string(),
+        kind: libnoa::object::EntryKind::Blob,
+        id: blob_id.0.clone(),
+    });
+    let new_tree = obj_store.put_tree(&TreeEntries(entries)).await.unwrap();
+    let imported_id_for_parents = imported.id.clone();
+    let ts = 1794077000000000u64;
+    let native = libnoa::snapshot::Snapshot {
+        id: libnoa::snapshot::content_addressed_snapshot_id_with_ts(
+            &new_tree.0,
+            &[imported_id_for_parents],
+            "feature-x",
+            "agent-a",
+            "noa-native change",
+            ts,
+        ),
+        tree_hash: new_tree.0.clone(),
+        parents: vec![imported.id.clone()],
+        workspace: "feature-x".to_string(),
+        author: "agent-a".to_string(),
+        timestamp: ts,
+        message: "noa-native change".to_string(),
+    };
+    snap_store.store(&native).await.unwrap();
+    let _ = BlobId(blob_id.0.clone()); // keep the import used
+
+    // Export through the REST endpoint.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            &format!("/api/v1/repos/pilot/snapshots/{}/export", native.id.0),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "{:?}", resp);
+    let out = body_json(resp).await;
+    let commit = out["commit"].as_str().unwrap().to_string();
+    assert!(out["ref"]
+        .as_str()
+        .unwrap()
+        .contains("refs/heads/noa/feature-x"));
+
+    // The scratch carries the ref at the exported commit.
+    let s = std::process::Command::new("git")
+        .args([
+            "-C",
+            f.scratch.join("pilot.git").to_str().unwrap(),
+            "rev-parse",
+            "refs/heads/noa/feature-x",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&s.stdout).trim(), commit);
+
+    // The file content round-trips: git show <commit>:native.txt.
+    let s = std::process::Command::new("git")
+        .args([
+            "-C",
+            f.scratch.join("pilot.git").to_str().unwrap(),
+            "show",
+            &format!("{commit}:native.txt"),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&s.stdout), "noa-native content\n");
+
+    // The wave's back-flow carries the noa/<ws> branch to the origin.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/run",
+            Some(serde_json::json!({ "job": "pilot" }).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let origin_dir = f.origin_url.strip_prefix("file://").unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let o = std::process::Command::new("git")
+            .args([
+                "-C",
+                origin_dir,
+                "rev-parse",
+                "--verify",
+                "refs/heads/noa/feature-x",
+            ])
+            .output()
+            .unwrap();
+        if o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == commit {
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            panic!("the exported commit never reached the origin");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
 }
