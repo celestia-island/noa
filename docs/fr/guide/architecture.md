@@ -13,7 +13,8 @@ Workspace          — one isolated workspace per agent, invisible to each other
    │ head points to
 Snapshot           — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)
    │ tree_hash points to
-ObjectStore        — blob / tree / symlink / gitlink, git object-algebra compatible
+ObjectStore        — blob / tree / symlink / gitlink (blobs byte-compatible with git;
+                     trees/commits use noa's own SHA-256 addressing)
 ```
 
 - **Les espaces de travail** sont la primitive d'isolation centrale de noa : plusieurs
@@ -43,20 +44,25 @@ déploiement se résume à « copier le répertoire », sans base de données ex
 
 Tout l'état du serveur vit dans une seule base redb — « le répertoire est tout ».
 
-## Compatibilité des objets git
+## La frontière précise de la compatibilité git
 
-L'import et la voie de retour supposent tous deux que « l'algèbre d'objets de git
-reste inchangée » :
+La compatibilité est en couches — énoncée avec précision :
 
-- blobs : le contenu brut EST le corps du blob git (`git_blob_oid(content)` correspond
-  à git) ;
-- trees : les imports réconcilient chemin/type/oid entrée par entrée (vérifications de
-  fidélité) ;
-- commits : la vague de miroir maintient le chaînage des parents (adressage de contenu
-  `noa_<sha>` + arêtes parentales).
+- **blobs : compatibles octet par octet.** Le contenu brut EST le corps du blob git ;
+  `git_blob_oid(content)` correspond à git (les vérifications de fidélité du miroir
+  réconcilient blob par blob précisément là-dessus) ;
+- **trees : sémantiquement équivalents, les identifiants ne le sont pas.** Chemins/types/OID
+  de chaque blob correspondent exactement, mais les identifiants d'arbre de noa utilisent
+  son propre adressage de contenu SHA-256, pas le format d'objet arbre de git ;
+- **commits : le modèle propre de noa.** Les identifiants d'instantané ressemblent à
+  `noa_<sha256>`, pas des objets commit git.
 
-La voie de retour noa → git n'exige donc aucune couche de conversion : les objets git
-du scratch sont utilisés directement — pour le contenu importé de git, aucun push de reflux n'a besoin de couche de conversion. **Limite** : le contenu natif de noa n'a pas de forme d'objet git — son reflux direct nécessite un sérialiseur instantané → objets git (limitation connue).
+La représentation sous forme git vit dans le **vrai dépôt git du scratch du miroir**. Le
+push de reflux utilise les objets git du scratch directement (zéro conversion pour le
+contenu importé de git) ; **le contenu natif de noa** (instantanés purs d'espace de travail
+n'ayant jamais transité par le scratch) n'a pas de forme d'objet git — son reflux direct
+nécessite un sérialiseur instantané → objets git. C'est une limitation connue (dans
+l'implémentation actuelle, ces références n'apparaissent pas dans les pushes de reflux).
 
 ## Rôle du scratch du miroir
 

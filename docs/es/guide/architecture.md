@@ -9,7 +9,8 @@ Workspace          — one isolated workspace per agent, invisible to each other
    │ head points to
 Snapshot           — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)
    │ tree_hash points to
-ObjectStore        — blob / tree / symlink / gitlink, git object-algebra compatible
+ObjectStore        — blob / tree / symlink / gitlink (blobs byte-compatible with git;
+                     trees/commits use noa's own SHA-256 addressing)
 ```
 
 - **El espacio de trabajo** es la primitiva central de aislamiento de noa: varios agentes mantienen, dentro del mismo repositorio, un espacio de trabajo y un head propios e independientes, sin pisarse entre sí. Los espacios de nombres del sistema como `mirror.<job>.<branch>` también existen en forma de espacio de trabajo.
@@ -30,15 +31,15 @@ El motor de almacenamiento es un KV embebido de archivo único (redb) — desple
 
 Todo el estado del servidor cabe en una única base redb; el servidor queda reducido a «el directorio es todo».
 
-## Compatibilidad de objetos git
+## El límite preciso de la compatibilidad con git
 
-El import y el reflujo parten de que «el álgebra de objetos de git no cambia»:
+La compatibilidad es por capas — enunciada con exactitud:
 
-- blob: el contenido bruto es el cuerpo del blob de git (`git_blob_oid(content)` igual que en git);
-- árbol: el import concilia cada entrada por ruta/kind/oid (verificación de fidelidad);
-- commit: la cadena de padres la mantienen las olas del espejo (`noa_<sha>` direccionado por contenido + enlace de padres).
+- **blob: compatible byte a byte.** El contenido bruto ES el cuerpo del blob de git; `git_blob_oid(content)` coincide con git (la verificación de fidelidad del espejo concilia blob por blob precisamente gracias a esto);
+- **árbol: semánticamente equivalente, los IDs no.** Rutas/kinds/OID de cada blob corresponden exactamente, pero los IDs de árbol de noa usan su propio direccionamiento por contenido SHA-256, no el formato de objeto árbol de git;
+- **commit: modelo propio de noa.** Los IDs de instantánea tienen la forma `noa_<sha256>`, no son objetos commit de git.
 
-Por eso el push de reflujo noa → git para el contenido importado de git no necesita capa de conversión (los objetos de git del clon scratch se usan tal cual). **Límite**: el contenido nativo de noa no tiene forma de objeto git — su reflujo directo requiere un serializador de instantánea → objetos git (limitación conocida).
+La representación en forma git vive en el **repositorio git real del scratch del espejo**. El push de reflujo usa los objetos git del scratch directamente (conversión cero para el contenido importado de git); **el contenido nativo de noa** (instantáneas puras de espacio de trabajo que nunca pasaron por el scratch) no tiene forma de objeto git — refluirlo directamente requiere un serializador de instantánea → objetos git. Es una limitación conocida (en la implementación actual tales referencias no aparecen en los pushes de reflujo).
 
 ## El papel del scratch del espejo
 

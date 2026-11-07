@@ -12,7 +12,8 @@ Workspace          — one isolated workspace per agent, invisible to each other
    │ head points to
 Snapshot           — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)
    │ tree_hash points to
-ObjectStore        — blob / tree / symlink / gitlink, git object-algebra compatible
+ObjectStore        — blob / tree / symlink / gitlink (blobs byte-compatible with git;
+                     trees/commits use noa's own SHA-256 addressing)
 ```
 
 - **워크스페이스**는 noa의 핵심 격리 단위입니다: 같은 리포지토리 안에서 여러
@@ -42,20 +43,25 @@ ObjectStore        — blob / tree / symlink / gitlink, git object-algebra compa
 서버 상태는 전부 하나의 redb 데이터베이스에 있으며, 서버는 "디렉터리가 곧
 전부"일 정도로 외부 상태 없이 동작합니다.
 
-## git 객체 호환성
+## git 호환성의 정확한 경계
 
-임포트와 백플로우는 모두 git 객체 대수가 불변으로 유지된다는 가정 위에서
-동작합니다:
+호환성은 계층별로 정확히 말합니다:
 
-- blob: 원시 콘텐츠가 곧 git blob 본문입니다 (`git_blob_oid(content)`가 git과
-  일치);
-- tree: 임포트 시 path/kind/oid 기준으로 항목 단위 교차 검증을 합니다
-  (충실도 검증);
-- commit: 부모 체인은 미러 웨이브가 유지합니다 (`noa_<sha>` 콘텐츠 주소 +
-  부모 링크).
+- **blob: 바이트 단위 호환.** 원시 콘텐츠가 곧 git blob 본문이며
+  `git_blob_oid(content)`가 git과 일치합니다(미러 충실도 검증이 정확히 이걸로
+  blob 단위 대사를 합니다);
+- **tree: 의미적으로 동등, ID는 동등하지 않음.** path/kind/blob별 OID는 git과
+  정확히 대응하지만, noa의 tree ID는 자체 SHA-256 콘텐츠 주소 방식이며 git의
+  트리 객체 형식이 아닙니다;
+- **commit: noa 자체 모델.** 스냅샷 ID는 `noa_<sha256>` 형태이며 git 커밋
+  객체가 아닙니다.
 
-따라서 noa → git 백플로우 푸시에는 변환 계층이 전혀 필요 없습니다:
-git에서 가져온 콘텐츠의 noa → git 백플로우 푸시에는 변환 계층이 필요 없습니다(스크래치 클론의 git 객체가 그대로 사용됨). **경계**: noa 네이티브로 생성된 콘텐츠에는 git 객체 형태가 없어 직접 백플로우가 불가하며 스냅샷→git 객체 직렬화기가 필요합니다(알려진 제한).
+git 형태의 표현은 **미러 스크래치의 실제 git 리포지토리** 안에 존재합니다.
+백플로우 푸시는 스크래치의 git 객체를 그대로 사용합니다(git에서 가져온
+콘텐츠는 변환 제로). **noa 네이티브로 생성된 콘텐츠**(스크래치를 한 번도
+거치지 않은 순수 워크스페이스 스냅샷)는 git 객체 형태가 없어 직접 백플로우에는
+스냅샷→git 객체 직렬화기가 필요합니다 — 알려진 제한입니다(현재 구현에서는
+이런 ref가 백플로우 푸시에 나타나지 않습니다).
 
 ## 미러 스크래치의 역할
 
