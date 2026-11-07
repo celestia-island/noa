@@ -1,0 +1,214 @@
+name: Publish
+
+on:
+  push:
+    tags: [v*]
+  workflow_dispatch:
+
+jobs:
+  verify-version:
+    name: Verify version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Extract tag version
+        id: tag
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+      - name: Check Cargo.toml version matches tag
+        run: |
+          TAG_VERSION="${{ steps.tag.outputs.version }}"
+          CARGO_VERSION=$(grep -oP '^version\s*=\s*"\K[^"]+' Cargo.toml | head -1)
+          if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Cargo.toml version ($CARGO_VERSION) != tag ($TAG_VERSION)"
+            exit 1
+          fi
+          echo "Version matches tag v$TAG_VERSION"
+
+  publish-crates:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: verify-version
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history: `git merge-base --is-ancestor` cannot see past a
+          # shallow boundary, so a depth-1 clone would reject every tag that is
+          # not exactly the branch tip.
+          fetch-depth: 0
+
+      - name: Ensure tag is on master
+        run: |
+          git fetch origin master
+          if ! git merge-base --is-ancestor HEAD origin/master; then
+            echo "::error::Tag must be on master branch to publish"
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Skip if already published
+        id: check-exists
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "https://crates.io/api/v1/crates/${CRATE}/${VERSION}" || echo "000")
+          if [ "$STATUS" = "200" ]; then
+            echo "::warning::Version ${VERSION} already published — skipping."
+            exit 78
+          fi
+        env:
+          # The crate is `libnoa`; querying `noa` always 404s, so a rerun of an
+          # already-published tag would fall through to `cargo publish` and fail.
+          CRATE: libnoa
+
+      - name: Publish libnoa to crates.io
+        env:
+          CRATES_IO_API_TOKEN: ${{ secrets.CRATES_IO_API_TOKEN }}
+        run: |
+          if [ -z "$CRATES_IO_API_TOKEN" ]; then
+            echo "::error::CRATES_IO_API_TOKEN secret is not configured"
+            echo "Please set it in: Settings > Secrets and variables > Actions > Repository secrets"
+            exit 1
+          fi
+          cargo login "$CRATES_IO_API_TOKEN"
+          cargo publish -p libnoa -v
+
+  build-release:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    needs: verify-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ubuntu-22.04 (glibc 2.35) so the binaries run on the org's
+          # Debian 12 self-hosted runners (glibc 2.36) and older edge
+          # devices; ubuntu-latest builds need glibc >= 2.39.
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+            artifact: noa-linux-x86_64
+            ext: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04
+            artifact: noa-linux-aarch64
+            ext: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact: noa-macos-x86_64
+            ext: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: noa-macos-aarch64
+            ext: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact: noa-windows-x86_64
+            ext: zip
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            artifact: noa-windows-aarch64
+            ext: zip
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Configure cross-compilation (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          mkdir -p .cargo
+          cat >> .cargo/config.toml <<'EOF'
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
+
+      - name: Install NASM (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/setup-nasm@v1
+
+      - name: Set up MSVC ARM64 target (Windows ARM64)
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_arm64
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package binaries (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/noa dist/
+          cp target/${{ matrix.target }}/release/noa-server dist/ 2>/dev/null || true
+          cd dist
+          tar czf ${{ matrix.artifact }}.tar.gz noa noa-server
+
+      - name: Package binaries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          Copy-Item "target/${{ matrix.target }}/release/noa.exe" "dist/"
+          if (Test-Path "target/${{ matrix.target }}/release/noa-server.exe") {
+            Copy-Item "target/${{ matrix.target }}/release/noa-server.exe" "dist/"
+          }
+          $files = @("dist/noa.exe")
+          if (Test-Path "dist/noa-server.exe") {
+            $files += "dist/noa-server.exe"
+          }
+          Compress-Archive -Path $files -DestinationPath "dist/${{ matrix.artifact }}.zip"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}.${{ matrix.ext }}
+
+  github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-release, publish-crates]
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: false
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} release-assets/ \;
+          ls -la release-assets/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            release-assets/*.tar.gz
+            release-assets/*.zip
+
+  release-notes:
+    # Writes the standard categorized release body (all merged PRs since the
+    # previous tag, grouped by the leading gitmoji) onto the release.
+    name: Categorized release notes
+    needs: github-release
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    uses: celestia-island/celestia-devtools/.github/workflows/release-notes.yml@2e76d373762dc6b36c1ab7625c1c34842c28ad4a
+    with:
+      devtools-ref: 5f280203dd6794b9e631978c5984d5a4d4f801b1

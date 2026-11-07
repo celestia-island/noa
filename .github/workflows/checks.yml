@@ -1,0 +1,96 @@
+name: Code Checks
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    # Fork pull requests pay for their own CI: this job is heavy (it compiles,
+    # builds or audits on the org's self-hosted fleet), and a fork's run would
+    # spend shared runner time on untrusted content. The two required checks
+    # (commit lint, PR title) are the deliberate exception: they are
+    # sub-minute, execute no pull request code, and hold no secrets.
+    # A contributor who wants this suite can run it in their own fork, on
+    # their own minutes.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    name: Code Checks
+    runs-on: [self-hosted, linux, x64, local]
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+      # Defensive mirror bypass: the runner env rewrites github.com/celestia-island/*
+      # to local bare mirrors, which cannot reliably advertise PR merge refs
+      # (GitHub advertises them sparsely), causing "not our ref" checkouts.
+      env:
+        GIT_CONFIG_COUNT: "0"
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Cache Cargo
+      uses: Swatinem/rust-cache@v2
+
+    - name: Check import group ordering
+      run: python3 scripts/utils/enforce_use_groups.py --test
+
+    - name: Check markdown formatting
+      run: python3 scripts/utils/format_markdown.py . --check
+
+    - name: Format check
+      run: cargo fmt --all -- --check
+
+    - name: Compile check
+      run: cargo check --workspace --all-targets
+
+  webui:
+    # Fork pull requests pay for their own CI: this job is heavy (it compiles,
+    # builds or audits on the org's self-hosted fleet), and a fork's run would
+    # spend shared runner time on untrusted content. The two required checks
+    # (commit lint, PR title) are the deliberate exception: they are
+    # sub-minute, execute no pull request code, and hold no secrets.
+    # A contributor who wants this suite can run it in their own fork, on
+    # their own minutes.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    name: WebUI checks
+    runs-on: [self-hosted, linux, x64, local]
+    timeout-minutes: 30
+
+    env:
+      COREPACK_HOME: /mnt/work/corepack
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+      # Defensive mirror bypass: the runner env rewrites github.com/celestia-island/*
+      # to local bare mirrors, which cannot reliably advertise PR merge refs
+      # (GitHub advertises them sparsely), causing "not our ref" checkouts.
+      env:
+        GIT_CONFIG_COUNT: "0"
+
+    - name: Setup node
+      uses: actions/setup-node@v7
+      with:
+        node-version: 22
+
+    - name: Install frontend deps
+      run: corepack pnpm@11.18.0 install --frozen-lockfile
+
+    - name: WebUI typecheck
+      run: corepack pnpm@11.18.0 --filter @celestia-island/noa-webui typecheck
+
+    - name: WebUI test
+      run: corepack pnpm@11.18.0 --filter @celestia-island/noa-webui test
+
+    - name: WebUI build
+      run: corepack pnpm@11.18.0 --filter @celestia-island/noa-webui build

@@ -1,0 +1,81 @@
+name: Test
+
+# One in-flight run per pull request (ci-ops 8.3.3): a superseded push cancels
+# its predecessor instead of queueing a second full suite behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    # Fork pull requests pay for their own CI: this job is heavy (it compiles,
+    # builds or audits on the org's self-hosted fleet), and a fork's run would
+    # spend shared runner time on untrusted content. The two required checks
+    # (commit lint, PR title) are the deliberate exception: they are
+    # sub-minute, execute no pull request code, and hold no secrets.
+    # A contributor who wants this suite can run it in their own fork, on
+    # their own minutes.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    name: Test (${{ matrix.toolchain }}, ${{ matrix.os }})
+    runs-on: [self-hosted, linux, x64, local]
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        # One full suite per PR, on stable only: the self-hosted farm has a
+        # handful of worker slots and PR jobs already queue for 38-77 minutes,
+        # so a second full `cargo test` leg on nightly spends a slot without
+        # adding signal. Nightly keeps the static checks (clippy.yml, fmt.yml).
+        toolchain: [stable]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        # Defensive mirror bypass: the runner env rewrites github.com/celestia-island/*
+        # to local bare mirrors, which cannot reliably advertise PR merge refs
+        # (GitHub advertises them sparsely), causing "not our ref" checkouts.
+        env:
+          GIT_CONFIG_COUNT: "0"
+
+      - name: Setup toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        shell: bash
+        run: cargo test --all-features --no-fail-fast
+
+  test-official:
+    name: Test (${{ matrix.toolchain }}, ${{ matrix.os }})
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest]
+        toolchain: [stable, nightly]
+        include:
+          - os: windows-latest
+            toolchain: stable
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        shell: bash
+        run: cargo test --all-features --no-fail-fast

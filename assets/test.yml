@@ -1,0 +1,39 @@
+name: Test
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/test.yml'
+      - 'src/**/*'
+      - 'bin/**/*'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  push:
+    branches: [master, dev]
+
+jobs:
+  test:
+    name: Test (${{ matrix.toolchain }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        toolchain: [stable, nightly]
+        include:
+          - os: windows-latest
+            toolchain: stable
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        shell: bash
+        run: cargo test --all-features --no-fail-fast

@@ -1,0 +1,24 @@
+[Unit]
+Description=Noa server (AI-native distributed VCS HTTP API)
+Documentation=https://github.com/celestia-island/noa
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The API token is mandatory: noa-server refuses to start without it.
+# Provide it via an EnvironmentFile (see scripts/deploy.sh) or override here.
+EnvironmentFile=-/etc/noa-server.env
+Environment=NOA_API_TOKEN=
+ExecStart=/usr/local/bin/noa-server --host 127.0.0.1 --port 3000 --db-path /var/lib/noa-server/noa-server.redb
+Restart=on-failure
+RestartSec=5
+# Basic hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/noa-server
+
+[Install]
+WantedBy=multi-user.target

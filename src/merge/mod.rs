@@ -1,0 +1,1018 @@
+mod conflict;
+pub mod line_merge;
+
+pub use conflict::{ConflictDetector, ConflictResolution, FileConflict, MergeOutput, MergedEntry};
+
+use crate::{
+    error::Result,
+    object::{BlobId, EntryKind, ObjectStore, TreeEntries, TreeEntry, TreeId},
+};
+
+/// Result of a three-way merge, containing the merged output and conflict status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeResult {
+    pub output: MergeOutput,
+}
+
+impl MergeResult {
+    #[must_use]
+    pub fn has_conflicts(&self) -> bool {
+        self.output.has_conflicts
+    }
+
+    #[must_use]
+    pub fn into_tree_entries(&self, resolution: &ConflictResolution) -> TreeEntries {
+        TreeEntries(self.output.resolve_with_strategy(resolution))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Change {
+    Unchanged,
+    Modified(TreeEntry),
+    Deleted,
+}
+
+fn compute_change(base_entry: Option<&TreeEntry>, side_entry: Option<&TreeEntry>) -> Change {
+    match (base_entry, side_entry) {
+        (None, None) => Change::Unchanged,
+        (None, Some(o)) => Change::Modified((*o).clone()),
+        (Some(b), Some(o)) if b.id != o.id || b.kind != o.kind => Change::Modified((*o).clone()),
+        (Some(_), Some(_)) => Change::Unchanged,
+        (Some(_), None) => Change::Deleted,
+    }
+}
+
+/// Performs a three-way merge of tree entries against a common base.
+///
+/// Returns a `MergeResult` indicating whether conflicts were detected and
+/// containing the merged entries. Use `extract_conflicts` to list individual
+/// file-level conflicts.
+///
+/// # Arguments
+/// * `base` - The common ancestor tree
+/// * `ours` - Our side's tree
+/// * `theirs` - Their side's tree
+pub fn three_way_merge(
+    base: &TreeEntries,
+    ours: &TreeEntries,
+    theirs: &TreeEntries,
+) -> Result<MergeResult> {
+    let base_map: std::collections::HashMap<&str, &TreeEntry> =
+        base.0.iter().map(|e| (e.name.as_str(), e)).collect();
+    let ours_map: std::collections::HashMap<&str, &TreeEntry> =
+        ours.0.iter().map(|e| (e.name.as_str(), e)).collect();
+    let theirs_map: std::collections::HashMap<&str, &TreeEntry> =
+        theirs.0.iter().map(|e| (e.name.as_str(), e)).collect();
+
+    let mut entries: std::collections::BTreeMap<String, MergedEntry> =
+        std::collections::BTreeMap::new();
+    let mut has_conflicts = false;
+
+    let all_paths: std::collections::BTreeSet<&str> = base_map
+        .keys()
+        .chain(ours_map.keys())
+        .chain(theirs_map.keys())
+        .copied()
+        .collect();
+
+    for path in all_paths {
+        let base_entry = base_map.get(path);
+        let ours_entry = ours_map.get(path);
+        let theirs_entry = theirs_map.get(path);
+
+        let ours_change = compute_change(base_entry.copied(), ours_entry.copied());
+        let theirs_change = compute_change(base_entry.copied(), theirs_entry.copied());
+
+        let merged = match (ours_change, theirs_change) {
+            (Change::Unchanged, Change::Unchanged) => {
+                base_entry.map(|entry| MergedEntry::Clean((*entry).clone()))
+            }
+            (Change::Modified(o), Change::Unchanged) => Some(MergedEntry::Clean(o)),
+            (Change::Unchanged, Change::Modified(t)) => Some(MergedEntry::Clean(t)),
+            (Change::Deleted, Change::Unchanged) | (Change::Unchanged, Change::Deleted) => None,
+            (Change::Modified(o), Change::Deleted) => {
+                has_conflicts = true;
+                Some(MergedEntry::Conflict {
+                    ours: Some(o),
+                    theirs: None,
+                    base: base_entry.map(|b| (*b).clone()),
+                })
+            }
+            (Change::Deleted, Change::Modified(t)) => {
+                has_conflicts = true;
+                Some(MergedEntry::Conflict {
+                    ours: None,
+                    theirs: Some(t),
+                    base: base_entry.map(|b| (*b).clone()),
+                })
+            }
+            (Change::Modified(o), Change::Modified(t)) => {
+                if o.id == t.id {
+                    Some(MergedEntry::Clean(o))
+                } else {
+                    has_conflicts = true;
+                    Some(MergedEntry::Conflict {
+                        ours: Some(o),
+                        theirs: Some(t),
+                        base: base_entry.map(|b| (*b).clone()),
+                    })
+                }
+            }
+            (Change::Deleted, Change::Deleted) => None,
+        };
+
+        if let Some(m) = merged {
+            entries.insert(path.to_string(), m);
+        }
+    }
+
+    Ok(MergeResult {
+        output: MergeOutput {
+            entries: entries.into_values().collect(),
+            has_conflicts,
+        },
+    })
+}
+
+/// Extracts individual file conflicts from a merge output.
+#[must_use]
+pub fn extract_conflicts(output: &MergeOutput) -> Vec<FileConflict> {
+    output
+        .entries
+        .iter()
+        .filter_map(|entry| match entry {
+            MergedEntry::Conflict { ours, theirs, base } => Some(FileConflict {
+                path: ours
+                    .as_ref()
+                    .or(theirs.as_ref())
+                    .or(base.as_ref())
+                    .map(|e| e.name.clone())?,
+                ours_id: ours.as_ref().map(|e| e.id.clone()),
+                theirs_id: theirs.as_ref().map(|e| e.id.clone()),
+                base_id: base.as_ref().map(|e| e.id.clone()),
+            }),
+            MergedEntry::Clean(_) => None,
+        })
+        .collect()
+}
+
+/// Recursively merge two trees, resolving Tree-typed entries by fetching and
+/// merging their sub-trees. Requires an `ObjectStore` to load/store sub-trees.
+pub async fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
+    base: TreeEntries,
+    ours: TreeEntries,
+    theirs: TreeEntries,
+    object_store: O,
+    resolution: &ConflictResolution,
+) -> Result<MergeResult> {
+    let base_map: std::collections::HashMap<String, TreeEntry> =
+        base.0.into_iter().map(|e| (e.name.clone(), e)).collect();
+    let ours_map: std::collections::HashMap<String, TreeEntry> =
+        ours.0.into_iter().map(|e| (e.name.clone(), e)).collect();
+    let theirs_map: std::collections::HashMap<String, TreeEntry> =
+        theirs.0.into_iter().map(|e| (e.name.clone(), e)).collect();
+
+    let mut entries: std::collections::BTreeMap<String, MergedEntry> =
+        std::collections::BTreeMap::new();
+    let mut has_conflicts = false;
+
+    // W2④ slice 2: exact-content rename detection. A path deleted on one
+    // side whose base blob id reappears as a NEW path on that same side is a
+    // pure rename; combined with the other side MODIFYING the old path, the
+    // modification applies AT THE NEW PATH (the classic rename+edit case
+    // that previously produced a delete/create conflict pair). Renames with
+    // a modified payload, renames to targets the other side also touched,
+    // and both-sides-renamed are NOT claimed — they fall through to the
+    // structured conflict (similarity heuristics are a later slice).
+    fn detect_renames(
+        base_map: &std::collections::HashMap<String, TreeEntry>,
+        side_map: &std::collections::HashMap<String, TreeEntry>,
+        other_map: &std::collections::HashMap<String, TreeEntry>,
+    ) -> std::collections::HashMap<String, String> {
+        let mut renames = std::collections::HashMap::new();
+        for (p, b) in base_map {
+            // Source deleted on this side, base entry is a blob.
+            if side_map.contains_key(p) || b.kind != EntryKind::Blob {
+                continue;
+            }
+            for (q, e) in side_map {
+                // Target: a NEW blob path on this side, absent in base and
+                // untouched by the other side (target collisions are not
+                // rename targets — they stay structured conflicts).
+                if base_map.contains_key(q) || other_map.contains_key(q) {
+                    continue;
+                }
+                if e.kind == EntryKind::Blob && e.id == b.id {
+                    renames.insert(p.clone(), q.clone());
+                }
+            }
+        }
+        // 1:1 assignment (R2): a target claimed by MULTIPLE sources
+        // (base{a:h1,c:h1} both deleted, Q added with h1) would make the
+        // cross-side modifications race by loop order — refuse every claim
+        // on an ambiguous target; the sources fall back to structured
+        // conflicts (conservative, no silent loss).
+        let mut target_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for q in renames.values() {
+            *target_counts.entry(q.clone()).or_insert(0) += 1;
+        }
+        renames.retain(|_, q| target_counts.get(q).copied().unwrap_or(0) == 1);
+        renames
+    }
+    let ours_renames = detect_renames(&base_map, &ours_map, &theirs_map);
+    let theirs_renames = detect_renames(&base_map, &theirs_map, &ours_map);
+    let claimed_targets: std::collections::BTreeSet<&str> = ours_renames
+        .values()
+        .chain(theirs_renames.values())
+        .map(String::as_str)
+        .collect();
+
+    let all_paths: std::collections::BTreeSet<String> = base_map
+        .keys()
+        .chain(ours_map.keys())
+        .chain(theirs_map.keys())
+        .cloned()
+        .collect();
+
+    for path in all_paths {
+        // W2④ slice 2: rename targets are claimed by the rename application
+        // below — skip them as ordinary adds.
+        if claimed_targets.contains(path.as_str()) {
+            continue;
+        }
+        let base_entry = base_map.get(&path);
+        let ours_entry = ours_map.get(&path);
+        let theirs_entry = theirs_map.get(&path);
+
+        // If all three sides have the entry and all are directories, recurse
+        if let (Some(base), Some(ours), Some(theirs)) = (base_entry, ours_entry, theirs_entry) {
+            if base.kind == EntryKind::Tree
+                && ours.kind == EntryKind::Tree
+                && theirs.kind == EntryKind::Tree
+            {
+                let base_sub = object_store.get_tree(&TreeId(base.id.clone())).await?;
+                let ours_sub = object_store.get_tree(&TreeId(ours.id.clone())).await?;
+                let theirs_sub = object_store.get_tree(&TreeId(theirs.id.clone())).await?;
+
+                let sub_result = Box::pin(merge_trees_recursive(
+                    base_sub,
+                    ours_sub,
+                    theirs_sub,
+                    object_store.clone(),
+                    resolution,
+                ))
+                .await?;
+                if sub_result.has_conflicts() {
+                    has_conflicts = true;
+                    entries.insert(
+                        path.clone(),
+                        MergedEntry::Conflict {
+                            ours: ours_entry.cloned(),
+                            theirs: theirs_entry.cloned(),
+                            base: base_entry.cloned(),
+                        },
+                    );
+                } else {
+                    let merged_tree = sub_result.output.resolve_with_strategy(resolution);
+                    let merged_tree_id = object_store.put_tree(&TreeEntries(merged_tree)).await?;
+                    entries.insert(
+                        path.clone(),
+                        MergedEntry::Clean(TreeEntry {
+                            name: path,
+                            kind: EntryKind::Tree,
+                            id: merged_tree_id.0,
+                        }),
+                    );
+                }
+                continue;
+            }
+        }
+
+        let ours_change = compute_change(base_entry, ours_entry);
+        let theirs_change = compute_change(base_entry, theirs_entry);
+
+        // W2④ slice 2: rename+modify resolution. One side pure-renamed this
+        // path (deleted here, exact base content reappearing at a claimed
+        // new path) while the other side MODIFIED it → the modification
+        // applies AT THE NEW PATH (both-sides-renamed and rename-vs-delete
+        // stay structured conflicts).
+        let ours_delete_theirs_modify = matches!(
+            (&ours_change, &theirs_change),
+            (Change::Deleted, Change::Modified(_))
+        );
+        let theirs_delete_ours_modify = matches!(
+            (&ours_change, &theirs_change),
+            (Change::Modified(_), Change::Deleted)
+        );
+        if ours_delete_theirs_modify && !theirs_renames.contains_key(path.as_str()) {
+            if let Some(new_path) = ours_renames.get(path.as_str()) {
+                if let Change::Modified(t) = &theirs_change {
+                    entries.insert(
+                        new_path.clone(),
+                        MergedEntry::Clean(TreeEntry {
+                            name: new_path.clone(),
+                            kind: t.kind,
+                            id: t.id.clone(),
+                        }),
+                    );
+                    continue;
+                }
+            }
+        }
+        if theirs_delete_ours_modify && !ours_renames.contains_key(path.as_str()) {
+            if let Some(new_path) = theirs_renames.get(path.as_str()) {
+                if let Change::Modified(o) = &ours_change {
+                    entries.insert(
+                        new_path.clone(),
+                        MergedEntry::Clean(TreeEntry {
+                            name: new_path.clone(),
+                            kind: o.kind,
+                            id: o.id.clone(),
+                        }),
+                    );
+                    continue;
+                }
+            }
+        }
+        // Pure rename, other side UNCHANGED at the source: the target is
+        // claimed-skipped, so the rename itself must be written here (R2 S0:
+        // without this arm the renamed file silently vanished while the
+        // merge reported clean).
+        if let (Change::Deleted, Change::Unchanged, Some(new_path), Some(b)) = (
+            compute_change(base_entry, ours_entry),
+            compute_change(base_entry, theirs_entry),
+            ours_renames.get(path.as_str()),
+            base_entry,
+        ) {
+            entries.insert(
+                new_path.clone(),
+                MergedEntry::Clean(TreeEntry {
+                    name: new_path.clone(),
+                    kind: b.kind,
+                    id: b.id.clone(),
+                }),
+            );
+            continue;
+        }
+        if let (Change::Unchanged, Change::Deleted, Some(new_path), Some(b)) = (
+            compute_change(base_entry, ours_entry),
+            compute_change(base_entry, theirs_entry),
+            theirs_renames.get(path.as_str()),
+            base_entry,
+        ) {
+            entries.insert(
+                new_path.clone(),
+                MergedEntry::Clean(TreeEntry {
+                    name: new_path.clone(),
+                    kind: b.kind,
+                    id: b.id.clone(),
+                }),
+            );
+            continue;
+        }
+
+        // Rename vs delete: one side pure-renamed, the other deleted the old
+        // path — the rename SURVIVES with its base content (git rename-aware
+        // behavior: the deletion targeted a path the deleter didn't know had
+        // moved). Without this arm the claimed target is skipped by the walk
+        // and the file silently vanishes from the merged tree.
+        // (R2) Both sides renamed the same source to different targets →
+        // structured conflict AT THE SOURCE (each side's view = its target
+        // entry; the targets themselves stay claimed-skipped). Without the
+        // registration the (D,D) fall-through plus the skip yields an EMPTY
+        // tree reported clean.
+        let ours_ren = ours_renames.get(path.as_str());
+        let theirs_ren = theirs_renames.get(path.as_str());
+        if let (Some(ours_t), Some(theirs_t)) = (ours_ren, theirs_ren) {
+            has_conflicts = true;
+            let mk = |name: &str, kind: EntryKind, id: &str| TreeEntry {
+                name: name.to_string(),
+                kind,
+                id: id.to_string(),
+            };
+            let (o_entry, t_entry, b_entry) = (
+                ours_map.get(ours_t).map(|e| mk(ours_t, e.kind, &e.id)),
+                theirs_map
+                    .get(theirs_t)
+                    .map(|e| mk(theirs_t, e.kind, &e.id)),
+                base_entry.map(|b| mk(path.as_str(), b.kind, &b.id)),
+            );
+            entries.insert(
+                path.clone(),
+                MergedEntry::Conflict {
+                    ours: o_entry,
+                    theirs: t_entry,
+                    base: b_entry,
+                },
+            );
+            continue;
+        }
+        if let (Change::Deleted, Change::Deleted, Some(new_path), Some(b)) = (
+            compute_change(base_entry, ours_entry),
+            compute_change(base_entry, theirs_entry),
+            ours_renames.get(path.as_str()),
+            base_entry,
+        ) {
+            entries.insert(
+                new_path.clone(),
+                MergedEntry::Clean(TreeEntry {
+                    name: new_path.clone(),
+                    kind: b.kind,
+                    id: b.id.clone(),
+                }),
+            );
+            continue;
+        }
+        if let (Change::Deleted, Change::Deleted, Some(new_path), Some(b)) = (
+            compute_change(base_entry, ours_entry),
+            compute_change(base_entry, theirs_entry),
+            theirs_renames.get(path.as_str()),
+            base_entry,
+        ) {
+            entries.insert(
+                new_path.clone(),
+                MergedEntry::Clean(TreeEntry {
+                    name: new_path.clone(),
+                    kind: b.kind,
+                    id: b.id.clone(),
+                }),
+            );
+            continue;
+        }
+
+        // W2④: Blob×Blob both-modified — try a line-level three-way merge
+        // first. A clean line merge resolves the file automatically (this is
+        // exactly the "whole-blob conflict wall" the feasibility report's
+        // hard gap ④ names). Text-ineligible blobs (invalid UTF-8) fall
+        // through to the structured conflict as before.
+        if let (Change::Modified(o), Change::Modified(t), Some(base_entry)) =
+            (&ours_change, &theirs_change, base_entry)
+        {
+            if o.kind == EntryKind::Blob && t.kind == EntryKind::Blob {
+                // Blob load or UTF-8 failure DEGRADES to the structured
+                // conflict (pre-W2④ behavior) — a missing/corrupted blob
+                // must not 500 the whole merge (the conflict test pins this
+                // with fabricated ids like "111").
+                let base_blob = object_store.get_blob(&BlobId(base_entry.id.clone())).await;
+                let ours_blob = object_store.get_blob(&BlobId(o.id.clone())).await;
+                let theirs_blob = object_store.get_blob(&BlobId(t.id.clone())).await;
+                let texts = (base_blob, ours_blob, theirs_blob);
+                let (base_text, ours_text, theirs_text) = match (
+                    texts.0.as_ref().ok().map(|b| b.as_slice()),
+                    texts.1.as_ref().ok().map(|b| b.as_slice()),
+                    texts.2.as_ref().ok().map(|b| b.as_slice()),
+                ) {
+                    // Degrade arms: every non-mergeable shape becomes the
+                    // STRUCTURED conflict entry (pre-W2④ behavior). A bare
+                    // `continue` would silently drop the file from the
+                    // merged tree (test_merge_conflict_returns_409 caught
+                    // exactly that).
+                    (Some(b), Some(o), Some(t)) if b.is_empty() && o.is_empty() && t.is_empty() => {
+                        has_conflicts = true;
+                        entries.insert(
+                            path.clone(),
+                            MergedEntry::Conflict {
+                                ours: ours_entry.cloned(),
+                                theirs: theirs_entry.cloned(),
+                                base: Some(base_entry.clone()),
+                            },
+                        );
+                        continue;
+                    }
+                    (Some(b), Some(o), Some(t)) => match (
+                        std::str::from_utf8(b),
+                        std::str::from_utf8(o),
+                        std::str::from_utf8(t),
+                    ) {
+                        (Ok(bt), Ok(ot), Ok(tt)) => (bt, ot, tt),
+                        _ => {
+                            has_conflicts = true;
+                            entries.insert(
+                                path.clone(),
+                                MergedEntry::Conflict {
+                                    ours: ours_entry.cloned(),
+                                    theirs: theirs_entry.cloned(),
+                                    base: Some(base_entry.clone()),
+                                },
+                            );
+                            continue;
+                        }
+                    },
+                    _ => {
+                        has_conflicts = true;
+                        entries.insert(
+                            path.clone(),
+                            MergedEntry::Conflict {
+                                ours: ours_entry.cloned(),
+                                theirs: theirs_entry.cloned(),
+                                base: Some(base_entry.clone()),
+                            },
+                        );
+                        continue;
+                    }
+                };
+                match line_merge::merge_lines(base_text, ours_text, theirs_text) {
+                    line_merge::LineMerge::Clean(merged_text) => {
+                        let merged_id = object_store.put_blob(merged_text.as_bytes()).await?;
+                        entries.insert(
+                            path.clone(),
+                            MergedEntry::Clean(TreeEntry {
+                                name: path,
+                                kind: EntryKind::Blob,
+                                id: merged_id.0,
+                            }),
+                        );
+                        continue;
+                    }
+                    line_merge::LineMerge::Conflict { .. } => {
+                        // Real line-level conflict: fall through to the
+                        // structured whole-blob conflict (the panel
+                        // resolves with ours/theirs).
+                    }
+                }
+            }
+        }
+
+        let merged = match (ours_change, theirs_change) {
+            (Change::Unchanged, Change::Unchanged) => base_entry.cloned().map(MergedEntry::Clean),
+            (Change::Modified(o), Change::Unchanged) => Some(MergedEntry::Clean(o)),
+            (Change::Unchanged, Change::Modified(t)) => Some(MergedEntry::Clean(t)),
+            (Change::Deleted, Change::Unchanged) | (Change::Unchanged, Change::Deleted) => None,
+            (Change::Modified(o), Change::Deleted) => {
+                has_conflicts = true;
+                Some(MergedEntry::Conflict {
+                    ours: Some(o),
+                    theirs: None,
+                    base: base_entry.cloned(),
+                })
+            }
+            (Change::Deleted, Change::Modified(t)) => {
+                has_conflicts = true;
+                Some(MergedEntry::Conflict {
+                    ours: None,
+                    theirs: Some(t),
+                    base: base_entry.cloned(),
+                })
+            }
+            (Change::Modified(o), Change::Modified(t)) => {
+                if o.id == t.id {
+                    Some(MergedEntry::Clean(o))
+                } else {
+                    has_conflicts = true;
+                    Some(MergedEntry::Conflict {
+                        ours: Some(o),
+                        theirs: Some(t),
+                        base: base_entry.cloned(),
+                    })
+                }
+            }
+            (Change::Deleted, Change::Deleted) => None,
+        };
+
+        if let Some(m) = merged {
+            entries.insert(path, m);
+        }
+    }
+
+    Ok(MergeResult {
+        output: MergeOutput {
+            entries: entries.into_values().collect(),
+            has_conflicts,
+        },
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(name: &str, id: &str) -> TreeEntry {
+        TreeEntry {
+            name: name.to_string(),
+            kind: EntryKind::Blob,
+            id: id.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_no_conflict_both_same() {
+        let base = TreeEntries(vec![entry("a.rs", "h1")]);
+        let ours = TreeEntries(vec![entry("a.rs", "h2")]);
+        let theirs = TreeEntries(vec![entry("a.rs", "h2")]);
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        assert!(!result.has_conflicts());
+        let tree = result.into_tree_entries(&ConflictResolution::Ours);
+        assert_eq!(tree.0[0].id, "h2");
+    }
+
+    #[test]
+    fn test_no_conflict_different_paths() {
+        let base = TreeEntries(vec![entry("a.rs", "h1")]);
+        let ours = TreeEntries(vec![entry("a.rs", "h2")]);
+        let theirs = TreeEntries(vec![entry("a.rs", "h1"), entry("b.rs", "h3")]);
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        assert!(!result.has_conflicts());
+    }
+
+    #[test]
+    fn test_conflict_same_path_different_content() {
+        let base = TreeEntries(vec![entry("a.rs", "h1")]);
+        let ours = TreeEntries(vec![entry("a.rs", "h2")]);
+        let theirs = TreeEntries(vec![entry("a.rs", "h3")]);
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        assert!(result.has_conflicts());
+        let conflicts = extract_conflicts(&result.output);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].path, "a.rs");
+    }
+
+    #[test]
+    fn test_delete_vs_modify_conflict() {
+        let base = TreeEntries(vec![entry("a.rs", "h1")]);
+        let ours = TreeEntries(vec![]);
+        let theirs = TreeEntries(vec![entry("a.rs", "h2")]);
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        assert!(result.has_conflicts());
+    }
+
+    #[test]
+    fn test_add_new_no_conflict() {
+        let base = TreeEntries(vec![]);
+        let ours = TreeEntries(vec![entry("a.rs", "h1")]);
+        let theirs = TreeEntries(vec![entry("b.rs", "h2")]);
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        assert!(!result.has_conflicts());
+        let tree = result.into_tree_entries(&ConflictResolution::Ours);
+        assert_eq!(tree.0.len(), 2);
+    }
+
+    #[test]
+    fn test_empty_base_both_modify() {
+        let base = TreeEntries(vec![]);
+        let ours = TreeEntries(vec![entry("a.rs", "h1")]);
+        let theirs = TreeEntries(vec![entry("a.rs", "h2")]);
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        assert!(result.has_conflicts());
+    }
+
+    #[test]
+    fn test_both_delete_no_conflict() {
+        let base = TreeEntries(vec![entry("a.rs", "h1")]);
+        let ours = TreeEntries(vec![]);
+        let theirs = TreeEntries(vec![]);
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        assert!(!result.has_conflicts());
+        let tree = result.into_tree_entries(&ConflictResolution::Ours);
+        assert!(tree.0.is_empty());
+    }
+
+    #[test]
+    fn test_unchanged_preserves_base() {
+        let base = TreeEntries(vec![entry("a.rs", "h1"), entry("b.rs", "h2")]);
+        let result = three_way_merge(&base, &base, &base).unwrap();
+        assert!(!result.has_conflicts());
+        let tree = result.into_tree_entries(&ConflictResolution::Ours);
+        assert_eq!(tree.0.len(), 2);
+    }
+
+    #[test]
+    fn test_large_tree_merge() {
+        let base: TreeEntries = TreeEntries(
+            (0..50)
+                .map(|i| entry(&format!("f{}.rs", i), &format!("h{}", i)))
+                .collect(),
+        );
+        let mut ours_entries: Vec<TreeEntry> = base.0.clone();
+        ours_entries.push(entry("new_ours.rs", "h_ours"));
+        let ours = TreeEntries(ours_entries);
+        let mut theirs_entries: Vec<TreeEntry> = base.0.clone();
+        theirs_entries.push(entry("new_theirs.rs", "h_theirs"));
+        let theirs = TreeEntries(theirs_entries);
+
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        assert!(!result.has_conflicts());
+        let tree = result.into_tree_entries(&ConflictResolution::Ours);
+        assert_eq!(tree.0.len(), 52);
+    }
+
+    #[test]
+    fn test_only_one_side_modified() {
+        let base = TreeEntries(vec![entry("a.rs", "h1"), entry("b.rs", "h2")]);
+        let ours = TreeEntries(vec![entry("a.rs", "h1"), entry("b.rs", "h2_changed")]);
+        let theirs = base.clone();
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        assert!(!result.has_conflicts());
+        let tree = result.into_tree_entries(&ConflictResolution::Ours);
+        assert_eq!(tree.0.len(), 2);
+        assert!(tree
+            .0
+            .iter()
+            .any(|e| e.name == "b.rs" && e.id == "h2_changed"));
+    }
+
+    #[test]
+    fn test_conflict_does_not_force_ours() {
+        let base = TreeEntries(vec![entry("a.rs", "h1")]);
+        let ours = TreeEntries(vec![entry("a.rs", "h2")]);
+        let theirs = TreeEntries(vec![entry("a.rs", "h3")]);
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        assert!(result.has_conflicts());
+
+        let tree_ours = result.into_tree_entries(&ConflictResolution::Ours);
+        assert_eq!(tree_ours.0[0].id, "h2");
+
+        let tree_theirs = result.into_tree_entries(&ConflictResolution::Theirs);
+        assert_eq!(tree_theirs.0[0].id, "h3");
+    }
+
+    #[test]
+    fn test_extract_conflicts() {
+        let base = TreeEntries(vec![entry("a.rs", "h0"), entry("b.rs", "h1")]);
+        let ours = TreeEntries(vec![entry("a.rs", "h2"), entry("b.rs", "h1")]);
+        let theirs = TreeEntries(vec![entry("a.rs", "h3"), entry("b.rs", "h1")]);
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        let conflicts = extract_conflicts(&result.output);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].path, "a.rs");
+        assert_eq!(conflicts[0].ours_id, Some("h2".to_string()));
+        assert_eq!(conflicts[0].theirs_id, Some("h3".to_string()));
+        assert_eq!(conflicts[0].base_id, Some("h0".to_string()));
+    }
+
+    #[test]
+    fn test_all_empty_inputs() {
+        let empty = TreeEntries(vec![]);
+        let result = three_way_merge(&empty, &empty, &empty).unwrap();
+        assert!(!result.has_conflicts());
+        let tree = result.into_tree_entries(&ConflictResolution::Ours);
+        assert!(tree.0.is_empty());
+    }
+
+    #[test]
+    fn test_only_theirs_adds_file() {
+        let base = TreeEntries(vec![entry("a.rs", "h1")]);
+        let ours = base.clone();
+        let theirs = TreeEntries(vec![entry("a.rs", "h1"), entry("new.rs", "h2")]);
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        assert!(!result.has_conflicts());
+        let tree = result.into_tree_entries(&ConflictResolution::Ours);
+        assert_eq!(tree.0.len(), 2);
+        assert!(tree.0.iter().any(|e| e.name == "new.rs"));
+    }
+
+    #[test]
+    fn test_only_ours_adds_file() {
+        let base = TreeEntries(vec![entry("a.rs", "h1")]);
+        let ours = TreeEntries(vec![entry("a.rs", "h1"), entry("ours_new.rs", "h2")]);
+        let theirs = base.clone();
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        assert!(!result.has_conflicts());
+        let tree = result.into_tree_entries(&ConflictResolution::Ours);
+        assert_eq!(tree.0.len(), 2);
+        assert!(tree.0.iter().any(|e| e.name == "ours_new.rs"));
+    }
+
+    #[test]
+    fn test_both_add_different_files_no_conflict() {
+        let base = TreeEntries(vec![]);
+        let ours = TreeEntries(vec![entry("a.rs", "h1")]);
+        let theirs = TreeEntries(vec![entry("b.rs", "h2")]);
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        assert!(!result.has_conflicts());
+        let tree = result.into_tree_entries(&ConflictResolution::Ours);
+        assert_eq!(tree.0.len(), 2);
+    }
+
+    #[test]
+    fn test_modify_vs_delete_conflict_theirs_deletes() {
+        let base = TreeEntries(vec![entry("a.rs", "h1")]);
+        let ours = TreeEntries(vec![entry("a.rs", "h2")]);
+        let theirs = TreeEntries(vec![]);
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        assert!(result.has_conflicts());
+        let conflicts = extract_conflicts(&result.output);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].path, "a.rs");
+        assert!(conflicts[0].ours_id.is_some());
+        assert!(conflicts[0].theirs_id.is_none());
+    }
+
+    #[test]
+    fn test_conflict_resolution_theirs_strategy() {
+        let base = TreeEntries(vec![entry("a.rs", "h0")]);
+        let ours = TreeEntries(vec![entry("a.rs", "h1")]);
+        let theirs = TreeEntries(vec![entry("a.rs", "h2")]);
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        assert!(result.has_conflicts());
+        let tree = result.into_tree_entries(&ConflictResolution::Theirs);
+        assert_eq!(tree.0[0].id, "h2");
+    }
+
+    #[tokio::test]
+    async fn test_rename_plus_other_side_modify_resolves_at_new_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = std::sync::Arc::new(
+            redb::Database::builder()
+                .create(dir.path().join("m.redb"))
+                .unwrap(),
+        );
+        let store = crate::object::RedbObjectStore::new(db).unwrap();
+        let base = TreeEntries(vec![entry("a.txt", "h1")]);
+        let ours = TreeEntries(vec![entry("b.txt", "h1")]); // pure rename
+        let theirs = TreeEntries(vec![entry("a.txt", "h2")]); // modify in place
+        let result = merge_trees_recursive(base, ours, theirs, store, &ConflictResolution::Theirs)
+            .await
+            .unwrap();
+        assert!(
+            !result.has_conflicts(),
+            "pure rename + other-side modify must resolve at the new path"
+        );
+        let tree = result.into_tree_entries(&ConflictResolution::Theirs);
+        assert_eq!(
+            tree.0.len(),
+            1,
+            "old path gone, new path present: {:?}",
+            tree.0
+        );
+        assert_eq!(tree.0[0].name, "b.txt");
+        assert_eq!(
+            tree.0[0].id, "h2",
+            "theirs' modified content lands at b.txt"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pure_rename_other_side_unchanged_survives() {
+        // R2 S0 regression: base{a:h1}, ours renames a→b, theirs UNCHANGED
+        // at a → b must exist with h1 (the earlier claimed-skip dropped it
+        // silently while reporting clean).
+        let dir = tempfile::tempdir().unwrap();
+        let db = std::sync::Arc::new(
+            redb::Database::builder()
+                .create(dir.path().join("m.redb"))
+                .unwrap(),
+        );
+        let store = crate::object::RedbObjectStore::new(db).unwrap();
+        let base = TreeEntries(vec![entry("a.txt", "h1")]);
+        let ours = TreeEntries(vec![entry("b.txt", "h1")]);
+        let theirs = TreeEntries(vec![entry("a.txt", "h1")]);
+        let result = merge_trees_recursive(base, ours, theirs, store, &ConflictResolution::Theirs)
+            .await
+            .unwrap();
+        assert!(!result.has_conflicts(), "{result:?}");
+        let tree = result.into_tree_entries(&ConflictResolution::Theirs);
+        assert_eq!(tree.0.len(), 1, "b.txt must exist: {:?}", tree.0);
+        assert_eq!(tree.0[0].name, "b.txt");
+        assert_eq!(tree.0[0].id, "h1");
+    }
+
+    #[tokio::test]
+    async fn test_both_sides_rename_different_targets_conflict() {
+        // R2: base{a:h1}, ours a→b, theirs a→c → NOT two silent keeps; the
+        // source stays a structured conflict (targets claimed-skipped).
+        let dir = tempfile::tempdir().unwrap();
+        let db = std::sync::Arc::new(
+            redb::Database::builder()
+                .create(dir.path().join("m.redb"))
+                .unwrap(),
+        );
+        let store = crate::object::RedbObjectStore::new(db).unwrap();
+        let base = TreeEntries(vec![entry("a.txt", "h1")]);
+        let ours = TreeEntries(vec![entry("b.txt", "h1")]);
+        let theirs = TreeEntries(vec![entry("c.txt", "h1")]);
+        let result = merge_trees_recursive(base, ours, theirs, store, &ConflictResolution::Theirs)
+            .await
+            .unwrap();
+        assert!(
+            result.has_conflicts(),
+            "rename/rename must conflict: {result:?}"
+        );
+        // Resolution = Theirs → theirs' target lands, ours' does not; the
+        // property that matters: EXACTLY ONE target survives (no double-
+        // write, no silent vanish).
+        let tree = result.into_tree_entries(&ConflictResolution::Theirs);
+        assert!(
+            !tree.0.iter().any(|e| e.name == "b.txt"),
+            "ours' target must not land under Theirs resolution: {:?}",
+            tree.0
+        );
+        assert_eq!(
+            tree.0.iter().filter(|e| e.name == "c.txt").count(),
+            1,
+            "theirs' target resolves exactly once: {:?}",
+            tree.0
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ambiguous_double_claim_refused() {
+        // R2: base{a:h1,c:h1}; ours deletes both + adds Q:h1 (ambiguous);
+        // theirs modifies both sources → no rename claims (1:1 refused) →
+        // both sources conflict; their modified content must NOT race.
+        let dir = tempfile::tempdir().unwrap();
+        let db = std::sync::Arc::new(
+            redb::Database::builder()
+                .create(dir.path().join("m.redb"))
+                .unwrap(),
+        );
+        let store = crate::object::RedbObjectStore::new(db).unwrap();
+        let base = TreeEntries(vec![entry("a.txt", "h1"), entry("c.txt", "h1")]);
+        let ours = TreeEntries(vec![entry("q.txt", "h1")]);
+        let theirs = TreeEntries(vec![entry("a.txt", "h2"), entry("c.txt", "h3")]);
+        let result = merge_trees_recursive(base, ours, theirs, store, &ConflictResolution::Theirs)
+            .await
+            .unwrap();
+        assert!(
+            result.has_conflicts(),
+            "ambiguous claims must conflict: {result:?}"
+        );
+        let tree = result.into_tree_entries(&ConflictResolution::Theirs);
+        assert!(
+            tree.0.iter().any(|e| e.name == "a.txt" && e.id == "h2"),
+            "a's modification must survive as the resolution: {:?}",
+            tree.0
+        );
+        assert!(
+            tree.0.iter().any(|e| e.name == "c.txt" && e.id == "h3"),
+            "c's modification must survive: {:?}",
+            tree.0
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rename_survives_other_side_delete() {
+        // ours renames a→b; theirs deletes a. The rename survives: b exists
+        // with the BASE content (the delete targeted a path the deleter
+        // didn't know had moved). Regression for the silent-vanish bug.
+        let dir = tempfile::tempdir().unwrap();
+        let db = std::sync::Arc::new(
+            redb::Database::builder()
+                .create(dir.path().join("m.redb"))
+                .unwrap(),
+        );
+        let store = crate::object::RedbObjectStore::new(db).unwrap();
+        let base = TreeEntries(vec![entry("a.txt", "h1")]);
+        let ours = TreeEntries(vec![entry("b.txt", "h1")]);
+        let theirs = TreeEntries(vec![]);
+        let result = merge_trees_recursive(base, ours, theirs, store, &ConflictResolution::Theirs)
+            .await
+            .unwrap();
+        assert!(
+            !result.has_conflicts(),
+            "rename survives delete: {result:?}"
+        );
+        let tree = result.into_tree_entries(&ConflictResolution::Theirs);
+        assert_eq!(tree.0.len(), 1, "b.txt must exist: {:?}", tree.0);
+        assert_eq!(tree.0[0].name, "b.txt");
+        assert_eq!(tree.0[0].id, "h1");
+    }
+
+    #[tokio::test]
+    async fn test_rename_target_collision_stays_structured_conflict() {
+        // base {a→h1}; ours renames a→b; theirs modifies a AND creates b.
+        // The target b is touched by theirs → NOT a rename claim; the
+        // delete-vs-modify on a stays a structured conflict.
+        let dir = tempfile::tempdir().unwrap();
+        let db = std::sync::Arc::new(
+            redb::Database::builder()
+                .create(dir.path().join("m.redb"))
+                .unwrap(),
+        );
+        let store = crate::object::RedbObjectStore::new(db).unwrap();
+        let base = TreeEntries(vec![entry("a.txt", "h1")]);
+        let ours = TreeEntries(vec![entry("b.txt", "h1")]);
+        let theirs = TreeEntries(vec![entry("a.txt", "h2"), entry("b.txt", "h7")]);
+        let result = merge_trees_recursive(base, ours, theirs, store, &ConflictResolution::Theirs)
+            .await
+            .unwrap();
+        assert!(result.has_conflicts(), "target collision must conflict");
+    }
+
+    #[test]
+    fn test_mixed_conflicts_and_clean() {
+        let base = TreeEntries(vec![
+            entry("a.rs", "h0"),
+            entry("b.rs", "h0"),
+            entry("c.rs", "h0"),
+        ]);
+        let ours = TreeEntries(vec![
+            entry("a.rs", "h1"),
+            entry("b.rs", "h0"),
+            entry("c.rs", "h3"),
+        ]);
+        let theirs = TreeEntries(vec![
+            entry("a.rs", "h0"),
+            entry("b.rs", "h2"),
+            entry("c.rs", "h4"),
+        ]);
+        let result = three_way_merge(&base, &ours, &theirs).unwrap();
+        assert!(result.has_conflicts());
+        let conflicts = extract_conflicts(&result.output);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].path, "c.rs");
+        let tree = result.into_tree_entries(&ConflictResolution::Ours);
+        assert_eq!(tree.0.len(), 3);
+    }
+}

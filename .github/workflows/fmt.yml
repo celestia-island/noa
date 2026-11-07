@@ -1,0 +1,43 @@
+name: Format
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  format:
+    # Fork pull requests pay for their own CI: this job is heavy (it compiles,
+    # builds or audits on the org's self-hosted fleet), and a fork's run would
+    # spend shared runner time on untrusted content. The two required checks
+    # (commit lint, PR title) are the deliberate exception: they are
+    # sub-minute, execute no pull request code, and hold no secrets.
+    # A contributor who wants this suite can run it in their own fork, on
+    # their own minutes.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    name: Format
+    runs-on: [self-hosted, linux, x64, local]
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        # Defensive mirror bypass: the runner env rewrites github.com/celestia-island/*
+        # to local bare mirrors, which cannot reliably advertise PR merge refs
+        # (GitHub advertises them sparsely), causing "not our ref" checkouts.
+        env:
+          GIT_CONFIG_COUNT: "0"
+
+      - name: Setup toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly
+          components: rustfmt
+
+      - name: Check import group ordering
+        run: python3 scripts/utils/enforce_use_groups.py --test
+
+      - name: Check markdown formatting
+        run: python3 scripts/utils/format_markdown.py . --check
+
+      - name: Run cargo fmt
+        run: cargo +nightly fmt --all -- --check --unstable-features
