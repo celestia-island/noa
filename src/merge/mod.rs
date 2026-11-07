@@ -1,10 +1,11 @@
 mod conflict;
+pub mod line_merge;
 
 pub use conflict::{ConflictDetector, ConflictResolution, FileConflict, MergeOutput, MergedEntry};
 
 use crate::{
     error::Result,
-    object::{EntryKind, ObjectStore, TreeEntries, TreeEntry, TreeId},
+    object::{BlobId, EntryKind, ObjectStore, TreeEntries, TreeEntry, TreeId},
 };
 
 /// Result of a three-way merge, containing the merged output and conflict status.
@@ -234,6 +235,98 @@ pub async fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
 
         let ours_change = compute_change(base_entry, ours_entry);
         let theirs_change = compute_change(base_entry, theirs_entry);
+
+        // W2④: Blob×Blob both-modified — try a line-level three-way merge
+        // first. A clean line merge resolves the file automatically (this is
+        // exactly the "whole-blob conflict wall" the feasibility report's
+        // hard gap ④ names). Text-ineligible blobs (invalid UTF-8) fall
+        // through to the structured conflict as before.
+        if let (Change::Modified(o), Change::Modified(t), Some(base_entry)) =
+            (&ours_change, &theirs_change, base_entry)
+        {
+            if o.kind == EntryKind::Blob && t.kind == EntryKind::Blob {
+                // Blob load or UTF-8 failure DEGRADES to the structured
+                // conflict (pre-W2④ behavior) — a missing/corrupted blob
+                // must not 500 the whole merge (the conflict test pins this
+                // with fabricated ids like "111").
+                let base_blob = object_store.get_blob(&BlobId(base_entry.id.clone())).await;
+                let ours_blob = object_store.get_blob(&BlobId(o.id.clone())).await;
+                let theirs_blob = object_store.get_blob(&BlobId(t.id.clone())).await;
+                let texts = (base_blob, ours_blob, theirs_blob);
+                let (base_text, ours_text, theirs_text) = match (
+                    texts.0.as_ref().ok().map(|b| b.as_slice()),
+                    texts.1.as_ref().ok().map(|b| b.as_slice()),
+                    texts.2.as_ref().ok().map(|b| b.as_slice()),
+                ) {
+                    // Degrade arms: every non-mergeable shape becomes the
+                    // STRUCTURED conflict entry (pre-W2④ behavior). A bare
+                    // `continue` would silently drop the file from the
+                    // merged tree (test_merge_conflict_returns_409 caught
+                    // exactly that).
+                    (Some(b), Some(o), Some(t)) if b.is_empty() && o.is_empty() && t.is_empty() => {
+                        entries.insert(
+                            path.clone(),
+                            MergedEntry::Conflict {
+                                ours: ours_entry.cloned(),
+                                theirs: theirs_entry.cloned(),
+                                base: Some(base_entry.clone()),
+                            },
+                        );
+                        continue;
+                    }
+                    (Some(b), Some(o), Some(t)) => match (
+                        std::str::from_utf8(b),
+                        std::str::from_utf8(o),
+                        std::str::from_utf8(t),
+                    ) {
+                        (Ok(bt), Ok(ot), Ok(tt)) => (bt, ot, tt),
+                        _ => {
+                            has_conflicts = true;
+                            entries.insert(
+                                path.clone(),
+                                MergedEntry::Conflict {
+                                    ours: ours_entry.cloned(),
+                                    theirs: theirs_entry.cloned(),
+                                    base: Some(base_entry.clone()),
+                                },
+                            );
+                            continue;
+                        }
+                    },
+                    _ => {
+                        has_conflicts = true;
+                        entries.insert(
+                            path.clone(),
+                            MergedEntry::Conflict {
+                                ours: ours_entry.cloned(),
+                                theirs: theirs_entry.cloned(),
+                                base: Some(base_entry.clone()),
+                            },
+                        );
+                        continue;
+                    }
+                };
+                match line_merge::merge_lines(base_text, ours_text, theirs_text) {
+                    line_merge::LineMerge::Clean(merged_text) => {
+                        let merged_id = object_store.put_blob(merged_text.as_bytes()).await?;
+                        entries.insert(
+                            path.clone(),
+                            MergedEntry::Clean(TreeEntry {
+                                name: path,
+                                kind: EntryKind::Blob,
+                                id: merged_id.0,
+                            }),
+                        );
+                        continue;
+                    }
+                    line_merge::LineMerge::Conflict { .. } => {
+                        // Real line-level conflict: fall through to the
+                        // structured whole-blob conflict (the panel
+                        // resolves with ours/theirs).
+                    }
+                }
+            }
+        }
 
         let merged = match (ours_change, theirs_change) {
             (Change::Unchanged, Change::Unchanged) => base_entry.cloned().map(MergedEntry::Clean),
