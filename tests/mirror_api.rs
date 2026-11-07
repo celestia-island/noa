@@ -84,6 +84,20 @@ async fn make_fixture() -> Fixture {
     }
 }
 
+/// Like `req` but with an explicit bearer token (W2c role tests).
+fn req_with(method: Method, uri: &str, bearer: &str, body: Option<String>) -> Request<Body> {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("Authorization", format!("Bearer {bearer}"));
+    if let Some(b) = body {
+        builder = builder.header("content-type", "application/json");
+        builder.body(Body::from(b)).unwrap()
+    } else {
+        builder.body(Body::empty()).unwrap()
+    }
+}
+
 fn req(method: Method, uri: &str, body: Option<String>) -> Request<Body> {
     let mut builder = Request::builder()
         .method(method)
@@ -337,6 +351,159 @@ async fn test_repo_catalog_routes() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_user_roles_and_enforcement() {
+    let f = make_fixture().await;
+    let bootstrap = TEST_API_TOKEN.to_string();
+
+    // Bootstrap identity manages users; raw token returned once.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req_with(
+            Method::POST,
+            "/api/v1/users",
+            &bootstrap,
+            Some(serde_json::json!({"name": "writer", "role": "operator"}).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created = body_json(resp).await;
+    let writer_token = created["token"].as_str().unwrap().to_string();
+
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req_with(
+            Method::POST,
+            "/api/v1/users",
+            &bootstrap,
+            Some(serde_json::json!({"name": "watcher", "role": "reader"}).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let reader_token = body_json(resp).await["token"].as_str().unwrap().to_string();
+
+    // Raw tokens never appear in listings.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req_with(Method::GET, "/api/v1/users", &bootstrap, None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let users = body_json(resp).await.to_string();
+    assert!(!users.contains(&writer_token), "raw token leaked: {users}");
+    assert!(!users.contains(&reader_token), "raw token leaked: {users}");
+
+    // operator: write OK; admin routes 403.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req_with(
+            Method::POST,
+            "/api/v1/repos",
+            &writer_token,
+            Some(serde_json::json!({"name": "op-repo"}).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::CREATED,
+        "operator registers repos"
+    );
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req_with(
+            Method::POST,
+            "/api/v1/users",
+            &writer_token,
+            Some(serde_json::json!({"name": "x", "role": "reader"}).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "operator cannot manage users"
+    );
+
+    // reader: read OK; write 403; admin routes 403.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req_with(Method::GET, "/api/v1/repos", &reader_token, None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "reader lists repos");
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req_with(
+            Method::POST,
+            "/api/v1/repos",
+            &reader_token,
+            Some(serde_json::json!({"name": "reader-repo"}).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN, "reader cannot write");
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req_with(Method::GET, "/api/v1/users", &reader_token, None))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "reader cannot list users"
+    );
+
+    // Deleting a user kills its token immediately.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req_with(
+            Method::DELETE,
+            "/api/v1/users/watcher",
+            &bootstrap,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req_with(Method::GET, "/api/v1/repos", &reader_token, None))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "deleted token dies"
+    );
+
+    // Invalid role rejected at create.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req_with(
+            Method::POST,
+            "/api/v1/users",
+            &bootstrap,
+            Some(serde_json::json!({"name": "bad", "role": "superuser"}).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
