@@ -11,7 +11,7 @@ SHA-256 內容定址，同時與 git 的物件代數保持逐位元組相容（�
    │ head 指向
 快照（Snapshot）      —— 內容定址的提交（SHA-256），DAG 結構（可多父 = 合併）
    │ tree_hash 指向
-物件（ObjectStore）   —— blob / tree / symlink / gitlink，git 物件代數相容
+物件（ObjectStore）   —— blob / tree / symlink / gitlink（blob 內容與 git 逐位元組相容；樹/提交用 noa 自身的 SHA-256 定址）
 ```
 
 - **工作區**是 noa 的核心隔離原語：多個智慧型代理在同一倉內各自持有獨立的工作區與 head，
@@ -35,16 +35,20 @@ SHA-256 內容定址，同時與 git 的物件代數保持逐位元組相容（�
 
 所有伺服器端狀態都在同一個 redb 資料庫裡；伺服器端無狀態化到「目錄即全部」的程度。
 
-## git 物件相容性
+## git 相容性的精確邊界
 
-匯入與回流都以「git 物件代數不變」為前提：
+相容性分三層，逐層說清：
 
-- blob：原始內容即 git blob 本體（`git_blob_oid(content)` 與 git 一致）；
-- 樹：匯入時按路徑/kind/oid 逐項對帳（fidelity 校驗）；
-- 提交：父鏈由鏡像波次維護（`noa_<sha>` 內容定址 + parent 關聯）。
+- **blob：逐位元組相容。** 原始內容即 git blob 本體，`git_blob_oid(content)` 與 git 一致
+  （鏡像忠實度校驗逐 blob 對帳就靠這個）；
+- **樹：語義等價，ID 不等價。** 路徑/kind/每個 blob 的 OID 與 git 完全對應，但 noa 的
+  tree ID 是自己的 SHA-256 內容定址，不是 git 的樹物件格式；
+- **提交：noa 自己的模型。** 快照 ID 形如 `noa_<sha256>`，不是 git commit 物件。
 
-因此 noa → git 的回流推送不需要任何轉換層：scratch 裸儲存庫裡的 git 物件與 noa 的物件
-一一對應。
+git 形態的表示存在於**鏡像 scratch 的真 git 儲存庫**裡。回流推送直接使用 scratch 的
+git 物件（對「從 git 匯入的內容」零轉換）；**noa 原生生產的內容**（純工作區快照，
+從未經過 scratch）沒有 git 物件形態，直接回流需要快照 → git 物件序列化器——這是
+已知限制（現有實作中此類引用不會出現在回流推送裡）。
 
 ## 鏡像 scratch 的角色
 
