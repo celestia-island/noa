@@ -107,6 +107,20 @@ fn join_lines(lines: &[String]) -> String {
 
 /// Classic diff3 sweep: merge two edit sets against a common base.
 pub fn merge_lines(base: &str, ours: &str, theirs: &str) -> LineMerge {
+    // Lone-CR gate (R2 S1): similar's tokenizer treats ANY \r as a line
+    // terminator while noa's grid splits only \n — a stray CR (legal UTF-8)
+    // desynchronizes the coordinate grids and can panic the merge. Any \r
+    // in any side degrades the whole file to the structured conflict
+    // (conservative: CRLF files take the pre-W2④ whole-blob path).
+    if base.contains('\r') || ours.contains('\r') || theirs.contains('\r') {
+        return LineMerge::Conflict {
+            merged: String::new(),
+            ours: ours.to_string(),
+            theirs: theirs.to_string(),
+            base: base.to_string(),
+        };
+    }
+
     // Identical-sides shortcuts (the common merge shapes).
     if ours == theirs {
         return LineMerge::Clean(ours.to_string());
