@@ -35,6 +35,11 @@ pub struct MirrorJob {
     /// mirror must hold before a GitHub flip).
     #[serde(default)]
     pub tags: bool,
+    /// W1g: also mirror GitHub PR heads (`refs/pull/<N>/head`) into
+    /// `mirror/<job>/pr/<N>` — the transition-history slice (noa carries the
+    /// full PR record before the authority switch).
+    #[serde(default)]
+    pub pr_heads: bool,
     /// Opt-in canary push (W1a-2): after replication, push the first
     /// tracked branch's commit to `noa-mirror-canary` on the remote (git
     /// transport first, Git Data API fallback). Meaningful for https
@@ -103,6 +108,20 @@ impl MirrorJob {
         }
         if self.branches.is_empty() {
             anyhow::bail!("mirror job must track at least one branch");
+        }
+        // W1g: PR heads live at mirror/<job>/pr/<N> — a tracked branch named
+        // "pr/<x>" would write the same ref namespace (branch lane vs PR
+        // lane, last-writer-wins within a wave). Reject the collision shape
+        // outright; the operator can namespace real branches differently.
+        if self.pr_heads {
+            for b in &self.branches {
+                if b.starts_with("pr/") {
+                    anyhow::bail!(
+                        "branch {b:?} collides with the PR-head namespace \
+                         (mirror/<job>/pr/...) while pr_heads is on"
+                    );
+                }
+            }
         }
         // Branch names feed workspace names via '/'→"__" replacement, so a
         // literal "__" inside a branch would collide with a slashed sibling
@@ -315,6 +334,7 @@ mod tests {
             github_slug: "celestia-island/noa".into(),
             branches: vec!["master".into()],
             tags: false,
+            pr_heads: false,
             canary_push: false,
             enabled: true,
             last_run_us: None,

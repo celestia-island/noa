@@ -290,6 +290,66 @@ impl GitDataClient {
 
     /// Lists tags as `(name, commit_oid)`, peeling annotated tags to the
     /// commit they reference.
+    /// Open PRs with their head commit SHA: `(number, head_sha)`. Paginated
+    /// (up to 10 pages of 100) — the mirror needs every open PR head, not a
+    /// single page.
+    /// The hard page cap — hitting it means the listing is TRUNCATED and
+    /// the caller must NOT reconcile against it (a truncated upstream set
+    /// would delete stored refs that are merely beyond the cap).
+    const PULL_PAGE_CAP: u32 = 10;
+
+    pub async fn list_open_pull_heads(&self, slug: &str) -> Result<Vec<(u64, String)>> {
+        let mut out = Vec::new();
+        let mut page = 1u32;
+        loop {
+            let (status, body) = self
+                .request(
+                    reqwest::Method::GET,
+                    &format!("/repos/{slug}/pulls?state=open&per_page=100&page={page}"),
+                    None,
+                )
+                .await?;
+            if status != reqwest::StatusCode::OK {
+                anyhow::bail!(
+                    "list pulls failed: {status}: {}",
+                    &body[..body.len().min(160)]
+                );
+            }
+            let items: Vec<serde_json::Value> = serde_json::from_str(&body)
+                .map_err(|e| anyhow::anyhow!("pulls listing decode failed: {e}"))?;
+            if items.is_empty() {
+                break;
+            }
+            let page_len = items.len();
+            for item in items {
+                let number = item["number"].as_u64().unwrap_or_default();
+                let sha = item["head"]["sha"].as_str().unwrap_or_default().to_string();
+                // Malformed entries are LOUD, not silently dropped: a silent
+                // drop vanishes the item from the returned set and the
+                // caller's reconcile would delete a stored ref for it.
+                if number == 0 || sha.len() != 40 {
+                    anyhow::bail!(
+                        "malformed pull entry (number={number:?}, sha len {})",
+                        sha.len()
+                    );
+                }
+                out.push((number, sha));
+            }
+            if page_len < 100 {
+                break;
+            }
+            page += 1;
+            if page > Self::PULL_PAGE_CAP {
+                anyhow::bail!(
+                    "open PRs exceed the {}-page listing cap — refusing a \
+                     truncated set (reconcile against it would delete refs)",
+                    Self::PULL_PAGE_CAP
+                );
+            }
+        }
+        Ok(out)
+    }
+
     pub async fn list_tags(&self, slug: &str) -> Result<Vec<(String, String)>> {
         #[derive(Deserialize)]
         struct TagRef {
