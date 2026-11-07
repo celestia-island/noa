@@ -995,6 +995,23 @@ impl MirrorEngine {
         if !pr_refs.trim().is_empty() {
             argv.push("+refs/pull-heads/*:refs/noa/pr/*");
         }
+        // Push credential: the scratch's origin URL carries no token
+        // (fetches on public repos are anonymous) — a bare `git push
+        // origin` sends no credential and GitHub rejects the write. Embed
+        // the configured token (x-access-token form) into a one-shot push
+        // URL; the token never lands in the scratch config.
+        let token = if self.cfg.token_env.is_empty() {
+            None
+        } else {
+            std::env::var(&self.cfg.token_env)
+                .ok()
+                .filter(|t| !t.is_empty())
+        };
+        let push_target: String = match (&token, job.remote_url.strip_prefix("https://")) {
+            (Some(t), Some(rest)) => format!("https://x-access-token:{t}@{rest}"),
+            _ => "origin".to_string(),
+        };
+        argv[2] = &push_target;
         self.git(scratch, &argv).await?;
         let _ = job;
         Ok(())
