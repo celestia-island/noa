@@ -25,7 +25,29 @@
 
 </div>
 
-Per-agent workspace isolation, JSONL append-only logs, snapshot-based history, and full git protocol compatibility.
+Per-agent workspace isolation, SHA-256 content-addressed snapshots, a full git smart-HTTP
+server (clone/fetch/**push**), a self-hosted forge with a built-in mirror + back-flow lane,
+line-level three-way merge with exact-content rename detection, multi-user RBAC, and a CI
+run-records API — all in a single binary with embedded storage.
+
+## Documentation
+
+The full documentation set lives in this repository (also published at
+[noa.docs.celestia.world](https://noa.docs.celestia.world)). **简体中文 is the source of
+truth**; other languages are synced from it.
+
+| Document | Contents |
+|---|---|
+| [快速上手 / Getting Started](./docs/zh-Hans/guide/getting-started.md) | build, run the server, first clone/push |
+| [架构总览 / Architecture](./docs/zh-Hans/guide/architecture.md) | workspace / snapshot / ref model |
+| [镜像与回流 / Mirror & Back-flow](./docs/zh-Hans/guide/mirror.md) | dual lanes, PR heads, back-flow, canary |
+| [权限与用户 / RBAC](./docs/zh-Hans/guide/rbac.md) | roles, tokens, enforcement |
+| [git-http 协议 / git-http](./docs/zh-Hans/guide/git-http.md) | endpoints, push semantics |
+| [合并与冲突 / Merge](./docs/zh-Hans/guide/merge.md) | diff3, rename, degradation |
+| [CI 运行记录 / Runs API](./docs/zh-Hans/guide/ci-runs.md) | run records, chest integration |
+| [HTTP API 参考 / API](./docs/zh-Hans/reference/http-api.md) | all REST endpoints |
+| [CLI 参考 / CLI](./docs/zh-Hans/reference/cli.md) | command surface |
+| [部署 / Deploy](./docs/zh-Hans/reference/deploy.md) | systemd, env, rollout |
 
 ## Quick Start
 
