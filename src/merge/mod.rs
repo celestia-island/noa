@@ -325,6 +325,43 @@ pub async fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
                 }
             }
         }
+        // Rename vs delete: one side pure-renamed, the other deleted the old
+        // path — the rename SURVIVES with its base content (git rename-aware
+        // behavior: the deletion targeted a path the deleter didn't know had
+        // moved). Without this arm the claimed target is skipped by the walk
+        // and the file silently vanishes from the merged tree.
+        if let (Change::Deleted, Change::Deleted, Some(new_path), Some(b)) = (
+            compute_change(base_entry, ours_entry),
+            compute_change(base_entry, theirs_entry),
+            ours_renames.get(path.as_str()),
+            base_entry,
+        ) {
+            entries.insert(
+                new_path.clone(),
+                MergedEntry::Clean(TreeEntry {
+                    name: new_path.clone(),
+                    kind: b.kind,
+                    id: b.id.clone(),
+                }),
+            );
+            continue;
+        }
+        if let (Change::Deleted, Change::Deleted, Some(new_path), Some(b)) = (
+            compute_change(base_entry, ours_entry),
+            compute_change(base_entry, theirs_entry),
+            theirs_renames.get(path.as_str()),
+            base_entry,
+        ) {
+            entries.insert(
+                new_path.clone(),
+                MergedEntry::Clean(TreeEntry {
+                    name: new_path.clone(),
+                    kind: b.kind,
+                    id: b.id.clone(),
+                }),
+            );
+            continue;
+        }
 
         // W2④: Blob×Blob both-modified — try a line-level three-way merge
         // first. A clean line merge resolves the file automatically (this is
@@ -725,6 +762,34 @@ mod tests {
             tree.0[0].id, "h2",
             "theirs' modified content lands at b.txt"
         );
+    }
+
+    #[tokio::test]
+    async fn test_rename_survives_other_side_delete() {
+        // ours renames a→b; theirs deletes a. The rename survives: b exists
+        // with the BASE content (the delete targeted a path the deleter
+        // didn't know had moved). Regression for the silent-vanish bug.
+        let dir = tempfile::tempdir().unwrap();
+        let db = std::sync::Arc::new(
+            redb::Database::builder()
+                .create(dir.path().join("m.redb"))
+                .unwrap(),
+        );
+        let store = crate::object::RedbObjectStore::new(db).unwrap();
+        let base = TreeEntries(vec![entry("a.txt", "h1")]);
+        let ours = TreeEntries(vec![entry("b.txt", "h1")]);
+        let theirs = TreeEntries(vec![]);
+        let result = merge_trees_recursive(base, ours, theirs, store, &ConflictResolution::Theirs)
+            .await
+            .unwrap();
+        assert!(
+            !result.has_conflicts(),
+            "rename survives delete: {result:?}"
+        );
+        let tree = result.into_tree_entries(&ConflictResolution::Theirs);
+        assert_eq!(tree.0.len(), 1, "b.txt must exist: {:?}", tree.0);
+        assert_eq!(tree.0[0].name, "b.txt");
+        assert_eq!(tree.0[0].id, "h1");
     }
 
     #[tokio::test]
