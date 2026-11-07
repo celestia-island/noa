@@ -113,14 +113,6 @@ async fn run_backend(
     body: Option<Vec<u8>>,
 ) -> Result<Response, anyhow::Error> {
     let project_root = state.mirror_config.scratch_dir.clone();
-    // Refuse push BEFORE the scratch-existence check so the answer never
-    // depends on mirror state (deliberate invariant, pinned by test).
-    if suffix.contains("receive-pack") {
-        return Ok(json_error_response(
-            StatusCode::FORBIDDEN,
-            "push is not served yet — noa becomes write-authority in a later slice",
-        ));
-    }
     let repo_path = project_root.join(format!("{repo}.git"));
     if !repo_path.exists() {
         return Ok(json_error_response(
@@ -143,21 +135,38 @@ async fn run_backend(
 
     let wants_advertisement = suffix == "info/refs"
         && query
-            .map(|q| q.contains("service=git-upload-pack"))
+            .map(|q| {
+                q.contains("service=git-upload-pack") || q.contains("service=git-receive-pack")
+            })
             .unwrap_or(false);
     let is_post_pack = method == "POST" && suffix == "git-upload-pack";
-    if !wants_advertisement && !is_post_pack {
+    let is_post_receive = method == "POST" && suffix == "git-receive-pack";
+    if !wants_advertisement && !is_post_pack && !is_post_receive {
         return Ok(json_error_response(
             StatusCode::BAD_REQUEST,
             format!("unsupported git http path '{suffix}' — smart HTTP only"),
         ));
     }
 
+    // Backend selection: upload-pack serves reads; receive-pack serves
+    // pushes into the SAME scratch clone (the mirror wave closes the loop —
+    // importing the advanced scratch refs; the back-flow lane pushes them
+    // on to GitHub). Both are bare `git` subcommands with --stateless-rpc.
+    let backend = if is_post_receive
+        || wants_advertisement
+            && query
+                .map(|q| q.contains("service=git-receive-pack"))
+                .unwrap_or(false)
+    {
+        "receive-pack"
+    } else {
+        "upload-pack"
+    };
     let mut cmd = tokio::process::Command::new("git");
     // kill_on_drop: a child abandoned by the 60s deadline below must die,
     // not linger as an orphan holding .git locks (Round A S2).
     cmd.kill_on_drop(true);
-    cmd.arg("upload-pack").arg("--stateless-rpc");
+    cmd.arg(backend).arg("--stateless-rpc");
     if wants_advertisement {
         cmd.arg("--advertise-refs");
     }
@@ -223,14 +232,26 @@ async fn run_backend(
     // no preamble. Emitted as v0-shaped lines; a v2 client (GIT_PROTOCOL
     // forwarded) skips them per gitprotocol-v2.
     let stdout = if wants_advertisement {
-        let mut full = b"001e# service=git-upload-pack\n0000".to_vec();
+        let service = if backend == "receive-pack" {
+            "git-receive-pack"
+        } else {
+            "git-upload-pack"
+        };
+        let preamble = format!("001e# service={service}\n0000");
+        let mut full = preamble.into_bytes();
         full.extend_from_slice(&output.stdout);
         full
     } else {
         output.stdout
     };
     let content_type = if wants_advertisement {
-        "application/x-git-upload-pack-advertisement".to_string()
+        if backend == "receive-pack" {
+            "application/x-git-receive-pack-advertisement".to_string()
+        } else {
+            "application/x-git-upload-pack-advertisement".to_string()
+        }
+    } else if backend == "receive-pack" {
+        "application/x-git-receive-pack-result".to_string()
     } else {
         "application/x-git-upload-pack-result".to_string()
     };
@@ -344,6 +365,21 @@ pub async fn handle_git_http(State(state): State<AppState>, req: Request) -> Res
     } else {
         None
     };
+    // W2a2 (authority-flip wave): receive-pack (push) is served — the
+    // scratch clone is the write target, and the mirror wave closes the
+    // loop. Pushing requires an authenticated identity (the same bar as
+    // the REST write role); reads stay any-identity.
+    let is_receive_request = git_path.suffix.contains("receive-pack") && method == "POST"
+        || query
+            .as_deref()
+            .map(|q| q.contains("service=git-receive-pack"))
+            .unwrap_or(false);
+    if is_receive_request && !authorized {
+        return json_error_response(
+            StatusCode::FORBIDDEN,
+            "push requires an authenticated identity",
+        );
+    }
     match run_backend(
         &state,
         &git_path.repo,
