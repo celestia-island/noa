@@ -25,7 +25,7 @@ match merge_lines(base, ours, theirs) {
 }
 ```
 
-## Exact content rename (W2④ 刀二)
+## Exact content rename (W2④ slice 2)
 
 When one side is a "pure rename" (the old path is deleted and the same blob content reappears
 verbatim at the new path) and the other side **modifies the old path**, the modification is

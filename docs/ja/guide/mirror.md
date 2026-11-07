@@ -22,7 +22,7 @@
 |---|---|
 | `name` | `^[a-z0-9][a-z0-9-]{0,63}$`。スクラッチディレクトリ名・カタログのリポジトリ名・clone パスのセグメントも兼ねます |
 | `remote_url` | `https://` / `file://` のみ許可。埋め込み認証情報（`@`、`?`）は拒否されます |
-| `github_slug` | `owner/repo` 形式の検証。Git Data API バイパスと還流で使用します |
+| `github_slug` | `owner/repo` 形状チェック。Git Data API レーン（tags / PR heads の取得）と canary プローブで使用。バックフローの push は `remote_url` を使う |
 | `branches` | 最低 1 つ。`tags`/`tags/*`、`pr/*`（PR 名前空間との衝突）、派生ワークスペースの不正な形式はすべて拒否されます |
 | `tags` | すべてのタグをミラーします |
 | `pr_heads` | アクティブな PR head をミラーします（`refs/pull/<N>/head` → `mirror/{job}/pr/<N>`） |

@@ -25,7 +25,7 @@ unchanged.
 |---|---|
 | `name` | `^[a-z0-9][a-z0-9-]{0,63}$`; also the scratch directory name, the catalog repo name, and the clone path segment |
 | `remote_url` | only `https://` / `file://` allowed; embedded credentials (`@`, `?`) rejected |
-| `github_slug` | `owner/repo` shape validation; used by the Git Data API bypass and back-flow |
+| `github_slug` | `owner/repo` shape check; used by the Git Data API lane (tags / PR-head pulls) and the canary write-probe; the back-flow push goes through `remote_url` |
 | `branches` | at least one; `tags`/`tags/*`, `pr/*` (PR namespace conflict), and invalid shapes of derived workspaces are all rejected |
 | `tags` | mirrors all tags |
 | `pr_heads` | mirrors active PR heads (`refs/pull/<N>/head` → `mirror/{job}/pr/<N>`) |

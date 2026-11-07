@@ -24,7 +24,7 @@
 |---|---|
 | `name` | `^[a-z0-9][a-z0-9-]{0,63}$`；同时是 scratch 目录名、catalog 仓名、克隆路径段 |
 | `remote_url` | 仅允许 `https://` / `file://`；禁止内嵌凭据（`@`、`?`） |
-| `github_slug` | `owner/repo` 形状校验；Git Data API 旁路与回流使用 |
+| `github_slug` | `owner/repo` 形状校验；Git Data API 旁路（tags / PR heads 拉取）与 canary 探针使用；回流推送走 `remote_url` |
 | `branches` | 至少一个；`tags`/`tags/*`、`pr/*`（PR 命名空间冲突）与派生工作区非法形状都被拒绝 |
 | `tags` | 镜像全部 tags |
 | `pr_heads` | 镜像活跃 PR heads（`refs/pull/<N>/head` → `mirror/{job}/pr/<N>`） |

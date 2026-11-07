@@ -25,7 +25,7 @@ farm/CNB는 변경 없이 계속 GitHub에서 fetch합니다.
 |---|---|
 | `name` | `^[a-z0-9][a-z0-9-]{0,63}$`; 스크래치 디렉터리 이름, 카탈로그 리포지토리 이름, 클론 경로 세그먼트이기도 합니다 |
 | `remote_url` | `https://` / `file://`만 허용; 자격 증명이 포함된 형태(`@`, `?`)는 거부 |
-| `github_slug` | `owner/repo` 형태 검증; Git Data API 우회 경로와 백플로우에서 사용 |
+| `github_slug` | `owner/repo` 형태 검증; Git Data API 레인(tags / PR head 가져오기)과 canary 프로브에서 사용. 백플로우 푸시는 `remote_url` 사용 |
 | `branches` | 최소 1개; `tags`/`tags/*`, `pr/*` (PR 네임스페이스 충돌), 그리고 파생 워크스페이스의 잘못된 형태는 모두 거부 |
 | `tags` | 전체 tags를 미러 |
 | `pr_heads` | 활성 PR heads를 미러 (`refs/pull/<N>/head` → `mirror/{job}/pr/<N>`) |
