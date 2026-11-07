@@ -49,4 +49,4 @@ Cuando la fusión a nivel de línea no está disponible (blob ausente/dañado/bi
 
 ## Compatibilidad con git
 
-El resultado de la fusión satisface el álgebra de objetos de git: el árbol resuelto se puede reescribir directamente en el scratch y refluir (push de reflujo + verificación de fidelidad, sin conversión alguna).
+Las entradas blob del resultado de la fusión coinciden con el álgebra de objetos de git (OIDs de blob idénticos byte a byte). Pero **el árbol resuelto en sí es nativo de noa** (direccionamiento SHA-256 de noa): no aparece automáticamente en el scratch — empujarlo de vuelta al origen requiere una serialización de instantánea → objetos git (el export a nivel de objetos es un corte posterior; la vía de export del árbol de trabajo existente logra lo mismo manualmente). Hasta entonces, los resultados de la fusión viven en el sistema de referencias de noa, legibles como siempre vía espacios de trabajo/instantáneas.

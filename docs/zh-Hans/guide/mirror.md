@@ -79,7 +79,6 @@ scratch 本地引用 ──atomic push──▶ origin
 一致）必须完全匹配；任何差异让该项失败并进入波次错误详情。回流依赖这一不变量：对「从 git 导入的内容」，scratch 里的 git 对象与 noa 对象在
 blob 层一一对应，推送无需转换。**边界**：noa 原生产生的提交（纯工作区快照）没有
 git 对象形态，不在回流推送范围内（见[架构总览](./architecture.md)的精确边界）。
-git 对象形态，不在回流推送范围内（见[架构总览](./architecture.md)的精确边界）。
 
 ## 过期引用清理（reconcile）
 

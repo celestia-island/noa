@@ -9,7 +9,8 @@ Workspace          — one isolated workspace per agent, invisible to each other
    │ head points to
 Snapshot           — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)
    │ tree_hash points to
-ObjectStore        — blob / tree / symlink / gitlink, git object-algebra compatible
+ObjectStore        — blob / tree / symlink / gitlink (blobs byte-compatible with git;
+                     trees/commits use noa's own SHA-256 addressing)
 ```
 
 - **ワークスペース**は noa の中心的な隔離プリミティブです。複数のエージェントが同じリポジトリ内に互いを上書きすることなく、それぞれのワークスペースと head を持ちます。`mirror.<job>.<branch>` のようなシステム名前空間もワークスペースの形で存在します。
@@ -30,15 +31,15 @@ ObjectStore        — blob / tree / symlink / gitlink, git object-algebra compa
 
 サーバーの状態はすべて 1 つの redb データベースに収められており、サーバーは「ディレクトリがすべて」になるまでステートレスです。
 
-## git オブジェクト互換性
+## git 互換性の正確な境界
 
-取り込みと還流はどちらも、git のオブジェクト代数が不変であることを前提に動きます:
+互換性は層ごとに正確に述べます:
 
-- blob: 生の内容がそのまま git の blob ボディです（`git_blob_oid(content)` が git と一致します）
-- tree: 取り込みは path/kind/oid で項目単位に突き合わせます（忠実度検証）
-- commit: 親チェーンはミラーウェーブが維持します（`noa_<sha>` の内容アドレス指定 + 親リンク）
+- **blob: バイト単位で互換。** 生の内容そのものが git の blob ボディで、`git_blob_oid(content)` は git と一致します（ミラーの忠実度検証はまさにこれで blob 単位の対照を行います）
+- **tree: 意味的には等価、ID は等価ではない。** path/kind/blob ごとの OID は git と正確に対応しますが、noa の tree ID は独自の SHA-256 内容アドレス指定であり、git のツリーオブジェクト形式ではありません
+- **commit: noa 独自のモデル。** スナップショット ID は `noa_<sha256>` 形式で、git のコミットオブジェクトではありません
 
-したがって、git 由来のコンテンツの noa → git 還流 push には変換レイヤーが不要です（スクラッチクローン内の git オブジェクトがそのまま使われます）。**境界**：noa ネイティブに作られたコンテンツには git オブジェクト形態がなく、直接の還流にはスナップショット→git オブジェクトのシリアライザが必要です（既知の制限）。
+git 形態の表現は**ミラースクラッチ内の本物の git リポジトリ**に存在します。還流 push はスクラッチの git オブジェクトをそのまま使います（git から取り込んだコンテンツは変換ゼロ）。**noa ネイティブに作られたコンテンツ**（スクラッチを一度も経由しない純粋なワークスペーススナップショット）には git オブジェクト形態がなく、直接の還流にはスナップショット→git オブジェクトのシリアライザが必要です——これは既知の制限です（現在の実装では、この種の参照は還流 push には現れません）。
 
 ## ミラスクラッチの役割
 
