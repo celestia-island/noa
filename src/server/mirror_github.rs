@@ -93,6 +93,10 @@ impl GitDataClient {
             token: token.into(),
             client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(120))
+                // GitHub rejects API requests without a User-Agent (403
+                // "administrative rules") — reqwest sends none by default,
+                // which took the anonymous API lane down on node-2 (W1f).
+                .user_agent(concat!("noa-mirror/", env!("CARGO_PKG_VERSION")))
                 .build()
                 .map_err(|e| anyhow::anyhow!("git-data client init failed: {e}"))?,
         })
