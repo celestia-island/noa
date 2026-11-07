@@ -11,7 +11,7 @@ use axum::{
     extract::{Path, Query, State},
     Json,
 };
-use redb::{ReadableDatabase, TableDefinition};
+use redb::{ReadableDatabase, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
 
 use super::handlers::AppState;
@@ -85,6 +85,16 @@ fn validate_run(run: &RunRecord) -> Result<(), String> {
     if !RUN_STATUSES.contains(&run.status.as_str()) {
         return Err(format!("status must be one of {RUN_STATUSES:?}"));
     }
+    if run.actor.is_empty() || run.actor.len() > 200 {
+        return Err("actor must be 1..=200 chars".to_string());
+    }
+    for (name, field) in [("log_ref", &run.log_ref), ("summary", &run.summary)] {
+        if let Some(v) = field {
+            if v.len() > 2000 {
+                return Err(format!("{name} must be at most 2000 chars"));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -95,6 +105,7 @@ fn run_key(repo: &str, number: u64) -> String {
 /// CI run store. Per-request construction follows the mirror-job routes'
 /// pattern (ensure_table is a one-time write txn; caching in AppState is a
 /// follow-up shared with the other per-request stores there).
+#[derive(Clone)]
 pub struct RunRegistry {
     db: std::sync::Arc<redb::Database>,
 }
@@ -102,64 +113,53 @@ pub struct RunRegistry {
 impl RunRegistry {
     #[must_use]
     pub fn new(db: std::sync::Arc<redb::Database>) -> Self {
-        // ensure_table: the read path (next_number/list) cannot open a
-        // missing table — create it once per construction (write txn), the
-        // same pattern RepoRegistry/PrStore use at construction.
-        let db_clone = std::sync::Arc::clone(&db);
-        let _ = std::thread::spawn(move || -> anyhow::Result<()> {
-            let txn = db_clone.begin_write()?;
-            {
-                let _table = txn.open_table(RUNS_TABLE)?;
-            }
-            txn.commit()?;
-            Ok(())
-        })
-        .join();
+        // Table creation happens on the FIRST write transaction (record);
+        // construction is once-per-startup from AppState — no per-request
+        // writer-lock take (R2: the earlier per-request ensure_table
+        // spawned a thread + joined on the tokio worker per request).
         Self { db }
     }
 
-    /// Records a run, assigning the next per-repo number.
+    /// Records a run, assigning the next per-repo number. The scan and the
+    /// insert share ONE write transaction — redb's writer lock serializes
+    /// concurrent records, so two simultaneous recordings cannot assign the
+    /// same number and overwrite each other (R2 next_number race).
     pub async fn record(&self, mut run: RunRecord) -> Result<RunRecord> {
         let prefix = format!("{}#", run.repo);
         let db = std::sync::Arc::clone(&self.db);
         let prefix_clone = prefix.clone();
-        let max = tokio::task::spawn_blocking(move || -> Result<u64> {
-            let txn = db.begin_read()?;
-            let table = txn.open_table(RUNS_TABLE)?;
-            let mut max = 0u64;
-            for row in table.range(prefix_clone.as_str()..)? {
-                let (key, _) = row?;
-                let key_str = key.value();
-                if !key_str.starts_with(&prefix_clone) {
-                    break;
-                }
-                if let Ok(n) = key_str[prefix_clone.len()..].parse::<u64>() {
-                    max = max.max(n);
-                }
-            }
-            Ok(max + 1)
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("runs next join: {e}"))??;
-        run.number = max;
-
-        let key = run_key(&run.repo, run.number);
-        let value = serde_json::to_string(&run).map_err(|e| anyhow::anyhow!("run encode: {e}"))?;
-        let db = std::sync::Arc::clone(&self.db);
-        let key_clone = key.clone();
-        let value_clone = value.clone();
-        tokio::task::spawn_blocking(move || -> Result<()> {
+        let stored_json = tokio::task::spawn_blocking(move || -> Result<String> {
             let txn = db.begin_write()?;
-            {
+            let (number, stored_json) = {
                 let mut table = txn.open_table(RUNS_TABLE)?;
-                table.insert(key_clone.as_str(), value_clone.as_str())?;
-            }
+                let mut max = 0u64;
+                for row in table.range(prefix_clone.as_str()..)? {
+                    let (key, _) = row?;
+                    let key_str = key.value();
+                    if !key_str.starts_with(&prefix_clone) {
+                        break;
+                    }
+                    if let Ok(n) = key_str[prefix_clone.len()..].parse::<u64>() {
+                        max = max.max(n);
+                    }
+                }
+                let number = max + 1;
+                run.number = number;
+                let value =
+                    serde_json::to_string(&run).map_err(|e| anyhow::anyhow!("run encode: {e}"))?;
+                let key = run_key(prefix_clone.strip_suffix('#').unwrap_or(""), number);
+                table.insert(key.as_str(), value.as_str())?;
+                (number, value)
+            };
             txn.commit()?;
-            Ok(())
+            let _ = number;
+            Ok(stored_json)
         })
         .await
         .map_err(|e| anyhow::anyhow!("run record join: {e}"))??;
-        Ok(run)
+        let stored: RunRecord =
+            serde_json::from_str(&stored_json).map_err(|e| anyhow::anyhow!("run decode: {e}"))?;
+        Ok(stored)
     }
 
     /// Lists runs for a repo, newest first.
@@ -169,7 +169,12 @@ impl RunRegistry {
         let prefix_clone = prefix;
         tokio::task::spawn_blocking(move || -> Result<Vec<RunRecord>> {
             let txn = db.begin_read()?;
-            let table = txn.open_table(RUNS_TABLE)?;
+            // No table yet = no runs recorded — empty list, not an error.
+            let table = match txn.open_table(RUNS_TABLE) {
+                Ok(t) => t,
+                Err(redb::TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+                Err(e) => return Err(e.into()),
+            };
             let mut rows: Vec<(String, String)> = Vec::new();
             for row in table.range(prefix_clone.as_str()..)? {
                 let (k, v) = row?;
@@ -216,7 +221,7 @@ pub async fn record_run(
     if payload.started_us == 0 {
         payload.started_us = now;
     }
-    let registry = RunRegistry::new(std::sync::Arc::clone(&state.db));
+    let registry = &state.run_registry;
     let stored = registry.record(payload).await.map_err(err_json)?;
     Ok((axum::http::StatusCode::CREATED, Json(stored)))
 }
@@ -248,7 +253,7 @@ pub async fn list_runs(
         Ok(None) => return Err(not_found(format!("repo '{name}' not found"))),
         Err(e) => return Err(err_json(e)),
     }
-    let registry = RunRegistry::new(std::sync::Arc::clone(&state.db));
+    let registry = &state.run_registry;
     let runs = registry
         .list(&name, limit, params.offset.unwrap_or(0))
         .await
