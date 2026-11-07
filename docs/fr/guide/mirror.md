@@ -22,7 +22,7 @@ Le système de miroir intègre dans noa le master, tous les tags et les PR heads
 |---|---|
 | `name` | `^[a-z0-9][a-z0-9-]{0,63}$` ; sert aussi de nom de répertoire scratch, de nom de dépôt dans le catalog et de segment de chemin de clone |
 | `remote_url` | seuls `https://` / `file://` sont autorisés ; identifiants embarqués interdits (`@`, `?`) |
-| `github_slug` | validation de forme `owner/repo` ; utilisé par la passerelle Git Data API et par le reflux |
+| `github_slug` | vérification de forme `owner/repo` ; utilisé par la voie Git Data API (pulls tags / têtes de PR) et la sonde canary ; le push de back-flow passe par `remote_url` |
 | `branches` | au moins une ; sont refusés `tags`/`tags/*`, `pr/*` (conflit d'espace de noms PR) et les formes illégales d'espaces de travail dérivés |
 | `tags` | met en miroir tous les tags |
 | `pr_heads` | met en miroir les PR heads actifs (`refs/pull/<N>/head` → `mirror/{job}/pr/<N>`) |

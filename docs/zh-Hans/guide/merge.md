@@ -21,7 +21,7 @@ match merge_lines(base, ours, theirs) {
 }
 ```
 
-## 精确内容 rename（W2④ 刀二）
+## 精确内容 rename（W2④ 第二刀）
 
 一方「纯改名」（删除旧路径、原 blob 内容在新路径原样重现）+ 另一方**修改旧路径**
 时，修改自动应用在**新路径**——经典的 rename+edit 场景不再产生「删除 vs 修改」冲突。

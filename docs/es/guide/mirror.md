@@ -22,7 +22,7 @@ El sistema de espejo incorpora a noa el master, todos los tags y los PR heads ac
 |---|---|
 | `name` | `^[a-z0-9][a-z0-9-]{0,63}$`; es a la vez nombre del directorio scratch, nombre del repo en el catalog y segmento de la ruta de clonado |
 | `remote_url` | solo se permiten `https://` / `file://`; credenciales incrustadas prohibidas (`@`, `?`) |
-| `github_slug` | validación de forma `owner/repo`; lo usan el bypass de la Git Data API y el reflujo |
+| `github_slug` | verificación de forma `owner/repo`; usado por la vía Git Data API (pulls de tags / cabezas de PR) y la sonda canary; el push de back-flow usa `remote_url` |
 | `branches` | al menos una; se rechazan `tags`/`tags/*`, `pr/*` (conflicto del espacio de nombres de PR) y las formas ilegales de espacios de trabajo derivados |
 | `tags` | espeja todos los tags |
 | `pr_heads` | espeja los PR heads activos (`refs/pull/<N>/head` → `mirror/{job}/pr/<N>`) |
