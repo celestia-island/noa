@@ -3,7 +3,9 @@
 //! `http://server:port/git/<job>` with no noa-specific tooling.
 //!
 //! Scope (deliberate):
-//! - **upload-pack only** (clone/fetch). receive-pack (push) is a later
+//! - **upload-pack + receive-pack** (clone/fetch/push — the W2a2
+//!   authority-flip wave: pushes land in the same scratch clone the read
+//!   path serves, and the mirror wave + back-flow lane close the loop).
 //!   slice: accepting pushes means accepting authority, which lands with
 //!   the namespace + RBAC work (W2b/W2c).
 //! - The served content is the **mirror** (scratch clones refreshed by the
@@ -186,7 +188,9 @@ async fn run_backend(
             .and_then(|v| v.to_str().ok())
             .unwrap_or(""),
     );
-    cmd.stdin(if is_post_pack {
+    // Both pack POSTs carry the client's stream on stdin (S0: receive-pack
+    // with a null stdin reads EOF and silently lands nothing).
+    cmd.stdin(if is_post_pack || is_post_receive {
         Stdio::piped()
     } else {
         Stdio::null()
@@ -237,7 +241,11 @@ async fn run_backend(
         } else {
             "git-upload-pack"
         };
-        let preamble = format!("001e# service={service}\n0000");
+        // pkt-line length header = 4 (header bytes) + payload length — the
+        // hardcoded upload-pack value broke receive-pack advertisements
+        // ("bad line length character").
+        let payload = format!("# service={service}\n");
+        let preamble = format!("{:04x}{}0000", payload.len() + 4, payload);
         let mut full = preamble.into_bytes();
         full.extend_from_slice(&output.stdout);
         full

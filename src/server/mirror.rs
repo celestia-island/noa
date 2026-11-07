@@ -530,6 +530,16 @@ impl MirrorEngine {
             )
             .await?;
         }
+        // W2a2 (authority-flip): keep LOCAL heads convergent with origin —
+        // the back-flow lane pushes local heads, and without this sync a
+        // pre-flip scratch's clone-time-frozen heads would rewind the
+        // origin. NO leading '+': the fetch only FAST-FORWARDS local heads
+        // (a receive-pack-advanced head past origin is the authoritative
+        // side and must not be reset by the fetch; a genuinely diverged
+        // head keeps the local state, which the next backflow then pushes).
+        let _ = self
+            .git(scratch, &["fetch", "origin", "refs/heads/*:refs/heads/*"])
+            .await;
         Ok(())
     }
 
