@@ -39,3 +39,4 @@ El push no necesita ningún hook especial — las tres vías (lectura, recepció
 - El push no ofrece semántica de borrado (un borrado del lado de noa no se devuelve al origen — asimetría conocida).
 - El dumb HTTP (`/info/refs` como archivo plano) no se sirve.
 - El reflujo de los PR heads aterriza en `refs/noa/pr/<N>` (GitHub rechaza pushes de `refs/pull/*`).
+- Los pushes de reflujo tienen como fuente los objetos git del scratch — los **commits nativos de noa** (instantáneas puras de espacio de trabajo que nunca pasaron por el scratch) están fuera del alcance del reflujo hasta que exista un serializador de instantánea → objetos git (ver [Arquitectura](./architecture.md)).
