@@ -23,6 +23,9 @@ use crate::{
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<redb::Database>,
+    /// Filesystem path of the redb file (backup/export copies it; empty =
+    /// in-memory/test constructions where backup is unavailable).
+    pub db_path: String,
     pub api_token: String,
     pub rate_limiter: RateLimiter,
     /// GitHub App token broker (optional — unconfigured until the App
@@ -56,6 +59,7 @@ impl AppState {
     #[must_use]
     pub fn new(db: Arc<redb::Database>) -> Self {
         AppState {
+            db_path: String::new(),
             repo_registry: crate::server::repo_registry::RepoRegistry::new(Arc::clone(&db))
                 .expect("repo registry init is startup-critical"),
             user_registry: crate::server::user_registry::UserRegistry::new(Arc::clone(&db))
@@ -81,6 +85,11 @@ impl AppState {
     }
 
     #[must_use]
+    pub fn with_db_path(mut self, db_path: impl Into<String>) -> Self {
+        self.db_path = db_path.into();
+        self
+    }
+
     pub fn with_api_token(mut self, token: String) -> Self {
         self.api_token = token;
         self
