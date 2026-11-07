@@ -558,6 +558,10 @@ async fn test_repo_scoped_pr_routes() {
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
     let job = wait_job_ok(&f.app, "pilot").await;
     assert_eq!(job["last_status"], "ok", "{job}");
+    // W1e: the transport lane is visible in the job record ("ok" on the API
+    // lane used to mask a dead git transport from status-only alerts). The
+    // local fixture clone serves the git lane.
+    assert_eq!(job["last_lane"], "git", "{job}");
 
     // Create a PR with repo="pilot" via the flat API.
     let create = serde_json::json!({

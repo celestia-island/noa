@@ -49,6 +49,12 @@ pub struct MirrorJob {
     pub last_status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_detail: Option<String>,
+    /// Transport lane that served the last wave: `git` | `api`. W1e: a job
+    /// can be "ok" while the git transport is dead (the API lane masked it) —
+    /// alerts that only read `last_status` were blind to that. `None` =
+    /// never run (or pre-W1e record).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_lane: Option<String>,
 }
 
 impl MirrorJob {
@@ -183,6 +189,7 @@ impl MirrorJobStore {
                     job.last_run_us = job.last_run_us.or(old.last_run_us);
                     job.last_status = job.last_status.or(old.last_status);
                     job.last_detail = job.last_detail.or(old.last_detail);
+                    job.last_lane = job.last_lane.or(old.last_lane);
                 }
                 let data = rmp_serde::to_vec_named(&job)?;
                 table.insert(job.name.as_str(), data.as_slice())?;
@@ -247,11 +254,18 @@ impl MirrorJobStore {
 
     /// Records a run outcome (status/detail/timestamp) without touching the
     /// replication fields.
-    pub async fn record_run(&self, name: &str, status: &str, detail: &str) -> Result<()> {
+    pub async fn record_run(
+        &self,
+        name: &str,
+        status: &str,
+        detail: &str,
+        lane: Option<&str>,
+    ) -> Result<()> {
         let db = self.db.clone();
         let name = name.to_string();
         let status = status.to_string();
         let detail = detail.to_string();
+        let lane = lane.map(ToString::to_string);
         let now = crate::now_micros() as i64;
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_write()?;
@@ -265,6 +279,9 @@ impl MirrorJobStore {
                     job.last_run_us = Some(now);
                     job.last_status = Some(status);
                     job.last_detail = Some(detail);
+                    // W1e: lane visibility — "ok" on the API lane masked a
+                    // dead git transport from status-only alerts.
+                    job.last_lane = lane;
                     let data = rmp_serde::to_vec_named(&job)?;
                     table.insert(name.as_str(), data.as_slice())?;
                 }
@@ -303,6 +320,7 @@ mod tests {
             last_run_us: None,
             last_status: None,
             last_detail: None,
+            last_lane: None,
         }
     }
 
@@ -329,7 +347,7 @@ mod tests {
     async fn test_upsert_preserves_run_history() {
         let (_d, s) = tmp_store().await;
         s.upsert(job("pilot")).await.unwrap();
-        s.record_run("pilot", "ok", "imported master")
+        s.record_run("pilot", "ok", "imported master", Some("git"))
             .await
             .unwrap();
         let updated = MirrorJob {
@@ -341,6 +359,8 @@ mod tests {
         assert_eq!(got.branches, vec!["master", "dev-x"]);
         assert_eq!(got.last_status.as_deref(), Some("ok"));
         assert!(got.last_run_us.is_some());
+        // W1e: the recorded lane survives a config-only update.
+        assert_eq!(got.last_lane.as_deref(), Some("git"));
     }
 
     #[tokio::test]

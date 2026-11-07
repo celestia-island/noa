@@ -135,9 +135,9 @@ impl MirrorEngine {
             anyhow::bail!("unknown mirror job '{name}'");
         };
         match self.execute(&job).await {
-            Ok(detail) => {
+            Ok((detail, lane)) => {
                 store
-                    .record_run(&job.name, "ok", &detail)
+                    .record_run(&job.name, "ok", &detail, Some(lane))
                     .await
                     .unwrap_or_else(|e| tracing::warn!("mirror: record_run failed: {e}"));
                 tracing::info!("mirror job {} ok: {}", job.name, detail);
@@ -145,7 +145,7 @@ impl MirrorEngine {
             Err(e) => {
                 let msg = format!("{e:#}");
                 store
-                    .record_run(&job.name, "error", &msg)
+                    .record_run(&job.name, "error", &msg, None)
                     .await
                     .unwrap_or_else(|e2| tracing::warn!("mirror: record_run failed: {e2}"));
                 tracing::error!("mirror job {} failed: {msg}", job.name);
@@ -168,7 +168,7 @@ impl MirrorEngine {
         Ok(())
     }
 
-    async fn execute(&self, job: &MirrorJob) -> Result<String> {
+    async fn execute(&self, job: &MirrorJob) -> Result<(String, &'static str)> {
         let scratch = self.cfg.scratch_dir.join(format!("{}.git", job.name));
         if let Some(parent) = scratch.parent() {
             std::fs::create_dir_all(parent)?;
@@ -269,9 +269,13 @@ impl MirrorEngine {
         };
         let detail = format!("{summary}; {}", notes.join(" "));
         if failed > 0 {
+            // Error waves record lane=None (the recorded lane would be
+            // stale mid-wave anyway); the full lane info is in the log
+            // lines and the detail notes. Follow-up S2: thread the lane
+            // through the error return.
             anyhow::bail!("{detail}");
         }
-        Ok(detail)
+        Ok((detail, lane))
     }
 
     /// Canary ref name pushed to the remote (one per repo, per job would
@@ -1334,6 +1338,7 @@ mod tests {
         let store = MirrorJobStore::new(Arc::clone(&db)).unwrap();
         store
             .upsert(MirrorJob {
+                last_lane: None,
                 name: label.to_string(),
                 remote_url: format!("file://{}", origin.display()),
                 github_slug: "celestia-island/noa".into(),
@@ -1414,6 +1419,7 @@ mod tests {
         };
         let store = MirrorJobStore::new(Arc::clone(&db)).unwrap();
         let mk = |url: String| MirrorJob {
+            last_lane: None,
             name: "pilot".into(),
             remote_url: url,
             github_slug: "celestia-island/noa".into(),
@@ -1472,6 +1478,7 @@ mod tests {
         let store = MirrorJobStore::new(Arc::clone(&db)).unwrap();
         store
             .upsert(MirrorJob {
+                last_lane: None,
                 name: "pilot".into(),
                 remote_url: format!("file://{}", origin.display()),
                 github_slug: "celestia-island/noa".into(),
@@ -1554,6 +1561,7 @@ mod tests {
         let job = store.get(&name).await.unwrap().unwrap();
         store
             .upsert(MirrorJob {
+                last_lane: None,
                 canary_push: true,
                 ..job
             })
@@ -1673,6 +1681,7 @@ mod tests {
         let job = store.get(&name).await.unwrap().unwrap();
         store
             .upsert(MirrorJob {
+                last_lane: None,
                 canary_push: true,
                 ..job
             })
@@ -1817,6 +1826,7 @@ mod tests {
         let store = MirrorJobStore::new(Arc::clone(&db)).unwrap();
         store
             .upsert(MirrorJob {
+                last_lane: None,
                 name: "pilot".into(),
                 remote_url: "file:///nonexistent-noa-mirror-fixture".into(),
                 github_slug: "celestia-island/noa".into(),
@@ -2002,6 +2012,7 @@ mod tests {
         let store = MirrorJobStore::new(Arc::clone(&db)).unwrap();
         store
             .upsert(MirrorJob {
+                last_lane: None,
                 name: "pilot".into(),
                 remote_url: "file:///nonexistent-noa-mirror-fixture".into(),
                 github_slug: "celestia-island/noa".into(),
@@ -2046,7 +2057,14 @@ mod tests {
 
         let store = MirrorJobStore::new(Arc::clone(&engine.db)).unwrap();
         let job = store.get(&name).await.unwrap().unwrap();
-        store.upsert(MirrorJob { tags: true, ..job }).await.unwrap();
+        store
+            .upsert(MirrorJob {
+                last_lane: None,
+                tags: true,
+                ..job
+            })
+            .await
+            .unwrap();
         // v-blob fails the job; healthy tags must still land.
         assert!(
             engine.run_job(&name).await.is_err(),
@@ -2210,6 +2228,7 @@ mod tests {
         let store = MirrorJobStore::new(Arc::clone(&db)).unwrap();
         store
             .upsert(MirrorJob {
+                last_lane: None,
                 name: "pilot".into(),
                 remote_url: "file:///nonexistent-noa-mirror-fixture".into(),
                 github_slug: "celestia-island/noa".into(),
@@ -2342,6 +2361,7 @@ mod tests {
         let store = MirrorJobStore::new(Arc::clone(&db)).unwrap();
         store
             .upsert(MirrorJob {
+                last_lane: None,
                 name: "pilot".into(),
                 remote_url: "file:///nonexistent-noa-mirror-fixture".into(),
                 github_slug: "celestia-island/noa".into(),
@@ -2382,6 +2402,7 @@ mod tests {
         let store = MirrorJobStore::new(Arc::clone(&db)).unwrap();
         store
             .upsert(MirrorJob {
+                last_lane: None,
                 name: "pilot".into(),
                 remote_url: "file:///nonexistent-noa-mirror-fixture".into(),
                 github_slug: "celestia-island/noa".into(),
@@ -2509,6 +2530,7 @@ mod tests {
         let job = store.get(&name).await.unwrap().unwrap();
         store
             .upsert(MirrorJob {
+                last_lane: None,
                 canary_push: true,
                 ..job
             })
