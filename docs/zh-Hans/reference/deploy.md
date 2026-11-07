@@ -47,6 +47,24 @@ Restart=on-failure
 redb 是单文件库——一个实例一个库文件。多实例 = 多目录多端口（如 `chest-demo` 与
 生产 chest 的双实例模式）；跨实例配置搬运走 RPC import / export，不拷配置文件。
 
+## 备份与恢复
+
+服务端全部状态 = redb 文件 + scratch 目录 + env（凭据**刻意排除**——恢复凭据是重配不是拷贝）。
+
+```bash
+# 导出（admin；运行中即可——写锁持拷保证一致性）
+curl -X POST -H "Authorization: Bearer $ADMIN" -H "Content-Type: application/json" \
+  -d '{"out": "/srv/noa-backup/nightly"}' \
+  http://127.0.0.1:3016/api/v1/admin/export
+
+# 产物：noa.redb（一致快照）+ {job}.bundle（每仓可克隆单文件）+ manifest.json（sha256）
+
+# 恢复（离线——先恢复再起库）
+noa-server --db-path /new/noa.redb --import-state /srv/noa-backup/nightly --port 3016
+```
+
+恢复会先校验全部产物 sha256（半损备份一个文件都不落位），已有 scratch 保留（可能领先，下一波对账）。**验收 = 恢复演练**：导出 → 异机恢复 → 起服 → jobs/仓目录/波次明细对账。建议 systemd timer 定时导出。
+
 ## 部署后核验
 
 ```bash

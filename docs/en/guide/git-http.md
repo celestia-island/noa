@@ -39,7 +39,9 @@ environment variables, and error shapes are fully under control.
 
 ## Push semantics
 
-Pushes land in the scratch's local refs; the mirror wave then:
+Pushes land in the scratch's local refs; **a successful receive-pack
+immediately triggers that job's import wave** (no scheduler wait) — the
+pushed content is visible on the API surface right away. The wave then:
 
 1. imports the scratch's advanced refs into noa's ref system (snapshots/workspaces);
 2. when `backflow` is enabled, pushes the state back to origin.

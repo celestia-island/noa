@@ -39,6 +39,32 @@ curl -H "Authorization: Bearer <your-token>" http://127.0.0.1:3016/api/v1/repos
 返回 `[]` 即服务就绪。所有 REST 端点都要求 bearer 认证；`/git/{repo}/*` 的读路径同理
 （未认证请求收到 401 与 `Basic` challenge）。
 
+## noa 原生工作流（推荐）
+
+`noa` CLI 是第一等入口——clone 下来的是 `.git` 与 `.noa` 共存的仓（git 管源码、noa 管智能体数据）：
+
+```bash
+noa clone http://<token>@127.0.0.1:3016/git/hello --path hello
+cd hello
+noa workspace create agent-a     # 按智能体隔离的工作区
+# … 编辑文件 …
+noa snapshot create -m "改动" -a agent-a
+noa log                          # 本工作区的快照历史
+noa push                         # 发布当前工作区快照（自动序列化为 git 提交推送）
+```
+
+`noa push` 发布的是**工作区快照态**（生成 `[noa export]` 提交），不是 `.git` 里的提交——两条车道并行，别混用（先 `noa snapshot create` 再 push，否则会推旧快照）。认证用 `NOA_GIT_USER` + `NOA_GIT_PASS` 环境变量注入。整个目录（含 `.git/noa`）拷到别的机器照常工作。
+
+## git 兼容车道（任何 git 工具都能用）
+
+同样的 `/git/{repo}` 端点也说标准 git 智能 HTTP——stock git、CI、farm 无感可用：
+
+```bash
+git clone http://<token>@127.0.0.1:3016/git/hello
+```
+
+推送（receive-pack）需要可写角色；落地的推送会**立即触发导入波**（下一波回流 origin）。这就是 farm/CNB 零改动的过渡形态。
+
 ## 第一次镜像（把一个 GitHub 仓收进 noa）
 
 ```bash
@@ -67,19 +93,11 @@ curl -X POST -H "Authorization: Bearer <your-token>" \
 git clone http://<your-token>@127.0.0.1:3016/git/hello
 ```
 
-## 第一次推送（写权威）
+## 备份与迁移
 
-推送走 `/git/{repo}` 的 receive-pack 路径，需要已认证身份：
-
-```bash
-cd hello
-echo "hello noa" > README.md
-git add -A && git commit -m "hello noa"
-git push origin master
-```
-
-推送落进镜像 scratch；下一个镜像波次会自动把它收进 noa 的快照/引用体系，若该 job 开启了
-`backflow`，还会把状态推回 origin（GitHub）——这就是「noa 权威 + GitHub 镜像」的过渡形态。
+服务端全部状态可一键导出为可携带目录（详见[部署](./../reference/deploy.md)的备份一节）：
+redb 一致快照 + 每仓一个 git bundle + sha256 清单；`noa-server --import-state <dir>` 离线恢复，
+恢复演练 = 导出 → 异机恢复 → 起服对账。
 
 ## 下一步
 
