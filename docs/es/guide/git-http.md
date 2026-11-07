@@ -16,7 +16,7 @@
 
 ## Detalles de comportamiento
 
-- **Negociación de protocolo**: la cabecera `Git-Protocol` del cliente se pasa tal cual al subproceso (v2 se activa a petición; vacío = v0 por defecto). Esta es justamente la razón por la que la implementación directa sustituye a git-http-backend — el envoltorio CGI descarta esa cabecera en la ruta POST, degrada en silencio a v0 y rompe el clon.
+- **Negociación de protocolo**: la cabecera `Git-Protocol` del cliente se pasa tal cual al subproceso — aquí se habla de la **versión ascendente del protocolo de línea de git** (gitprotocol-v2, un estándar del propio git, no un número de versión de noa); vacío = v0 por defecto. Esta es justamente la razón por la que la implementación directa sustituye a git-http-backend — el envoltorio CGI descarta esa cabecera en la ruta POST, degrada en silencio a v0 y rompe el clon.
 - **Preámbulo del anuncio**: pkt-line `# service=` (cabecera de longitud calculada dinámicamente según el nombre del servicio) + flush; las respuestas RPC no llevan preámbulo.
 - **Content-Type**: `application/x-git-{upload,receive}-pack[-advertisement]` estrictamente diferenciados.
 - **Cuerpo de la petición**: el cuerpo del POST se escribe directamente en el stdin del subproceso; `Content-Encoding: gzip` se descomprime automáticamente
@@ -27,7 +27,7 @@
 
 ## Semántica del push
 
-El push aterriza en las referencias locales del scratch; la ola del espejo después:
+El push aterriza en las referencias locales del scratch; **un receive-pack con éxito dispara de inmediato la ola de importación de esa tarea** (sin esperar al planificador) — el contenido empujado queda visible enseguida en el plano de la API (referencias/instantáneas/espacios de trabajo). La ola después:
 
 1. importa las referencias avanzadas del scratch al sistema de referencias de noa (instantáneas/espacios de trabajo);
 2. con `backflow` activado, empuja el estado al origen.

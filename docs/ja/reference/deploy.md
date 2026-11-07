@@ -42,6 +42,25 @@ Restart=on-failure
 
 redb は単一ファイルストアです——1 インスタンスに 1 つのデータベースファイル。複数インスタンス = 複数ディレクトリ + 複数ポート（例: `chest-demo` と本番 chest の二重インスタンスモード）。インスタンス間の設定移送は RPC import / export を通します。設定ファイルのコピーは決して行いません。
 
+## バックアップと復元
+
+サーバーの状態全体 = redb ファイル + スクラッチディレクトリ + env です（認証情報は**意図的に除外されます**——認証情報の復元は再設定であって、コピーではありません）。
+
+```bash
+# export (admin; live is fine — the write lock makes the copy consistent)
+curl -X POST -H "Authorization: Bearer $ADMIN" -H "Content-Type: application/json" \
+  -d '{"out": "/srv/noa-backup/nightly"}' \
+  http://127.0.0.1:3016/api/v1/admin/export
+
+# artifacts: noa.redb (consistent snapshot) + {job}.bundle (cloneable per-repo
+# file) + manifest.json (sha256)
+
+# restore (offline — restore before the database ever opens)
+noa-server --db-path /new/noa.redb --import-state /srv/noa-backup/nightly --port 3016
+```
+
+復元はまずすべての成果物の sha256 を検証します（半分壊れたバックアップは 1 ファイルも書き込みません）。既存のスクラッチは保持されます（進んでいる可能性があり、次のウェーブで照合されます）。**受け入れの基準はリハーサルです**: エクスポート → 別マシンで復元 → 起動して照合。定期エクスポートには systemd timer を推奨します。
+
 ## デプロイ後の検証
 
 ```bash

@@ -40,7 +40,10 @@ noa log                           # sees only this workspace's parent chain
 ## 서버와의 협업
 
 CLI의 push/pull/fetch/clone은 서버의 `/git/*` 스마트 프로토콜과 호환됩니다
-(같은 git 호환 시맨틱스). 원격이 noa-server를 가리키면:
+(같은 git 호환 시맨틱스). 인증이 필요한 원격에 대해서는 `NOA_GIT_USER` +
+`NOA_GIT_PASS` 환경 변수가 자격 증명을 주입합니다(clone/push/pull 모두에
+주입; 토큰은 전송에만 쓰이며 **`.git/noa/config`에는 절대 기록되지
+않습니다**). 원격이 noa-server를 가리키면:
 
 ```bash
 noa remote add origin http://noa.example.com:3016/git/noa
@@ -48,7 +51,11 @@ noa push origin master
 ```
 
 푸시는 receive-pack을 통과하며 인증된 신원이 필요합니다(토큰이 비밀번호를
-겸하며, 역할에 쓰기 권한이 있어야 합니다).
+겸하며, 역할에 쓰기 권한이 있어야 합니다). `noa push`가 게시하는 것은
+**현재 워크스페이스 스냅샷**이라는 점에 유의하세요(클라이언트 쪽에서
+`[noa export]` git 커밋으로 직렬화됩니다) — 편집한 뒤에는 먼저
+`noa snapshot create`를 실행하고 푸시하세요; 스냅샷으로 만들지 않은 변경을
+그대로 푸시하면 오래된 스냅샷이 게시됩니다.
 
 ## verify와 장부
 

@@ -54,6 +54,29 @@ redb — однофайловое хранилище: один инстанс �
 перенос конфигурации между инстансами идёт через RPC import / export, никогда — копированием
 конфиг-файлов.
 
+## Резервное копирование и восстановление
+
+Всё состояние сервера = файл redb + scratch-каталог + env (учётные данные **намеренно исключены** —
+восстановление учётных данных это повторное размещение, а не копирование).
+
+```bash
+# export (admin; live is fine — the write lock makes the copy consistent)
+curl -X POST -H "Authorization: Bearer $ADMIN" -H "Content-Type: application/json" \
+  -d '{"out": "/srv/noa-backup/nightly"}' \
+  http://127.0.0.1:3016/api/v1/admin/export
+
+# artifacts: noa.redb (consistent snapshot) + {job}.bundle (cloneable per-repo
+# file) + manifest.json (sha256)
+
+# restore (offline — restore before the database ever opens)
+noa-server --db-path /new/noa.redb --import-state /srv/noa-backup/nightly --port 3016
+```
+
+Восстановление сначала проверяет sha256 каждого артефакта (наполовину повреждённая резервная
+копия не записывает ни одного файла); существующий scratch сохраняется (он может опережать —
+следующая волна сверит). **Критерий приёмки — учение**: выгрузка → восстановление на другой
+машине → запуск → сверка. Рекомендуется systemd-timer для регулярных выгрузок.
+
 ## Проверка после развёртывания
 
 ```bash
