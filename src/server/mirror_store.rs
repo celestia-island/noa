@@ -189,6 +189,7 @@ impl MirrorJobStore {
                     job.last_run_us = job.last_run_us.or(old.last_run_us);
                     job.last_status = job.last_status.or(old.last_status);
                     job.last_detail = job.last_detail.or(old.last_detail);
+                    job.last_lane = job.last_lane.or(old.last_lane);
                 }
                 let data = rmp_serde::to_vec_named(&job)?;
                 table.insert(job.name.as_str(), data.as_slice())?;
