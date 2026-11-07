@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod git_http;
 mod handlers;
 pub mod mirror;
@@ -156,6 +157,10 @@ async fn auth_middleware(
     if is_write && !identity.can_write() {
         return Err(StatusCode::FORBIDDEN);
     }
+    if path.starts_with("/api/v1/admin") && !identity.can_admin() {
+        // The admin surface (backup/export) is admin-only entirely.
+        return Err(StatusCode::FORBIDDEN);
+    }
     if path.starts_with("/api/v1/users") && method != "GET" && !identity.can_admin() {
         return Err(StatusCode::FORBIDDEN);
     }
@@ -217,6 +222,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/users/{name}",
             get(user_registry::get_user).delete(user_registry::delete_user),
+        )
+        .route(
+            "/api/v1/admin/export",
+            axum::routing::post(backup::export_handler),
         )
         .route(
             "/api/v1/repos",
