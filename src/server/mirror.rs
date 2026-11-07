@@ -246,6 +246,18 @@ impl MirrorEngine {
                 }
             }
         }
+        // W2a2 back-flow: push the mirrored state back to the origin
+        // (authority-flip transition form). Git lane only — the API lane
+        // cannot push refs.
+        if job.backflow && lane == "git" {
+            match self.backflow_push(job, &scratch).await {
+                Ok(_) => notes.push("backflow=pushed".to_string()),
+                Err(e) => {
+                    failed += 1;
+                    notes.push(format!("backflow=FAILED: {e:#}"));
+                }
+            }
+        }
         for branch in &job.branches {
             let result = match (lane, git_lane.as_ref()) {
                 ("git", Ok(())) => self.replicate_branch(job, &scratch, branch).await,
@@ -518,6 +530,16 @@ impl MirrorEngine {
             )
             .await?;
         }
+        // W2a2 (authority-flip): keep LOCAL heads convergent with origin —
+        // the back-flow lane pushes local heads, and without this sync a
+        // pre-flip scratch's clone-time-frozen heads would rewind the
+        // origin. NO leading '+': the fetch only FAST-FORWARDS local heads
+        // (a receive-pack-advanced head past origin is the authoritative
+        // side and must not be reset by the fetch; a genuinely diverged
+        // head keeps the local state, which the next backflow then pushes).
+        let _ = self
+            .git(scratch, &["fetch", "origin", "refs/heads/*:refs/heads/*"])
+            .await;
         Ok(())
     }
 
@@ -947,6 +969,34 @@ impl MirrorEngine {
         if !removed.is_empty() {
             tracing::info!("mirror {}: pruned stale PR refs {removed:?}", job.name);
         }
+        Ok(())
+    }
+
+    /// W2a2 back-flow lane (authority-flip transition form): pushes the
+    /// scratch's mirrored state to the origin remote — local master, all
+    /// tags, and the imported PR heads (`refs/pull-heads/<N>` →
+    /// `refs/noa/pr/<N>`; GitHub refuses pushes to `refs/pull/*`). Force
+    /// specs throughout: post-flip noa is the write authority, so the
+    /// origin's refs converge to the scratch's state.
+    async fn backflow_push(&self, job: &MirrorJob, scratch: &Path) -> Result<()> {
+        let mut argv: Vec<&str> = vec![
+            "push",
+            "--atomic",
+            "origin",
+            "+refs/heads/*:refs/heads/*",
+            "+refs/tags/*:refs/tags/*",
+        ];
+        // The PR spec only when the scratch actually carries pull-heads —
+        // an unmatched glob refspec fails the WHOLE atomic push (empty
+        // fixtures have none).
+        let pr_refs = self
+            .git_stdout(scratch, &["for-each-ref", "refs/pull-heads"])
+            .await?;
+        if !pr_refs.trim().is_empty() {
+            argv.push("+refs/pull-heads/*:refs/noa/pr/*");
+        }
+        self.git(scratch, &argv).await?;
+        let _ = job;
         Ok(())
     }
 
@@ -1494,6 +1544,7 @@ mod tests {
                 branches: vec!["master".into()],
                 tags: false,
                 pr_heads: false,
+                backflow: false,
                 canary_push: false,
                 enabled: true,
                 last_run_us: None,
@@ -1576,6 +1627,7 @@ mod tests {
             branches: vec!["master".into()],
             tags: false,
             pr_heads: false,
+            backflow: false,
             canary_push: false,
             enabled: true,
             last_run_us: None,
@@ -1638,6 +1690,7 @@ mod tests {
                 branches: vec!["ghost".into(), "master".into()],
                 tags: false,
                 pr_heads: false,
+                backflow: false,
                 canary_push: false,
                 enabled: true,
                 last_run_us: None,
@@ -1985,6 +2038,7 @@ mod tests {
                 branches: vec!["master".into()],
                 tags: false,
                 pr_heads: false,
+                backflow: false,
                 canary_push: false,
                 enabled: true,
                 last_run_us: None,
@@ -2172,6 +2226,7 @@ mod tests {
                 branches: vec!["master".into()],
                 tags: false,
                 pr_heads: false,
+                backflow: false,
                 canary_push: false,
                 enabled: true,
                 last_run_us: None,
@@ -2216,6 +2271,7 @@ mod tests {
                 last_lane: None,
                 tags: true,
                 pr_heads: false,
+                backflow: false,
                 ..job
             })
             .await
@@ -2390,6 +2446,7 @@ mod tests {
                 branches: vec!["master".into()],
                 tags: true,
                 pr_heads: false,
+                backflow: false,
                 canary_push: false,
                 enabled: true,
                 last_run_us: None,
@@ -2524,6 +2581,7 @@ mod tests {
                 branches: vec!["master".into()],
                 tags: false,
                 pr_heads: false,
+                backflow: false,
                 canary_push: false,
                 enabled: true,
                 last_run_us: None,
@@ -2566,6 +2624,7 @@ mod tests {
                 branches: vec!["master".into()],
                 tags: false,
                 pr_heads: false,
+                backflow: false,
                 canary_push: false,
                 enabled: true,
                 last_run_us: None,

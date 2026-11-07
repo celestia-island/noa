@@ -3,7 +3,9 @@
 //! `http://server:port/git/<job>` with no noa-specific tooling.
 //!
 //! Scope (deliberate):
-//! - **upload-pack only** (clone/fetch). receive-pack (push) is a later
+//! - **upload-pack + receive-pack** (clone/fetch/push — the W2a2
+//!   authority-flip wave: pushes land in the same scratch clone the read
+//!   path serves, and the mirror wave + back-flow lane close the loop).
 //!   slice: accepting pushes means accepting authority, which lands with
 //!   the namespace + RBAC work (W2b/W2c).
 //! - The served content is the **mirror** (scratch clones refreshed by the
@@ -113,14 +115,6 @@ async fn run_backend(
     body: Option<Vec<u8>>,
 ) -> Result<Response, anyhow::Error> {
     let project_root = state.mirror_config.scratch_dir.clone();
-    // Refuse push BEFORE the scratch-existence check so the answer never
-    // depends on mirror state (deliberate invariant, pinned by test).
-    if suffix.contains("receive-pack") {
-        return Ok(json_error_response(
-            StatusCode::FORBIDDEN,
-            "push is not served yet — noa becomes write-authority in a later slice",
-        ));
-    }
     let repo_path = project_root.join(format!("{repo}.git"));
     if !repo_path.exists() {
         return Ok(json_error_response(
@@ -143,21 +137,38 @@ async fn run_backend(
 
     let wants_advertisement = suffix == "info/refs"
         && query
-            .map(|q| q.contains("service=git-upload-pack"))
+            .map(|q| {
+                q.contains("service=git-upload-pack") || q.contains("service=git-receive-pack")
+            })
             .unwrap_or(false);
     let is_post_pack = method == "POST" && suffix == "git-upload-pack";
-    if !wants_advertisement && !is_post_pack {
+    let is_post_receive = method == "POST" && suffix == "git-receive-pack";
+    if !wants_advertisement && !is_post_pack && !is_post_receive {
         return Ok(json_error_response(
             StatusCode::BAD_REQUEST,
             format!("unsupported git http path '{suffix}' — smart HTTP only"),
         ));
     }
 
+    // Backend selection: upload-pack serves reads; receive-pack serves
+    // pushes into the SAME scratch clone (the mirror wave closes the loop —
+    // importing the advanced scratch refs; the back-flow lane pushes them
+    // on to GitHub). Both are bare `git` subcommands with --stateless-rpc.
+    let backend = if is_post_receive
+        || wants_advertisement
+            && query
+                .map(|q| q.contains("service=git-receive-pack"))
+                .unwrap_or(false)
+    {
+        "receive-pack"
+    } else {
+        "upload-pack"
+    };
     let mut cmd = tokio::process::Command::new("git");
     // kill_on_drop: a child abandoned by the 60s deadline below must die,
     // not linger as an orphan holding .git locks (Round A S2).
     cmd.kill_on_drop(true);
-    cmd.arg("upload-pack").arg("--stateless-rpc");
+    cmd.arg(backend).arg("--stateless-rpc");
     if wants_advertisement {
         cmd.arg("--advertise-refs");
     }
@@ -177,7 +188,9 @@ async fn run_backend(
             .and_then(|v| v.to_str().ok())
             .unwrap_or(""),
     );
-    cmd.stdin(if is_post_pack {
+    // Both pack POSTs carry the client's stream on stdin (S0: receive-pack
+    // with a null stdin reads EOF and silently lands nothing).
+    cmd.stdin(if is_post_pack || is_post_receive {
         Stdio::piped()
     } else {
         Stdio::null()
@@ -223,14 +236,30 @@ async fn run_backend(
     // no preamble. Emitted as v0-shaped lines; a v2 client (GIT_PROTOCOL
     // forwarded) skips them per gitprotocol-v2.
     let stdout = if wants_advertisement {
-        let mut full = b"001e# service=git-upload-pack\n0000".to_vec();
+        let service = if backend == "receive-pack" {
+            "git-receive-pack"
+        } else {
+            "git-upload-pack"
+        };
+        // pkt-line length header = 4 (header bytes) + payload length — the
+        // hardcoded upload-pack value broke receive-pack advertisements
+        // ("bad line length character").
+        let payload = format!("# service={service}\n");
+        let preamble = format!("{:04x}{}0000", payload.len() + 4, payload);
+        let mut full = preamble.into_bytes();
         full.extend_from_slice(&output.stdout);
         full
     } else {
         output.stdout
     };
     let content_type = if wants_advertisement {
-        "application/x-git-upload-pack-advertisement".to_string()
+        if backend == "receive-pack" {
+            "application/x-git-receive-pack-advertisement".to_string()
+        } else {
+            "application/x-git-upload-pack-advertisement".to_string()
+        }
+    } else if backend == "receive-pack" {
+        "application/x-git-receive-pack-result".to_string()
     } else {
         "application/x-git-upload-pack-result".to_string()
     };
@@ -254,15 +283,25 @@ pub async fn handle_git_http(State(state): State<AppState>, req: Request) -> Res
     // W2c: the credential resolves to the bootstrap identity (NOA_API_TOKEN)
     // or a registered user token — any of them may read. Pushes are refused
     // downstream regardless of identity (write direction is a later slice).
+    // W2a2: the push path needs can_write — resolve the credential to an
+    // identity (bootstrap token compares directly; user tokens via the
+    // registry) and carry the WRITE permission separately from the read
+    // authorization, so a reader-role user cannot push through /git
+    // (the REST write role's git-direction twin).
+    let mut can_write = false;
     let authorized = match git_credential(req.headers()) {
         // Empty credential vs empty configured token compares equal — a
         // server started with `NOA_API_TOKEN=""` must NOT become anonymous
         // readable (S1: the pre-W2c guard was lost in the refactor).
         Some(token) if !token.is_empty() && !state.api_token.is_empty() => {
             if crate::server::constant_time_eq(token.as_bytes(), state.api_token.as_bytes()) {
+                can_write = true;
+                true
+            } else if let Some(identity) = state.user_registry.resolve(&token).await {
+                can_write = identity.can_write();
                 true
             } else {
-                state.user_registry.resolve(&token).await.is_some()
+                false
             }
         }
         _ => false,
@@ -344,6 +383,23 @@ pub async fn handle_git_http(State(state): State<AppState>, req: Request) -> Res
     } else {
         None
     };
+    // W2a2 (authority-flip wave): receive-pack (push) is served — the
+    // scratch clone is the write target, and the mirror wave closes the
+    // loop. Pushing requires an authenticated identity (the same bar as
+    // the REST write role); reads stay any-identity.
+    let is_receive_request = git_path.suffix.contains("receive-pack") && method == "POST"
+        || query
+            .as_deref()
+            .map(|q| q.contains("service=git-receive-pack"))
+            .unwrap_or(false);
+    if is_receive_request {
+        if !authorized {
+            return json_error_response(StatusCode::UNAUTHORIZED, "push requires authentication");
+        }
+        if !can_write {
+            return json_error_response(StatusCode::FORBIDDEN, "push requires the write role");
+        }
+    }
     match run_backend(
         &state,
         &git_path.repo,

@@ -1344,16 +1344,22 @@ async fn test_git_http_auth_and_404() {
     let resp = f.app.clone().oneshot(ghost).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
-    // push must be refused outright (W2a is read-only).
-    let push = Request::builder()
+    // Push (receive-pack) REQUIRES an authenticated identity — the
+    // unauthenticated variant is refused with the 401 challenge (the
+    // authenticated path is exercised by test_receive_pack_and_backflow).
+    let push_noauth = Request::builder()
         .method(Method::POST)
-        .uri("/git/pilot/git-receive-pack")
-        .header("authorization", format!("Basic {creds}"))
-        .header("content-type", "application/x-git-receive-pack-request")
-        .body(Body::from(vec![0u8]))
+        .uri("/git/pilot/info/refs?service=git-receive-pack")
+        .body(Body::empty())
         .unwrap();
-    let resp = f.app.clone().oneshot(push).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let resp = f.app.clone().oneshot(push_noauth).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert!(
+        resp.headers()
+            .get("www-authenticate")
+            .is_some_and(|v| v.to_str().unwrap().contains("Basic")),
+        "push 401 must carry a Basic challenge"
+    );
 }
 
 /// W1b: the CI-run records API — record + list round-trip on a catalog
@@ -1483,4 +1489,174 @@ async fn test_runs_record_and_list() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+/// W2a2: receive-pack (push) via the /git endpoint updates the scratch —
+/// the authority-flip's write path — and the back-flow lane pushes the
+/// mirrored state (master + tags + PR refs) to the origin.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_receive_pack_and_backflow() {
+    let f = make_fixture().await;
+
+    // Register a job WITHOUT backflow first (the receive path is
+    // independent of the flag), then flip backflow on for the wave.
+    let job_create = serde_json::json!({
+        "name": "pilot",
+        "remote_url": f.origin_url,
+        "github_slug": "celestia-island/noa",
+        "branches": ["master"],
+        "tags": true,
+        "pr_heads": true,
+        "backflow": true,
+        "enabled": true,
+    });
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/jobs",
+            Some(job_create.to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Prime the wave once so the scratch exists, then push to it via the
+    // /git receive-pack path (a second work repo pushing a new commit).
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/run",
+            Some(serde_json::json!({ "job": "pilot" }).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let _ = wait_job_ok(&f.app, "pilot").await;
+
+    // REAL e2e: serve the router on a loopback port and push through the
+    // /git receive-pack path with a stock git client (S0: the receive POST
+    // stdin wiring — a null stdin reads EOF and silently lands nothing).
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let app = f.app.clone();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    // RAW credentials in the userinfo (git builds the Basic header itself;
+    // a base64 value here would be double-encoded).
+    let url = format!("http://mirror:{TEST_API_TOKEN}@127.0.0.1:{port}/git/pilot");
+    // Clone through noa, commit, push back — the authority write direction.
+    let work = f._tmp.path().join("push-work");
+    let out = std::process::Command::new("git")
+        .args(["clone", &url, work.to_str().unwrap()])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "clone via noa failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    std::fs::write(work.join("pushed.txt"), b"authority-flip write\n").unwrap();
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(["-C", work.to_str().unwrap(), "add", "-A"]);
+    let _ = cmd.output().unwrap();
+    let mut cmd = std::process::Command::new("git");
+    cmd.args([
+        "-C",
+        work.to_str().unwrap(),
+        "commit",
+        "-m",
+        "pushed via noa",
+    ])
+    .env("GIT_AUTHOR_NAME", "noa-test")
+    .env("GIT_AUTHOR_EMAIL", "t@noa.local")
+    .env("GIT_COMMITTER_NAME", "noa-test")
+    .env("GIT_COMMITTER_EMAIL", "t@noa.local");
+    let out = cmd.output().unwrap();
+    assert!(out.status.success(), "commit failed");
+    let out = std::process::Command::new("git")
+        .args(["-C", work.to_str().unwrap(), "push", "origin", "master"])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "push via noa receive-pack failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // The next wave pushes the received state to the fixture origin. The
+    // run is ASYNC and wait_job_ok returns immediately (wave 1 left the
+    // status ok) — poll the OBSERVABLE: the fixture origin's master must
+    // converge to the pushed HEAD once wave 2's back-flow lands.
+    let resp = f
+        .app
+        .clone()
+        .oneshot(req(
+            Method::POST,
+            "/api/v1/mirror/run",
+            Some(serde_json::json!({ "job": "pilot" }).to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let pushed_head = std::process::Command::new("git")
+        .args(["-C", work.to_str().unwrap(), "rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let pushed = String::from_utf8(pushed_head.stdout)
+        .unwrap()
+        .trim()
+        .to_string();
+    let mut landed = String::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    while tokio::time::Instant::now() < deadline {
+        let fixture_head = std::process::Command::new("git")
+            .args([
+                "-C",
+                f.origin_url.strip_prefix("file://").unwrap(),
+                "rev-parse",
+                "refs/heads/master",
+            ])
+            .output()
+            .unwrap();
+        landed = String::from_utf8(fixture_head.stdout)
+            .unwrap()
+            .trim()
+            .to_string();
+        if landed == pushed {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    let job = wait_job_ok(&f.app, "pilot").await;
+    let detail = job["last_detail"].as_str().unwrap_or("");
+    assert_eq!(pushed, landed, "the pushed commit must reach the origin");
+    assert!(
+        detail.contains("backflow=pushed"),
+        "backflow note missing: {job}"
+    );
+    assert_eq!(
+        pushed,
+        landed,
+        "the pushed commit must reach the origin (scratch master: {:?})",
+        {
+            let out = std::process::Command::new("git")
+                .args([
+                    "-C",
+                    f.scratch.join("pilot.git").to_str().unwrap(),
+                    "for-each-ref",
+                    "refs/heads",
+                ])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).to_string()
+        }
+    );
 }

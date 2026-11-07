@@ -40,6 +40,12 @@ pub struct MirrorJob {
     /// full PR record before the authority switch).
     #[serde(default)]
     pub pr_heads: bool,
+    /// W2a2 (authority-flip wave): push the scratch's mirrored state back
+    /// to the origin remote each wave — master + tags + PR heads
+    /// (`refs/noa/pr/<N>` on the origin; GitHub refuses `refs/pull/*`).
+    /// This is the transition form's "镜像推 GitHub" lane.
+    #[serde(default)]
+    pub backflow: bool,
     /// Opt-in canary push (W1a-2): after replication, push the first
     /// tracked branch's commit to `noa-mirror-canary` on the remote (git
     /// transport first, Git Data API fallback). Meaningful for https
@@ -335,6 +341,7 @@ mod tests {
             branches: vec!["master".into()],
             tags: false,
             pr_heads: false,
+            backflow: false,
             canary_push: false,
             enabled: true,
             last_run_us: None,
