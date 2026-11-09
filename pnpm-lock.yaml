@@ -14,16 +14,16 @@ importers:
   packages/webui:
     dependencies:
       '@celestia-island/hikari':
-        specifier: ^*
+        specifier: ^0.55
         version: 0.55.241(@types/three@0.186.0)(three@0.185.1)(vue@3.5.42(typescript@6.0.3))
       pinia:
-        specifier: ^*
+        specifier: ^4
         version: 4.0.3(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.42(typescript@6.0.3))
       vue:
-        specifier: ^*
+        specifier: ^3
         version: 3.5.42(typescript@6.0.3)
       vue-router:
-        specifier: ^*
+        specifier: ^5
         version: 5.3.0(@vue/compiler-sfc@3.5.42)(pinia@4.0.3(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.42(typescript@6.0.3)))(rolldown@1.2.6)(vite@8.2.2(@types/node@26.4.1)(sass-embedded@1.103.1)(sass@1.103.1))(vue@3.5.42(typescript@6.0.3))
     devDependencies:
       '@vitejs/plugin-vue':
@@ -39,7 +39,7 @@ importers:
         specifier: ^*
         version: 20.12.2
       sass-embedded:
-        specifier: ^1.100.0
+        specifier: ^1
         version: 1.103.1
       typescript:
         specifier: ~6.0
