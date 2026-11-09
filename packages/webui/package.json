@@ -11,17 +11,17 @@
     "serve": "python3 -m http.server 5173 -d ../../dist/webui"
   },
   "dependencies": {
-    "@celestia-island/hikari": "^*",
-    "pinia": "^*",
-    "vue": "^*",
-    "vue-router": "^*"
+    "@celestia-island/hikari": "^0.55",
+    "pinia": "^4",
+    "vue": "^3",
+    "vue-router": "^5"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^*",
     "@vitejs/plugin-vue-jsx": "^*",
     "@vue/test-utils": "^*",
     "happy-dom": "^*",
-    "sass-embedded": "^1.100.0",
+    "sass-embedded": "^1",
     "typescript": "^*",
     "vite": "^*",
     "vitest": "^*",
