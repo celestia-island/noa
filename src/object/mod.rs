@@ -163,6 +163,20 @@ pub fn sha256_hex(data: &[u8]) -> String {
 #[async_trait]
 pub trait ObjectStore: Send + Sync {
     async fn put_blob(&self, content: &[u8]) -> Result<BlobId>;
+
+    /// Owned counterpart of [`ObjectStore::put_blob`] for callers that already
+    /// hold a `Vec<u8>` (file reads, base64 decodes, blob fetches). The default
+    /// body forwards to `put_blob`, which is exactly one full-object copy on the
+    /// borrowed path; backends whose transport needs to own the buffer (S3
+    /// request bodies) override this to take the caller's allocation as-is.
+    /// ⚠️ An implementor whose `put_blob` delegates to this method MUST
+    /// override this method too — the trait default calls `put_blob`, so a
+    /// backend that reverses the delegation without overriding recurses
+    /// infinitely at runtime (async_trait boxes the future; no static check).
+    async fn put_blob_owned(&self, content: Vec<u8>) -> Result<BlobId> {
+        self.put_blob(&content).await
+    }
+
     async fn get_blob(&self, id: &BlobId) -> Result<Vec<u8>>;
     async fn has_blob(&self, id: &BlobId) -> Result<bool>;
     async fn put_tree(&self, entries: &TreeEntries) -> Result<TreeId>;
@@ -199,5 +213,72 @@ pub async fn create_remote_store(
             let store = SftpObjectStore::from_config(config)?;
             Ok(Box::new(store))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    /// Store that implements only the borrowed `put_blob`. Its `put_blob_owned`
+    /// is therefore the trait's default body, which is what these tests cover.
+    #[derive(Default)]
+    struct BorrowedOnlyStore {
+        blobs: Mutex<HashMap<String, Vec<u8>>>,
+    }
+
+    #[async_trait]
+    impl ObjectStore for BorrowedOnlyStore {
+        async fn put_blob(&self, content: &[u8]) -> Result<BlobId> {
+            let id = BlobId(sha256_hex(content));
+            self.blobs
+                .lock()
+                .unwrap()
+                .insert(id.0.clone(), content.to_vec());
+            Ok(id)
+        }
+
+        async fn get_blob(&self, id: &BlobId) -> Result<Vec<u8>> {
+            self.blobs
+                .lock()
+                .unwrap()
+                .get(&id.0)
+                .cloned()
+                .ok_or_else(|| crate::error::NoaError::ObjectNotFound { id: id.0.clone() }.into())
+        }
+
+        async fn has_blob(&self, id: &BlobId) -> Result<bool> {
+            Ok(self.blobs.lock().unwrap().contains_key(&id.0))
+        }
+
+        async fn put_tree(&self, _entries: &TreeEntries) -> Result<TreeId> {
+            anyhow::bail!("trees are not part of this test store")
+        }
+
+        async fn get_tree(&self, _id: &TreeId) -> Result<TreeEntries> {
+            anyhow::bail!("trees are not part of this test store")
+        }
+
+        async fn has_tree(&self, _id: &TreeId) -> Result<bool> {
+            anyhow::bail!("trees are not part of this test store")
+        }
+    }
+
+    #[tokio::test]
+    async fn default_put_blob_owned_delegates_to_put_blob() {
+        let store = BorrowedOnlyStore::default();
+        let content = b"the owned and borrowed paths must agree".to_vec();
+
+        let borrowed = store.put_blob(&content).await.unwrap();
+        let owned = store.put_blob_owned(content.clone()).await.unwrap();
+
+        assert_eq!(
+            owned, borrowed,
+            "both entry points must produce the same id"
+        );
+        assert_eq!(owned.0, sha256_hex(&content));
+        assert_eq!(store.get_blob(&owned).await.unwrap(), content);
     }
 }

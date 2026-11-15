@@ -236,9 +236,13 @@ impl SftpObjectStore {
 #[async_trait]
 impl ObjectStore for SftpObjectStore {
     async fn put_blob(&self, content: &[u8]) -> Result<BlobId> {
-        let id = BlobId(sha256_hex(content));
+        self.put_blob_owned(content.to_vec()).await
+    }
+
+    async fn put_blob_owned(&self, content: Vec<u8>) -> Result<BlobId> {
+        let id = BlobId(sha256_hex(&content));
         let path = format!("{}/{}", self.base_path, Self::blob_path(&id));
-        self.scp_upload(content.to_vec(), &path).await?;
+        self.scp_upload(content, &path).await?;
         Ok(id)
     }
 

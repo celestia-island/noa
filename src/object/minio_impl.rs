@@ -195,21 +195,24 @@ impl MinioObjectStore {
 #[async_trait]
 impl ObjectStore for MinioObjectStore {
     async fn put_blob(&self, content: &[u8]) -> Result<BlobId> {
-        let id = BlobId(sha256_hex(content));
+        // Borrowed entry point: the HTTP body must own its bytes for the whole
+        // request, so this costs exactly one `to_vec()` copy. Callers that
+        // already hold a `Vec<u8>` should use `put_blob_owned`, which skips it.
+        self.put_blob_owned(content.to_vec()).await
+    }
 
-        // Memory account: exactly one N-byte copy, and it is unavoidable with
-        // this signature. `content` is borrowed, while the HTTP body must own
-        // its bytes for the whole request, so `to_vec()` is that single copy.
-        // `ByteStream::from(Vec<u8>)` then wraps that same allocation as
-        // `Bytes` (capacity == len, so `into_boxed_slice` does not reallocate),
-        // i.e. there is no second buffer here. Removing the copy would require
-        // `put_blob` to take an owned `Vec<u8>`, but the `ObjectStore` trait
-        // fixes the parameter as `&[u8]` for all six backends.
+    async fn put_blob_owned(&self, content: Vec<u8>) -> Result<BlobId> {
+        let id = BlobId(sha256_hex(&content));
+
+        // Memory account: zero extra copies. `content` is the caller's
+        // buffer; `ByteStream::from(Vec<u8>)` turns that same allocation into
+        // `Bytes` (capacity == len, so `into_boxed_slice` does not
+        // reallocate), and the HTTP body owns it for the request.
         self.client
             .put_object()
             .bucket(&self.bucket)
             .key(Self::blob_key(&id))
-            .body(ByteStream::from(content.to_vec()))
+            .body(ByteStream::from(content))
             .send()
             .await?;
 
