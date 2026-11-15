@@ -515,7 +515,9 @@ pub async fn merge_trees_recursive<O: ObjectStore + Clone + 'static>(
                 };
                 match line_merge::merge_lines(base_text, ours_text, theirs_text) {
                     line_merge::LineMerge::Clean(merged_text) => {
-                        let merged_id = object_store.put_blob(merged_text.as_bytes()).await?;
+                        let merged_id = object_store
+                            .put_blob_owned(merged_text.into_bytes())
+                            .await?;
                         entries.insert(
                             path.clone(),
                             MergedEntry::Clean(TreeEntry {

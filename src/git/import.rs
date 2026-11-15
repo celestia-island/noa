@@ -200,7 +200,7 @@ pub async fn store_imported_entries(
     let mut sorted = Vec::with_capacity(entries.len());
     for e in entries {
         let id = match e.body {
-            ImportedBody::Blob(content) => obj_store.put_blob(&content).await?.0,
+            ImportedBody::Blob(content) => obj_store.put_blob_owned(content).await?.0,
             ImportedBody::Gitlink(oid_hex) => {
                 // No noa object exists for a gitlink: the oid names a commit
                 // in another repository. Keep the oid as the entry id so the

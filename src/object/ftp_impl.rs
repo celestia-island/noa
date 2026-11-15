@@ -114,16 +114,18 @@ impl FtpObjectStore {
 #[async_trait]
 impl ObjectStore for FtpObjectStore {
     async fn put_blob(&self, content: &[u8]) -> Result<BlobId> {
-        let id = BlobId(sha256_hex(content));
+        self.put_blob_owned(content.to_vec()).await
+    }
+
+    async fn put_blob_owned(&self, content: Vec<u8>) -> Result<BlobId> {
+        let id = BlobId(sha256_hex(&content));
         let path = Self::blob_path(&id);
-        let data = content.to_vec();
 
         self.with_ftp(move |ftp| {
             let path = path.clone();
-            let data = data.clone();
             Box::pin(async move {
                 Self::ensure_dirs(ftp, &path).await?;
-                let mut reader = Cursor::new(data);
+                let mut reader = Cursor::new(content);
                 ftp.put_file(&path, &mut reader)
                     .await
                     .map_err(|e| Self::ftp_err("put_blob", e))?;

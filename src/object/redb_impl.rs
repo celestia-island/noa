@@ -32,8 +32,11 @@ impl RedbObjectStore {
 #[async_trait::async_trait]
 impl ObjectStore for RedbObjectStore {
     async fn put_blob(&self, content: &[u8]) -> Result<BlobId> {
+        self.put_blob_owned(content.to_vec()).await
+    }
+
+    async fn put_blob_owned(&self, content: Vec<u8>) -> Result<BlobId> {
         let db = self.db.clone();
-        let content = content.to_vec();
         tokio::task::spawn_blocking(move || {
             let hash = sha256_hex(&content);
             let id = BlobId(hash);
@@ -225,5 +228,32 @@ mod tests {
         let id = store.put_blob(content).await.unwrap();
         let expected_hash = sha256_hex(content);
         assert_eq!(id.0, expected_hash);
+    }
+}
+
+#[cfg(test)]
+mod owned_put_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn make_store() -> (TempDir, RedbObjectStore) {
+        let tmp = TempDir::new().unwrap();
+        let db = Database::builder()
+            .create(tmp.path().join("test.redb"))
+            .unwrap();
+        let store = RedbObjectStore::new(Arc::new(db)).unwrap();
+        (tmp, store)
+    }
+
+    #[tokio::test]
+    async fn owned_put_same_id_and_bytes_as_borrowed_put() {
+        let (_tmp, store) = make_store();
+        let content = b"owned put checkpoint".repeat(64);
+
+        let borrowed = store.put_blob(&content).await.unwrap();
+        let owned = store.put_blob_owned(content.clone()).await.unwrap();
+
+        assert_eq!(owned, borrowed, "owned and borrowed puts must hash alike");
+        assert_eq!(store.get_blob(&owned).await.unwrap(), content);
     }
 }

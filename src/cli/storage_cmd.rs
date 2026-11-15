@@ -359,7 +359,7 @@ async fn push_tree_recursive(
                     Err(e) => tracing::warn!("has_blob check failed for {}: {e}", entry.id),
                 }
                 if let Ok(data) = local.get_blob(&blob_id).await {
-                    if let Err(e) = remote.put_blob(&data).await {
+                    if let Err(e) = remote.put_blob_owned(data).await {
                         tracing::warn!("put_blob failed for {}: {e}", entry.id);
                     }
                 }
@@ -407,7 +407,7 @@ pub async fn run_fetch(repo: &Repository, target: &str, hash_or_cid: &str) -> Re
 
     println!("OK ({} bytes)", data.len());
     println!("  SHA-256: {}", crate::object::sha256_hex(&data));
-    local.put_blob(&data).await?;
+    local.put_blob_owned(data).await?;
     println!("  Stored to local object store.");
     Ok(())
 }
