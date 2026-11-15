@@ -332,7 +332,7 @@ pub async fn upload_blobs(
         let content = base64::engine::general_purpose::STANDARD
             .decode(&blob.content)
             .map_err(err_json)?;
-        let id = store.put_blob(&content).await.map_err(err_json)?;
+        let id = store.put_blob_owned(content).await.map_err(err_json)?;
         ids.push(id.0);
     }
     Ok(Json(UploadResult { ids }))

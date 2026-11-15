@@ -319,11 +319,15 @@ pub struct RepoStat {
 #[async_trait]
 impl ObjectStore for IpfsObjectStore {
     async fn put_blob(&self, content: &[u8]) -> Result<BlobId> {
-        let id = BlobId(sha256_hex(content));
+        self.put_blob_owned(content.to_vec()).await
+    }
+
+    async fn put_blob_owned(&self, content: Vec<u8>) -> Result<BlobId> {
+        let id = BlobId(sha256_hex(&content));
         let cid = sha256_hex_to_cid(&id.0)?;
         let expected_cid = cid.clone();
 
-        let returned_cid = self.block_put(content.to_vec()).await?;
+        let returned_cid = self.block_put(content).await?;
 
         if returned_cid != expected_cid {
             tracing::warn!(

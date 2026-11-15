@@ -481,7 +481,9 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                             .workdir_kind_and_body(path, previous.as_ref().map(|e| e.kind))
                             .await;
                         let blob_id = match (body, previous.as_ref()) {
-                            (Some(content), _) => self.object_store.put_blob(&content).await?.0,
+                            (Some(content), _) => {
+                                self.object_store.put_blob_owned(content).await?.0
+                            }
                             // A gitlink carries a git oid, not a blob id: rewriting it
                             // from the log would leave the export writing a submodule
                             // pointer that no repository can resolve.
