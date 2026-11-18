@@ -259,16 +259,6 @@ impl Repository {
         Ok(())
     }
 
-    pub fn read_orig_head(&self) -> Result<Option<String>> {
-        let path = self.noa_dir.join(ORIG_HEAD_FILE);
-        if path.exists() {
-            let content = std::fs::read_to_string(&path)?;
-            Ok(Some(content.trim().to_string()))
-        } else {
-            Ok(None)
-        }
-    }
-
     pub fn write_orig_head(&self, name: &str) -> Result<()> {
         let path = self.noa_dir.join(ORIG_HEAD_FILE);
         std::fs::write(&path, format!("{name}\n"))?;
@@ -309,33 +299,6 @@ impl Repository {
         let path = self.agent_log_path(workspace);
         FileAgentLog::create(&path)
     }
-
-    pub fn init_for_sync(path: &Path) -> Result<SyncInitResult> {
-        let noa_dir = Self::resolve_noa_dir(path);
-
-        let noa_initialized = if !noa_dir.exists() {
-            Self::init_inner(path, RepoConfig::default(), |_p, _c| Ok(()))?;
-            true
-        } else {
-            false
-        };
-
-        let current_branch = get_current_git_branch(path)?;
-
-        Ok(SyncInitResult {
-            repo_id: format!("{}:{}", "sync", path.display()),
-            current_branch,
-            noa_initialized,
-            gitignore_updated: false,
-        })
-    }
-}
-
-pub struct SyncInitResult {
-    pub repo_id: String,
-    pub current_branch: String,
-    pub noa_initialized: bool,
-    pub gitignore_updated: bool,
 }
 
 pub fn get_current_git_branch(workspace_root: &Path) -> Result<String> {
