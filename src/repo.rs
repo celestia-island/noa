@@ -299,6 +299,43 @@ impl Repository {
         let path = self.agent_log_path(workspace);
         FileAgentLog::create(&path)
     }
+
+    /// Prepares a sync staging directory and reports what happened.
+    ///
+    /// This is published API: sibling repos (`entelecheia`'s workspace
+    /// manager, `scriptum`'s TUI handshake) stage a `NoaRemote` workspace by
+    /// calling it, so it must not be swept away as dead code just because
+    /// nothing inside this crate calls it.
+    pub fn init_for_sync(path: &Path) -> Result<SyncInitResult> {
+        let noa_dir = Self::resolve_noa_dir(path);
+
+        let noa_initialized = if !noa_dir.exists() {
+            Self::init_inner(path, RepoConfig::default(), |_p, _c| Ok(()))?;
+            true
+        } else {
+            false
+        };
+
+        let current_branch = get_current_git_branch(path)?;
+
+        Ok(SyncInitResult {
+            repo_id: format!("{}:{}", "sync", path.display()),
+            current_branch,
+            noa_initialized,
+            gitignore_updated: false,
+        })
+    }
+}
+
+/// Outcome of [`Repository::init_for_sync`].
+///
+/// Published surface: sibling repos also build this literal directly (as an
+/// error fallback), so the field set is a cross-repo contract.
+pub struct SyncInitResult {
+    pub repo_id: String,
+    pub current_branch: String,
+    pub noa_initialized: bool,
+    pub gitignore_updated: bool,
 }
 
 pub fn get_current_git_branch(workspace_root: &Path) -> Result<String> {
