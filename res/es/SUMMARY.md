@@ -1,3 +1,0 @@
-# Índice
-
-[Noa](./intro.md)

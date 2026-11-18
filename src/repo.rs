@@ -259,16 +259,6 @@ impl Repository {
         Ok(())
     }
 
-    pub fn read_orig_head(&self) -> Result<Option<String>> {
-        let path = self.noa_dir.join(ORIG_HEAD_FILE);
-        if path.exists() {
-            let content = std::fs::read_to_string(&path)?;
-            Ok(Some(content.trim().to_string()))
-        } else {
-            Ok(None)
-        }
-    }
-
     pub fn write_orig_head(&self, name: &str) -> Result<()> {
         let path = self.noa_dir.join(ORIG_HEAD_FILE);
         std::fs::write(&path, format!("{name}\n"))?;
@@ -310,6 +300,12 @@ impl Repository {
         FileAgentLog::create(&path)
     }
 
+    /// Prepares a sync staging directory and reports what happened.
+    ///
+    /// This is published API: sibling repos (`entelecheia`'s workspace
+    /// manager, `scriptum`'s TUI handshake) stage a `NoaRemote` workspace by
+    /// calling it, so it must not be swept away as dead code just because
+    /// nothing inside this crate calls it.
     pub fn init_for_sync(path: &Path) -> Result<SyncInitResult> {
         let noa_dir = Self::resolve_noa_dir(path);
 
@@ -331,6 +327,10 @@ impl Repository {
     }
 }
 
+/// Outcome of [`Repository::init_for_sync`].
+///
+/// Published surface: sibling repos also build this literal directly (as an
+/// error fallback), so the field set is a cross-repo contract.
 pub struct SyncInitResult {
     pub repo_id: String,
     pub current_branch: String,

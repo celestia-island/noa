@@ -222,26 +222,6 @@ impl IpfsObjectStore {
         Ok(())
     }
 
-    pub async fn pin_rm(&self, cid: &str) -> Result<()> {
-        let resp = self
-            .request(&format!("/pin/rm?arg={cid}"))
-            .send()
-            .await
-            .map_err(|_| NoaError::IpfsDaemonUnreachable {
-                endpoint: self.api_url.clone(),
-            })?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(NoaError::IpfsError {
-                message: format!("pin/rm failed ({status}): {body}"),
-            }
-            .into());
-        }
-        Ok(())
-    }
-
     pub async fn version(&self) -> Result<String> {
         #[derive(Deserialize)]
         struct VersionResponse {
@@ -295,10 +275,6 @@ impl IpfsObjectStore {
             message: format!("failed to parse repo/stat response: {e}"),
         })?;
         Ok(stat)
-    }
-
-    pub async fn gateway_url(&self, cid: &str, gateway: &str) -> String {
-        format!("{}/ipfs/{}", gateway.trim_end_matches('/'), cid)
     }
 
     pub async fn block_get_raw(&self, cid: &str) -> Result<Vec<u8>> {

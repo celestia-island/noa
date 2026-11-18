@@ -60,11 +60,6 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
         self
     }
 
-    pub fn with_conflict_resolution(mut self, resolution: ConflictResolution) -> Self {
-        self.conflict_resolution = resolution;
-        self
-    }
-
     /// Build phase (pure): fold log entries over the parent tree(s) and return
     /// the snapshot value WITHOUT persisting it and WITHOUT compacting the log.
     ///

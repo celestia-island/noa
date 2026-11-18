@@ -1,3 +1,0 @@
-# Sommaire
-
-[Noa](./intro.md)
