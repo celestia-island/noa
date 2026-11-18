@@ -62,21 +62,8 @@ pub fn is_eof_error(e: &anyhow::Error) -> bool {
         .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::UnexpectedEof)
 }
 
-pub fn is_ipfs_daemon_unreachable(e: &anyhow::Error) -> bool {
-    e.downcast_ref::<NoaError>()
-        .is_some_and(|ne| matches!(ne, NoaError::IpfsDaemonUnreachable { .. }))
-}
-
 pub fn remote_err(backend: &str, message: impl std::fmt::Display) -> anyhow::Error {
     NoaError::RemoteStoreError {
-        backend: backend.to_string(),
-        message: message.to_string(),
-    }
-    .into()
-}
-
-pub fn transport_err(backend: &str, message: impl std::fmt::Display) -> anyhow::Error {
-    NoaError::TransportError {
         backend: backend.to_string(),
         message: message.to_string(),
     }

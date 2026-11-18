@@ -34,10 +34,6 @@ impl VirtualScroll {
         self.scroll_offset = (self.scroll_offset + amount).min(max);
     }
 
-    pub fn scroll_to(&mut self, index: usize) {
-        self.scroll_offset = index.min(self.max_offset());
-    }
-
     #[must_use]
     pub fn selected_index(&self) -> Option<usize> {
         if self.total_items == 0 {
