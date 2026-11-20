@@ -3,7 +3,7 @@ name: Test
 # One in-flight run per pull request (ci-ops 8.3.3): a superseded push cancels
 # its predecessor instead of queueing a second full suite behind it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 on:
@@ -18,7 +18,6 @@ jobs:
     # sub-minute, execute no pull request code, and hold no secrets.
     # A contributor who wants this suite can run it in their own fork, on
     # their own minutes.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Test (${{ matrix.toolchain }}, ${{ matrix.os }})
     runs-on: [self-hosted, linux, x64, local]
     timeout-minutes: 30
