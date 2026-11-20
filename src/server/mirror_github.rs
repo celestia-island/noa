@@ -602,6 +602,28 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
+    /// The helper's contract is "the offset must be honoured": GitHub's
+    /// `/git/commits` dates carry the commit's ORIGINAL offset, so the same
+    /// instant written in three different offsets must land on one epoch
+    /// second — otherwise a lane switch shifts the snapshot id.
+    #[test]
+    fn iso8601_unix_seconds_honours_the_offset() {
+        let instant = Some(1_785_830_400);
+        assert_eq!(iso8601_unix_seconds("2026-08-04T00:00:00-08:00"), instant);
+        assert_eq!(iso8601_unix_seconds("2026-08-04T08:00:00+00:00"), instant);
+        assert_eq!(iso8601_unix_seconds("2026-08-04T08:00:00Z"), instant);
+        assert_eq!(iso8601_unix_seconds("2026-08-04T16:00:00+08:00"), instant);
+    }
+
+    /// The git lane's own epoch is never negative; a pre-epoch date clamps to
+    /// 0 instead of wrapping through the `u64` cast.
+    #[test]
+    fn iso8601_unix_seconds_clamps_and_rejects() {
+        assert_eq!(iso8601_unix_seconds("1969-12-31T23:59:59Z"), Some(0));
+        assert_eq!(iso8601_unix_seconds("not a timestamp"), None);
+        assert_eq!(iso8601_unix_seconds(""), None);
+    }
+
     async fn mock_github() -> (String, Arc<AtomicUsize>) {
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_for_blob = Arc::clone(&calls);
