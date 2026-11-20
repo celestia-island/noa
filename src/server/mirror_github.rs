@@ -283,7 +283,7 @@ impl GitDataClient {
         let author = parsed.author.map(|a| a.name).unwrap_or_default();
         let seconds = parsed
             .committer
-            .and_then(|c| chrono_ish_parse(&c.date))
+            .and_then(|c| iso8601_unix_seconds(&c.date))
             .unwrap_or(0);
         Ok((parsed.tree.sha, author, parsed.message, seconds))
     }
@@ -559,10 +559,10 @@ impl GitDataClient {
 /// ORIGINAL timezone offset (e.g. `-08:00`), so the offset must be honoured
 /// — the git lane's gix `time().seconds` is a true epoch, and a lane switch
 /// must not shift the snapshot id (Round A S2).
-fn chrono_ish_parse(s: &str) -> Option<u64> {
-    chrono::DateTime::parse_from_rfc3339(s)
+fn iso8601_unix_seconds(s: &str) -> Option<u64> {
+    s.parse::<jiff::Timestamp>()
         .ok()
-        .map(|dt| dt.timestamp().max(0) as u64)
+        .map(|ts| ts.as_second().max(0) as u64)
 }
 
 /// Percent-encodes a git ref path for use in a URL path, keeping `/` as the

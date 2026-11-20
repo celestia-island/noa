@@ -177,8 +177,8 @@ fn render_log(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 snap.id.0.clone()
             };
-            let ts = chrono::DateTime::from_timestamp(snap.timestamp as i64 / 1_000_000, 0)
-                .map(|dt| dt.format("%m/%d %H:%M").to_string())
+            let ts = jiff::Timestamp::from_second(snap.timestamp as i64 / 1_000_000)
+                .map(|dt| dt.strftime("%m/%d %H:%M").to_string())
                 .unwrap_or_default();
 
             let line = Line::from(vec![
@@ -231,9 +231,9 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
         return;
     };
 
-    let ts = chrono::DateTime::from_timestamp(snap.timestamp as i64 / 1_000_000, 0).map_or_else(
-        || "unknown".to_string(),
-        |dt| dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+    let ts = jiff::Timestamp::from_second(snap.timestamp as i64 / 1_000_000).map_or_else(
+        |_| "unknown".to_string(),
+        |dt| dt.strftime("%Y-%m-%d %H:%M:%S").to_string(),
     );
 
     let parents: String = snap

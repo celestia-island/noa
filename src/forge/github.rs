@@ -139,8 +139,10 @@ impl GithubPullResponse {
         } else {
             PrState::Closed
         };
-        let created_at = chrono::DateTime::parse_from_rfc3339(&self.created_at)
-            .map(|d| d.timestamp())
+        let created_at = self
+            .created_at
+            .parse::<jiff::Timestamp>()
+            .map(|d| d.as_second())
             .unwrap_or(0);
         PullRequest {
             id: self.number.to_string(),
