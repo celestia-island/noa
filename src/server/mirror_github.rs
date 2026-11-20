@@ -604,8 +604,8 @@ mod tests {
 
     /// The helper's contract is "the offset must be honoured": GitHub's
     /// `/git/commits` dates carry the commit's ORIGINAL offset, so the same
-    /// instant written in three different offsets must land on one epoch
-    /// second — otherwise a lane switch shifts the snapshot id.
+    /// instant written four ways (`-08:00`, `+00:00`, `Z`, `+08:00`) must land
+    /// on one epoch second — otherwise a lane switch shifts the snapshot id.
     #[test]
     fn iso8601_unix_seconds_honours_the_offset() {
         let instant = Some(1_785_830_400);
