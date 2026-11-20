@@ -108,7 +108,7 @@ pub async fn create_pr(
             head: body.head,
             base_snapshot: base_ws.head.0.clone(),
             author: body.author,
-            created_at: chrono::Utc::now().timestamp(),
+            created_at: jiff::Timestamp::now().as_second(),
             merge_snapshot: None,
             metadata: body.metadata,
         })

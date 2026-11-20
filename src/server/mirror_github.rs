@@ -283,7 +283,7 @@ impl GitDataClient {
         let author = parsed.author.map(|a| a.name).unwrap_or_default();
         let seconds = parsed
             .committer
-            .and_then(|c| chrono_ish_parse(&c.date))
+            .and_then(|c| iso8601_unix_seconds(&c.date))
             .unwrap_or(0);
         Ok((parsed.tree.sha, author, parsed.message, seconds))
     }
@@ -559,10 +559,10 @@ impl GitDataClient {
 /// ORIGINAL timezone offset (e.g. `-08:00`), so the offset must be honoured
 /// — the git lane's gix `time().seconds` is a true epoch, and a lane switch
 /// must not shift the snapshot id (Round A S2).
-fn chrono_ish_parse(s: &str) -> Option<u64> {
-    chrono::DateTime::parse_from_rfc3339(s)
+fn iso8601_unix_seconds(s: &str) -> Option<u64> {
+    s.parse::<jiff::Timestamp>()
         .ok()
-        .map(|dt| dt.timestamp().max(0) as u64)
+        .map(|ts| ts.as_second().max(0) as u64)
 }
 
 /// Percent-encodes a git ref path for use in a URL path, keeping `/` as the
@@ -601,6 +601,28 @@ mod tests {
     use axum::{routing::post, Router};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+
+    /// The helper's contract is "the offset must be honoured": GitHub's
+    /// `/git/commits` dates carry the commit's ORIGINAL offset, so the same
+    /// instant written four ways (`-08:00`, `+00:00`, `Z`, `+08:00`) must land
+    /// on one epoch second — otherwise a lane switch shifts the snapshot id.
+    #[test]
+    fn iso8601_unix_seconds_honours_the_offset() {
+        let instant = Some(1_785_830_400);
+        assert_eq!(iso8601_unix_seconds("2026-08-04T00:00:00-08:00"), instant);
+        assert_eq!(iso8601_unix_seconds("2026-08-04T08:00:00+00:00"), instant);
+        assert_eq!(iso8601_unix_seconds("2026-08-04T08:00:00Z"), instant);
+        assert_eq!(iso8601_unix_seconds("2026-08-04T16:00:00+08:00"), instant);
+    }
+
+    /// The git lane's own epoch is never negative; a pre-epoch date clamps to
+    /// 0 instead of wrapping through the `u64` cast.
+    #[test]
+    fn iso8601_unix_seconds_clamps_and_rejects() {
+        assert_eq!(iso8601_unix_seconds("1969-12-31T23:59:59Z"), Some(0));
+        assert_eq!(iso8601_unix_seconds("not a timestamp"), None);
+        assert_eq!(iso8601_unix_seconds(""), None);
+    }
 
     async fn mock_github() -> (String, Arc<AtomicUsize>) {
         let calls = Arc::new(AtomicUsize::new(0));

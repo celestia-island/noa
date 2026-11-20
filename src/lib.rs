@@ -22,5 +22,5 @@ pub mod workspace;
 /// Returns 0 if the system clock is before the Unix epoch.
 #[must_use]
 pub fn now_micros() -> u64 {
-    u64::try_from(chrono::Utc::now().timestamp_micros()).unwrap_or(0)
+    u64::try_from(jiff::Timestamp::now().as_microsecond()).unwrap_or(0)
 }
