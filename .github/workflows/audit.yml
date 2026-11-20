@@ -14,7 +14,6 @@ jobs:
     # sub-minute, execute no pull request code, and hold no secrets.
     # A contributor who wants this suite can run it in their own fork, on
     # their own minutes.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Cargo Audit
     runs-on: [self-hosted, linux, x64, local]
     timeout-minutes: 30
