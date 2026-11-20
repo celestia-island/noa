@@ -42,7 +42,6 @@ axum = "^0.8"
 flate2 = "^1"
 base64 = "^0.23"
 jsonwebtoken = "^9"
-chrono = "^0.4"
 clap = { version = "^4", features = ["derive"] }
 crossterm = "^0.29"
 getrandom = "^0.4"
@@ -50,6 +49,7 @@ gix = "^0.84"
 hex = "^0.4"
 hyper-rustls = { version = "^0.27", default-features = false, features = ["native-tokio", "http1", "tls12", "logging", "ring"] }
 ignore = "^0.4"
+jiff = "^1"
 ratatui = { version = "^0.30", features = ["crossterm"] }
 redb = "^4"
 regex = "^1"
