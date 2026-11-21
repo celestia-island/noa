@@ -7,13 +7,10 @@ noa and git — mirror fidelity verification relies on exactly this).
 
 ## Three-layer model
 
-```
-Workspace          — one isolated workspace per agent, invisible to each other
-   │ head points to
-Snapshot           — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)
-   │ tree_hash points to
-ObjectStore        — blob / tree / symlink / gitlink (blobs byte-compatible with git;
-                     trees/commits use noa's own SHA-256 addressing)
+```mermaid
+flowchart TD
+    W["Workspace — one isolated workspace per agent, invisible to each other"] -- "head points to" --> S["Snapshot — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)"]
+    S -- "tree_hash points to" --> O["ObjectStore — blob / tree / symlink / gitlink (blobs byte-compatible with git; trees/commits use noa's own SHA-256 addressing)"]
 ```
 
 - **Workspace** is noa's core isolation primitive: multiple agents each hold their own workspace
@@ -31,7 +28,7 @@ directory; no external database required.
 ## Server components (noa-server)
 
 | Component | Responsibility |
-|---|---|
+| --- | --- |
 | REST API (`/api/v1/*`) | CRUD for repos / PRs / runs / users / mirror-jobs |
 | git-http (`/git/{repo}/*`) | smart HTTP: upload-pack (clone/fetch) + receive-pack (push, since W2a2) |
 | Mirror engine | scheduled waves: fetch master / tags / PR heads from origin and import into noa; can back-flow push |
@@ -67,9 +64,9 @@ back-flow pushes).
 `NOA_MIRROR_SCRATCH_DIR/{job}.git` is a bare clone per mirror job with a triple role:
 
 1. **Fetch-source cache** — waves fetch from origin; the importer reads git objects from here;
-2. **Serving body for git-http** — `/git/{repo}` runs upload-pack / receive-pack directly against
+1. **Serving body for git-http** — `/git/{repo}` runs upload-pack / receive-pack directly against
    it;
-3. **Push source for back-flow** — the back-flow lane pushes its local refs back to origin
+1. **Push source for back-flow** — the back-flow lane pushes its local refs back to origin
    atomically.
 
 A push (receive-pack) updates the scratch's local refs; the next wave imports them into noa's ref

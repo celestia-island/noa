@@ -7,13 +7,10 @@ noa — распределённая система контроля верси�
 
 ## Трёхслойная модель
 
-```
-Workspace          — one isolated workspace per agent, invisible to each other
-   │ head points to
-Snapshot           — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)
-   │ tree_hash points to
-ObjectStore        — blob / tree / symlink / gitlink (blobs byte-compatible with git;
-                     trees/commits use noa's own SHA-256 addressing)
+```mermaid
+flowchart TD
+    W["Workspace — one isolated workspace per agent, invisible to each other"] -- "head points to" --> S["Snapshot — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)"]
+    S -- "tree_hash points to" --> O["ObjectStore — blob / tree / symlink / gitlink (blobs byte-compatible with git; trees/commits use noa's own SHA-256 addressing)"]
 ```
 
 - **Рабочее пространство (workspace)** — базовый примитив изоляции noa: несколько агентов владеют
@@ -33,7 +30,7 @@ ObjectStore        — blob / tree / symlink / gitlink (blobs byte-compatible wi
 ## Компоненты сервера (noa-server)
 
 | Компонент | Ответственность |
-|---|---|
+| --- | --- |
 | REST API (`/api/v1/*`) | CRUD для репозиториев / PR / запусков / пользователей / задач зеркалирования |
 | git-http (`/git/{repo}/*`) | смарт-HTTP: upload-pack (clone/fetch) + receive-pack (push, начиная с W2a2) |
 | Движок зеркалирования | плановые волны: забор master / тегов / PR-головок из origin и импорт в noa; умеет выполнять обратный push |
@@ -69,9 +66,9 @@ Git-форма представления живёт в **настоящем git
 ролью:
 
 1. **Кэш источника fetch** — волны делают fetch из origin; импортёр читает git-объекты отсюда;
-2. **Обслуживающее тело для git-http** — `/git/{repo}` запускает upload-pack / receive-pack прямо
+1. **Обслуживающее тело для git-http** — `/git/{repo}` запускает upload-pack / receive-pack прямо
    поверх него;
-3. **Источник push для обратного потока** — канал обратного потока атомарно отправляет свои
+1. **Источник push для обратного потока** — канал обратного потока атомарно отправляет свои
    локальные ссылки обратно в origin.
 
 Push (receive-pack) обновляет локальные ссылки scratch; следующая волна импортирует их в систему

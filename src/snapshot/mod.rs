@@ -360,14 +360,17 @@ mod merge_base_nearest_regression {
 
     /// #102 diamond-with-merge probe (the topology from the issue):
     ///
-    /// ```text
-    /// R ── D            R ── L1 ── L2
-    ///      │                     │
-    ///      └────── C  <──────────┘      C = merge[L2, D]
-    ///               │
-    ///               G ── E
-    ///                     │
-    /// T = merge[E, R] ────┘
+    /// ```mermaid
+    /// flowchart TD
+    ///     R["R"] --> D["D"]
+    ///     R --> L1["L1"]
+    ///     L1 --> L2["L2"]
+    ///     D --> C["C = merge[L2, D]"]
+    ///     L2 --> C
+    ///     C --> G["G"]
+    ///     G --> E["E"]
+    ///     E --> T["T = merge[E, R]"]
+    ///     R --> T
     /// ```
     ///
     /// `ours = C`, `theirs = T`. The first `theirs`-side level hit is `R`
