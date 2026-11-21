@@ -256,6 +256,17 @@ pub async fn run_resolve(
         timestamp: now,
         message,
     };
+    // #103: validate before you write. `update_head` fails with
+    // `WorkspaceNotFound` when the HEAD ref names a workspace row that is
+    // gone, and storing the resolution snapshot first used to strand an
+    // unreachable orphan row behind that failure. Keep the store →
+    // update_head order (inverting it would leave the head dangling at an
+    // unstored id on a crash) and just re-establish the cheap existence
+    // check #81 dropped — the explicit error text comes back with it. This
+    // is the mirror image of run_create's validate-before-write ordering.
+    if ws_mgr.get(&current).await?.is_none() {
+        anyhow::bail!("workspace '{current}' not found");
+    }
     snap_store.store(&resolved_snapshot).await?;
     ws_mgr.update_head(&current, &resolved_snapshot.id).await?;
 
@@ -282,4 +293,137 @@ pub async fn run_resolve(
     println!("Created resolution snapshot: {}", resolved_snapshot.id);
     println!("Run 'noa snapshot create' to commit additional changes.");
     Ok(())
+}
+
+/// Regression test for issue #103: `run_resolve` used to store the resolved
+/// snapshot and only then call `ws_mgr.update_head`, which fails with
+/// `WorkspaceNotFound` when the HEAD ref names a workspace row that is gone —
+/// stranding an unreachable orphan snapshot behind the failure. The fix
+/// re-establishes the validate-before-write check (and the explicit error
+/// text) that #81 dropped.
+#[cfg(test)]
+mod resolve_orphan_regression {
+    use super::*;
+    use crate::log::{LogEntry, OpType};
+    use crate::snapshot::{Snapshot, SnapshotId};
+    use crate::workspace::Workspace;
+    use tempfile::TempDir;
+
+    async fn store_tree(
+        obj_store: &crate::object::RedbObjectStore,
+        entries: Vec<(&str, &str)>,
+    ) -> String {
+        obj_store
+            .put_tree(&TreeEntries(
+                entries
+                    .into_iter()
+                    .map(|(name, blob)| TreeEntry {
+                        name: name.to_string(),
+                        kind: EntryKind::Blob,
+                        id: blob.to_string(),
+                    })
+                    .collect(),
+            ))
+            .await
+            .unwrap()
+            .0
+    }
+
+    async fn store_snapshot(
+        snap_store: &crate::snapshot::RedbSnapshotStore,
+        id: &str,
+        tree_hash: &str,
+        parents: &[&str],
+    ) {
+        snap_store
+            .store(&Snapshot {
+                id: SnapshotId(id.to_string()),
+                tree_hash: tree_hash.to_string(),
+                parents: parents
+                    .iter()
+                    .map(|p| SnapshotId((*p).to_string()))
+                    .collect(),
+                workspace: "ws1".to_string(),
+                author: "test".to_string(),
+                timestamp: 0,
+                message: "fixture".to_string(),
+            })
+            .await
+            .unwrap();
+    }
+
+    /// #103: resolving with a HEAD ref whose workspace row is gone must fail
+    /// with the explicit "workspace 'ws1' not found" error and leave NO new
+    /// snapshot row in the store.
+    #[tokio::test]
+    async fn failed_resolve_on_missing_workspace_leaves_no_orphan_snapshot() {
+        let tmp = TempDir::new().unwrap();
+        let repo = Repository::init(tmp.path()).unwrap();
+        repo.write_head("ws1");
+
+        // A pending merge entry pointing at a stored merge snapshot with two
+        // parents, so run_resolve reaches the write path.
+        {
+            let log = repo.agent_log("ws1").unwrap();
+            log.append(&LogEntry {
+                seq: 0,
+                op: OpType::Merge,
+                path: Some("conflict.txt".to_string()),
+                blob_id: None,
+                from_path: None,
+                resolved_conflict_ours_id: Some("blob_ours".to_string()),
+                resolved_conflict_theirs_id: Some("blob_theirs".to_string()),
+                snapshot_id: Some("noa_merge".to_string()),
+                remote_seq: None,
+                remote_sender: None,
+                verify: None,
+                ts: 1,
+                message: Some("merge".to_string()),
+            })
+            .await
+            .unwrap();
+        }
+
+        let snap_store = repo.snapshot_store().unwrap();
+        let obj_store = repo.object_store().unwrap();
+        let ws_mgr = repo.workspace_manager().unwrap();
+
+        let merge_tree = store_tree(&obj_store, vec![("conflict.txt", "blob_m")]).await;
+        let p1_tree = store_tree(&obj_store, vec![("conflict.txt", "blob_ours")]).await;
+        let p2_tree = store_tree(&obj_store, vec![("conflict.txt", "blob_theirs")]).await;
+        store_snapshot(&snap_store, "noa_p1", &p1_tree, &[]).await;
+        store_snapshot(&snap_store, "noa_p2", &p2_tree, &[]).await;
+        store_snapshot(&snap_store, "noa_merge", &merge_tree, &["noa_p1", "noa_p2"]).await;
+
+        // The trigger: HEAD names a workspace row that has been deleted.
+        ws_mgr
+            .create(&Workspace {
+                name: "ws1".to_string(),
+                head: SnapshotId("noa_merge".to_string()),
+                base: SnapshotId("noa_merge".to_string()),
+                agent_id: None,
+                last_seq: 0,
+                created_at: 0,
+                updated_at: 0,
+            })
+            .await
+            .unwrap();
+        ws_mgr.delete("ws1").await.unwrap();
+
+        let before = snap_store.list_all().await.unwrap().len();
+        assert_eq!(before, 3, "fixture snapshots only");
+
+        let result = run_resolve(&repo, "theirs", None).await;
+        let err = result.expect_err("#103: resolve against a missing workspace must fail");
+        assert!(
+            err.to_string().contains("workspace 'ws1' not found"),
+            "#103: the explicit error text must come back, got: {err}"
+        );
+
+        let after = snap_store.list_all().await.unwrap().len();
+        assert_eq!(
+            after, before,
+            "#103: a failed resolve must not strand an orphan snapshot row"
+        );
+    }
 }
