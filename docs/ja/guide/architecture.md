@@ -4,25 +4,22 @@ noa はエージェントネイティブな分散バージョン管理システ�
 
 ## 3 層モデル
 
-```
-Workspace          — one isolated workspace per agent, invisible to each other
-   │ head points to
-Snapshot           — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)
-   │ tree_hash points to
-ObjectStore        — blob / tree / symlink / gitlink (blobs byte-compatible with git;
-                     trees/commits use noa's own SHA-256 addressing)
+```mermaid
+flowchart TD
+    W["Workspace — one isolated workspace per agent, invisible to each other"] -- "head points to" --> S["Snapshot — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)"]
+    S -- "tree_hash points to" --> O["ObjectStore — blob / tree / symlink / gitlink (blobs byte-compatible with git; trees/commits use noa's own SHA-256 addressing)"]
 ```
 
 - **ワークスペース**は noa の中心的な隔離プリミティブです。複数のエージェントが同じリポジトリ内に互いを上書きすることなく、それぞれのワークスペースと head を持ちます。`mirror.<job>.<branch>` のようなシステム名前空間もワークスペースの形で存在します。
 - **スナップショット**はコミットに相当するものです: `tree_hash` + `parents[]` + `author` + `timestamp` + `message`。スナップショット ID は `noa_<sha256>` 形式です（内容アドレス指定。同じツリーハッシュの繰り返し取り込みは冪等です）。
-- **参照**（RedbRefStore）: `HEAD`、`mirror/{job}/{branch}`、`mirror/{job}/tags/{tag}`、`mirror/{job}/pr/{N}` など、すべての参照行が redb 内でスナップショット ID を指します。
+- **参照**（`RedbRefStore`）: `HEAD`、`mirror/{job}/{branch}`、`mirror/{job}/tags/{tag}`、`mirror/{job}/pr/{N}` など、すべての参照行が redb 内でスナップショット ID を指します。
 
 ストレージエンジンは単一ファイルの埋め込み KV ストア（redb）です。デプロイはディレクトリのコピーだけを意味し、外部データベースは不要です。
 
 ## サーバーコンポーネント（noa-server）
 
 | コンポーネント | 責務 |
-|---|---|
+| --- | --- |
 | REST API（`/api/v1/*`） | リポジトリ / PR / runs / ユーザー / ミラージョブの CRUD |
 | git-http（`/git/{repo}/*`） | スマート HTTP: upload-pack（clone/fetch）+ receive-pack（push、W2a2 以降） |
 | ミラーエンジン | 定期ウェーブ: 元から master / tags / PR head を fetch して noa へ取り込み。還流 push も可能 |
@@ -46,8 +43,8 @@ git 形態の表現は**ミラースクラッチ内の本物の git リポジト
 `NOA_MIRROR_SCRATCH_DIR/{job}.git` はミラージョブごとのベアクローンで、三重の役割を持ちます:
 
 1. **fetch 元のキャッシュ** — ウェーブが元から fetch し、インポーターはここから git オブジェクトを読みます
-2. **git-http の提供本体** — `/git/{repo}` はこれに対して直接 upload-pack / receive-pack を実行します
-3. **還流 push のソース** — 還流レーンはローカル参照を元へアトミックに push します
+1. **git-http の提供本体** — `/git/{repo}` はこれに対して直接 upload-pack / receive-pack を実行します
+1. **還流 push のソース** — 還流レーンはローカル参照を元へアトミックに push します
 
 push（receive-pack）はスクラッチのローカル参照を更新し、次のウェーブがそれを noa の参照システムへ取り込み、還流レーンが元へ push し返します——3 つの経路が 1 つのスクラッチを共有し、ループが閉じます。
 

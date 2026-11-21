@@ -6,19 +6,17 @@ SHA-256 内容寻址，同时与 git 的对象代数保持逐字节兼容（同�
 
 ## 三层模型
 
-```
-工作区（Workspace）   —— 每个智能体一个隔离工作区，互不可见
-   │ head 指向
-快照（Snapshot）      —— 内容寻址的提交（SHA-256），DAG 结构（可多父 = 合并）
-   │ tree_hash 指向
-对象（ObjectStore）   —— blob / tree / symlink / gitlink（blob 内容与 git 逐字节兼容；树/提交用 noa 自身的 SHA-256 寻址）
+```mermaid
+flowchart TD
+    W["工作区（Workspace）—— 每个智能体一个隔离工作区，互不可见"] -- "head 指向" --> S["快照（Snapshot）—— 内容寻址的提交（SHA-256），DAG 结构（可多父 = 合并）"]
+    S -- "tree_hash 指向" --> O["对象（ObjectStore）—— blob / tree / symlink / gitlink（blob 内容与 git 逐字节兼容；树/提交用 noa 自身的 SHA-256 寻址）"]
 ```
 
 - **工作区**是 noa 的核心隔离原语：多个智能体在同一仓内各自持有独立的工作区与 head，
   互不覆盖。`mirror.<job>.<branch>` 这类系统命名空间同样以工作区形式存在。
 - **快照**是提交的等价物：`tree_hash` + `parents[]` + `author` + `timestamp` + `message`。
   快照 ID 形如 `noa_<sha256>`（内容寻址；相同树哈希的重复导入幂等）。
-- **引用**（RedbRefStore）：`HEAD`、`mirror/{job}/{branch}`、`mirror/{job}/tags/{tag}`、
+- **引用**（`RedbRefStore`）：`HEAD`、`mirror/{job}/{branch}`、`mirror/{job}/tags/{tag}`、
   `mirror/{job}/pr/{N}` 等全部是 redb 里的引用行，指向快照 ID。
 
 存储引擎是单文件嵌入式 KV（redb）——部署即拷贝目录，无需外部数据库。
@@ -26,7 +24,7 @@ SHA-256 内容寻址，同时与 git 的对象代数保持逐字节兼容（同�
 ## 服务端组件（noa-server）
 
 | 组件 | 职责 |
-|---|---|
+| --- | --- |
 | REST API（`/api/v1/*`） | repos / PRs / runs / users / mirror-jobs 的 CRUD |
 | git-http（`/git/{repo}/*`） | smart HTTP：upload-pack（clone/fetch）+ receive-pack（push，W2a2 起） |
 | 镜像引擎 | 定时波次：从 origin 拉取 master / tags / PR heads 导入 noa；可回流推送 |
@@ -55,8 +53,8 @@ git 对象（对「从 git 导入的内容」零转换）；**noa 原生产生�
 `NOA_MIRROR_SCRATCH_DIR/{job}.git` 是每个镜像任务的裸克隆，承担三重角色：
 
 1. **拉取源缓存**——波次从 origin fetch，导入器从这里读 git 对象；
-2. **git-http 的服务体**——`/git/{repo}` 直接对其跑 upload-pack / receive-pack；
-3. **回流的推送源**——backflow 车道把它的本地引用原子推回 origin。
+1. **git-http 的服务体**——`/git/{repo}` 直接对其跑 upload-pack / receive-pack；
+1. **回流的推送源**——backflow 车道把它的本地引用原子推回 origin。
 
 推送（receive-pack）更新 scratch 的本地引用；下一个波次把它导入 noa 引用体系，再由
 backflow 车道推回 origin——三条路径共享同一份 scratch，闭环即成。

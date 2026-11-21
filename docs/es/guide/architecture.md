@@ -4,25 +4,22 @@ noa es un sistema de control de versiones distribuido nativo para agentes. No es
 
 ## El modelo de tres capas
 
-```
-Workspace          — one isolated workspace per agent, invisible to each other
-   │ head points to
-Snapshot           — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)
-   │ tree_hash points to
-ObjectStore        — blob / tree / symlink / gitlink (blobs byte-compatible with git;
-                     trees/commits use noa's own SHA-256 addressing)
+```mermaid
+flowchart TD
+    W["Workspace — one isolated workspace per agent, invisible to each other"] -- "head points to" --> S["Snapshot — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)"]
+    S -- "tree_hash points to" --> O["ObjectStore — blob / tree / symlink / gitlink (blobs byte-compatible with git; trees/commits use noa's own SHA-256 addressing)"]
 ```
 
 - **El espacio de trabajo** es la primitiva central de aislamiento de noa: varios agentes mantienen, dentro del mismo repositorio, un espacio de trabajo y un head propios e independientes, sin pisarse entre sí. Los espacios de nombres del sistema como `mirror.<job>.<branch>` también existen en forma de espacio de trabajo.
 - **La instantánea** es el equivalente de un commit: `tree_hash` + `parents[]` + `author` + `timestamp` + `message`. El ID de instantánea tiene la forma `noa_<sha256>` (direccionamiento por contenido; importar repetidamente el mismo hash de árbol es idempotente).
-- **Las referencias** (RedbRefStore): `HEAD`, `mirror/{job}/{branch}`, `mirror/{job}/tags/{tag}`, `mirror/{job}/pr/{N}`, etc. son todas filas de referencias en redb que apuntan a IDs de instantáneas.
+- **Las referencias** (`RedbRefStore`): `HEAD`, `mirror/{job}/{branch}`, `mirror/{job}/tags/{tag}`, `mirror/{job}/pr/{N}`, etc. son todas filas de referencias en redb que apuntan a IDs de instantáneas.
 
 El motor de almacenamiento es un KV embebido de archivo único (redb) — desplegar equivale a copiar un directorio, sin base de datos externa.
 
 ## Componentes del servidor (noa-server)
 
 | Componente | Responsabilidad |
-|---|---|
+| --- | --- |
 | API REST (`/api/v1/*`) | CRUD de repos / PRs / runs / users / mirror-jobs |
 | git-http (`/git/{repo}/*`) | smart HTTP: upload-pack (clone/fetch) + receive-pack (push, desde W2a2) |
 | Motor de espejo | olas programadas: importa a noa el master / tags / PR heads traídos del origen; puede empujar reflujo |
@@ -46,8 +43,8 @@ La representación en forma git vive en el **repositorio git real del scratch de
 `NOA_MIRROR_SCRATCH_DIR/{job}.git` es el clon desnudo (bare) de cada tarea de espejo y cumple un triple papel:
 
 1. **Caché de descarga** — las olas hacen fetch del origen; el importador lee aquí los objetos de git;
-2. **Cuerpo servido por git-http** — `/git/{repo}` ejecuta directamente upload-pack / receive-pack sobre él;
-3. **Origen de push del reflujo** — la vía de reflujo empuja atómicamente sus referencias locales al origen.
+1. **Cuerpo servido por git-http** — `/git/{repo}` ejecuta directamente upload-pack / receive-pack sobre él;
+1. **Origen de push del reflujo** — la vía de reflujo empuja atómicamente sus referencias locales al origen.
 
 El push (receive-pack) actualiza las referencias locales del scratch; la siguiente ola lo importa al sistema de referencias de noa y la vía de reflujo lo empuja de vuelta al origen — tres rutas comparten el mismo scratch y el circuito se cierra solo.
 

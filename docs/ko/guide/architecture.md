@@ -7,13 +7,10 @@ blob OID로 해시됩니다 — 미러 충실도 검증이 정확히 이에 의�
 
 ## 3계층 모델
 
-```
-Workspace          — one isolated workspace per agent, invisible to each other
-   │ head points to
-Snapshot           — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)
-   │ tree_hash points to
-ObjectStore        — blob / tree / symlink / gitlink (blobs byte-compatible with git;
-                     trees/commits use noa's own SHA-256 addressing)
+```mermaid
+flowchart TD
+    W["Workspace — one isolated workspace per agent, invisible to each other"] -- "head points to" --> S["Snapshot — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)"]
+    S -- "tree_hash points to" --> O["ObjectStore — blob / tree / symlink / gitlink (blobs byte-compatible with git; trees/commits use noa's own SHA-256 addressing)"]
 ```
 
 - **워크스페이스**는 noa의 핵심 격리 단위입니다: 같은 리포지토리 안에서 여러
@@ -23,7 +20,7 @@ ObjectStore        — blob / tree / symlink / gitlink (blobs byte-compatible wi
 - **스냅샷**은 커밋에 해당합니다: `tree_hash` + `parents[]` + `author` +
   `timestamp` + `message`. 스냅샷 ID는 `noa_<sha256>` 형태입니다(콘텐츠
   주소 방식이므로 같은 트리 해시의 재임포트는 멱등입니다).
-- **ref** (RedbRefStore): `HEAD`, `mirror/{job}/{branch}`,
+- **ref** (`RedbRefStore`): `HEAD`, `mirror/{job}/{branch}`,
   `mirror/{job}/tags/{tag}`, `mirror/{job}/pr/{N}` 등 — 전부 스냅샷 ID를
   가리키는 redb의 ref 행입니다.
 
@@ -33,7 +30,7 @@ ObjectStore        — blob / tree / symlink / gitlink (blobs byte-compatible wi
 ## 서버 구성 요소 (noa-server)
 
 | 구성 요소 | 담당 |
-|---|---|
+| --- | --- |
 | REST API (`/api/v1/*`) | 리포지토리 / PR / runs / 사용자 / 미러 job의 CRUD |
 | git-http (`/git/{repo}/*`) | 스마트 HTTP: upload-pack (clone/fetch) + receive-pack (push, W2a2부터) |
 | 미러 엔진 | 주기 웨이브: 오리진에서 master / tags / PR heads를 fetch해 noa로 임포트; 백플로우 푸시 가능 |
@@ -70,9 +67,9 @@ git 형태의 표현은 **미러 스크래치의 실제 git 리포지토리** �
 
 1. **fetch 소스 캐시** — 웨이브가 오리진에서 fetch하고, 임포터가 여기서 git
    객체를 읽습니다;
-2. **git-http 서빙 본체** — `/git/{repo}`가 여기에 직접 upload-pack /
+1. **git-http 서빙 본체** — `/git/{repo}`가 여기에 직접 upload-pack /
    receive-pack을 실행합니다;
-3. **백플로우 푸시 소스** — 백플로우 레인이 로컬 ref를 오리진으로 원자적으로
+1. **백플로우 푸시 소스** — 백플로우 레인이 로컬 ref를 오리진으로 원자적으로
    되돌려 푸시합니다.
 
 푸시(receive-pack)는 스크래치의 로컬 ref를 갱신하고, 다음 웨이브가 이를 noa의
