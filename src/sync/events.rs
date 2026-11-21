@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
 use crate::{
@@ -46,6 +45,142 @@ fn verify_path_safe(base: &Path, resolved: &Path) -> bool {
         }
     }
     resolved.starts_with(base)
+}
+
+/// Sidecar path holding the applied-identity watermark: `<log>.sync-watermark`.
+fn sync_watermark_path(log_path: &Path) -> PathBuf {
+    let mut s = log_path.as_os_str().to_owned();
+    s.push(".sync-watermark");
+    PathBuf::from(s)
+}
+
+/// Per-sender applied-identity watermark for pull idempotency (#105).
+///
+/// Maps each sender to the highest remote seq this receiver has applied. An
+/// incoming event `(sender, seq)` is already-applied iff
+/// `seq <= watermark[sender]`. This replaces the per-batch `read_all()`
+/// rescan: identities are consumed incrementally at the commit point, so the
+/// cost of a batch no longer grows with the total size of the agent log.
+///
+/// Contract: a sender pushes its log tail in seq order (the push/ACK
+/// resume protocol), so a sender's remote seqs arrive monotonically. The
+/// watermark never consults local log contents after seeding, which is what
+/// makes it robust against the log being rewritten: compaction and external
+/// truncation/rotation of the log file need no watermark reset (the keys are
+/// sender identities, not local seqs). The documented reset channel is to
+/// delete the sidecar: the next batch reseeds from whatever identities the
+/// log still holds, and events whose evidence is gone re-apply once — the
+/// safe direction, since the fs ops tolerate replay idempotently.
+struct SyncWatermark {
+    high_water: std::collections::BTreeMap<String, u64>,
+}
+
+impl SyncWatermark {
+    /// Loads the persisted watermark. Returns `None` when the sidecar does
+    /// not exist yet (first run after the watermark appeared), so the caller
+    /// can seed it from a single full-log scan and keep the pre-watermark
+    /// skip behavior for identities recorded before the upgrade. Corrupt
+    /// lines are skipped with a warning (that sender's events re-apply once
+    /// and self-heal) rather than failing the whole batch.
+    fn load(path: &Path) -> std::io::Result<Option<SyncWatermark>> {
+        let mut high_water: std::collections::BTreeMap<String, u64> =
+            std::collections::BTreeMap::new();
+        let mut content = String::new();
+        {
+            use std::io::Read;
+            let mut file = match std::fs::File::open(path) {
+                Ok(file) => file,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(e) => return Err(e),
+            };
+            file.read_to_string(&mut content)?;
+        }
+        for line in content.lines() {
+            let Some((sender, seq)) = line.split_once('\t') else {
+                if !line.trim().is_empty() {
+                    tracing::warn!("skipping malformed sync watermark line: {line:?}");
+                }
+                continue;
+            };
+            match seq.trim().parse::<u64>() {
+                Ok(seq) => {
+                    high_water
+                        .entry(sender.to_string())
+                        .and_modify(|known| *known = (*known).max(seq))
+                        .or_insert(seq);
+                }
+                Err(_) => tracing::warn!("skipping malformed sync watermark seq: {line:?}"),
+            }
+        }
+        Ok(Some(SyncWatermark { high_water }))
+    }
+
+    /// Folds remote identities recorded in the log into the watermark.
+    /// Only complete `(sender, seq)` pairs count, matching the gate below:
+    /// an entry with a seq but no sender must not shadow the same seq from
+    /// a different peer.
+    fn seed_from_entries(&mut self, entries: &[LogEntry]) {
+        for entry in entries {
+            if let (Some(sender), Some(seq)) = (&entry.remote_sender, entry.remote_seq) {
+                self.high_water
+                    .entry(sender.clone())
+                    .and_modify(|known| *known = (*known).max(seq))
+                    .or_insert(seq);
+            }
+        }
+    }
+
+    /// Whether this identity is covered by the watermark (already applied).
+    /// The gate only fires for an identified sender: without one the
+    /// watermark has no row for the peer, and every peer's first event
+    /// shares remote seq 1 — gating on that would silently drop the second
+    /// peer's event. An unidentified event is therefore re-applied, which is
+    /// what the pre-watermark code did.
+    fn covers(&self, sender: &Option<String>, seq: u64) -> bool {
+        sender
+            .as_ref()
+            .and_then(|s| self.high_water.get(s))
+            .is_some_and(|&known| seq <= known)
+    }
+
+    /// Advances the watermark for an event whose effect just committed.
+    /// Out-of-registry duplicates (a lower seq arriving after a higher one
+    /// already committed) are no-ops.
+    fn advance(&mut self, sender: &Option<String>, seq: u64) {
+        if let Some(sender) = sender {
+            self.high_water
+                .entry(sender.clone())
+                .and_modify(|known| *known = (*known).max(seq))
+                .or_insert(seq);
+        }
+    }
+
+    /// Crash-safe sidecar write: temp file + fsync + atomic rename, mirroring
+    /// the `<log>.seq` sidecar protocol.
+    fn persist(&self, path: &Path) -> std::io::Result<()> {
+        use std::io::Write;
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        let mut tmp_os = path.as_os_str().to_owned();
+        tmp_os.push(".tmp");
+        let tmp = PathBuf::from(tmp_os);
+        {
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&tmp)?;
+            for (sender, seq) in &self.high_water {
+                writeln!(f, "{sender}\t{seq}")?;
+            }
+            f.sync_all()?;
+        }
+        std::fs::rename(&tmp, path)?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,44 +310,60 @@ impl EventSyncEngine {
         let log = repo
             .agent_log(&self.workspace_name)
             .map_err(|source| ApplyPullError { applied: 0, source })?;
-        // Single source of truth for "already applied": the remote identities
-        // recorded in the log at commit time. Snapshot once up front and extend
-        // in-memory as this batch commits, so duplicates inside one batch are
-        // caught too. (History lost to compaction is no longer known; a retry
-        // of compacted-away events re-applies, which the fs ops below tolerate
-        // idempotently.)
-        let existing = log
-            .read_all()
-            .await
-            .map_err(|source| ApplyPullError { applied: 0, source })?;
-        // Only a *complete* identity counts as applied: a peer name AND a
-        // sequence. An entry carrying a sequence but no sender (a legacy peer,
-        // or an effect that was skipped — see the commit point) must not enter
-        // the set, or it would shadow the same sequence number from a different
-        // peer and quietly drop that peer's event.
-        let mut seen: HashSet<(Option<String>, u64)> = existing
-            .iter()
-            .filter_map(|e| match (&e.remote_sender, e.remote_seq) {
-                (Some(sender), Some(seq)) => Some((Some(sender.clone()), seq)),
-                _ => None,
-            })
-            .collect();
+        // Single source of truth for "already applied": the applied-identity
+        // watermark (#105). It is seeded once from a full-log scan when the
+        // sidecar first appears (preserving pre-watermark skip behavior for
+        // identities recorded before the upgrade), then consumed
+        // incrementally: each commit below advances the per-sender high-water
+        // mark instead of rescanning the log, so a batch costs O(batch), not
+        // O(total log). Events whose entries compaction removed stay known —
+        // the watermark survives log rewrites by construction.
+        let log_path = repo.agent_log_path(&self.workspace_name);
+        let watermark_path = sync_watermark_path(&log_path);
+        let mut watermark = match SyncWatermark::load(&watermark_path) {
+            Ok(Some(watermark)) => watermark,
+            Ok(None) => {
+                let existing = log
+                    .read_all()
+                    .await
+                    .map_err(|source| ApplyPullError { applied: 0, source })?;
+                let mut watermark = SyncWatermark {
+                    high_water: std::collections::BTreeMap::new(),
+                };
+                watermark.seed_from_entries(&existing);
+                watermark
+                    .persist(&watermark_path)
+                    .map_err(|source| ApplyPullError {
+                        applied: 0,
+                        source: anyhow::Error::new(source).context(format!(
+                            "failed to persist sync watermark sidecar {}",
+                            watermark_path.display()
+                        )),
+                    })?;
+                watermark
+            }
+            Err(source) => {
+                return Err(ApplyPullError {
+                    applied: 0,
+                    source: anyhow::Error::new(source).context(format!(
+                        "failed to read sync watermark sidecar {}",
+                        watermark_path.display()
+                    )),
+                });
+            }
+        };
         let mut applied: u64 = 0;
         // Helper: every fallible step maps its error into ApplyPullError
         // carrying the durable committed-prefix count at that point.
         let failed = |applied: u64, source: anyhow::Error| ApplyPullError { applied, source };
 
         for event in events {
-            // Idempotency gate: consult the recorded remote identity BEFORE
-            // mutating the fs or the log. Already-seen events are a no-op and
-            // are NOT recounted, so identical-batch retries change nothing.
-            // The gate only fires for an identified sender. Without one the
-            // key degenerates to (None, seq), and every peer's first event
-            // shares seq 1 — deduping on that would silently drop the second
-            // peer's event while still ACKing success. An unidentified event is
-            // therefore re-applied, which is what the pre-change code did.
-            let key = (event.sender.clone(), event.seq);
-            if event.sender.is_some() && seen.contains(&key) {
+            // Idempotency gate: consult the watermark BEFORE mutating the fs
+            // or the log. Already-applied events are a no-op and are NOT
+            // recounted, so identical-batch retries change nothing. Only an
+            // identified sender can hit the gate (see [`SyncWatermark::covers`]
+            // for why an unidentified event must always fall through).
+            if watermark.covers(&event.sender, event.seq) {
                 tracing::debug!(
                     "skipping already-applied event (sender {:?}, remote seq {})",
                     event.sender,
@@ -443,7 +594,22 @@ impl EventSyncEngine {
             })?;
             if counts {
                 if event.sender.is_some() {
-                    seen.insert(key);
+                    // Advance the watermark only after the log append
+                    // committed: advancing before it could suppress a retry
+                    // whose log entry never landed (a silent drop). The
+                    // reverse failure — a watermark persist lost after the
+                    // entry committed — just leaves the watermark behind the
+                    // truth, so a replay re-applies once and self-heals.
+                    // #105: this in-batch advance is what retires the
+                    // per-batch read_all() rescan above.
+                    watermark.advance(&event.sender, event.seq);
+                    if let Err(source) = watermark.persist(&watermark_path) {
+                        tracing::error!(
+                            "failed to persist sync watermark sidecar {}: {}",
+                            watermark_path.display(),
+                            source
+                        );
+                    }
                 }
                 applied += 1;
             }
@@ -1029,6 +1195,160 @@ mod tests {
         assert!(
             tmp.path().join("awaited.txt").exists(),
             "the file must exist after the retry"
+        );
+    }
+}
+
+/// Regression tests for issue #105: `apply_pull_events` used to read the
+/// ENTIRE agent log on every batch to rebuild the applied-identity set.
+/// The fix consumes identities incrementally via a persisted per-sender
+/// watermark sidecar (`<log>.sync-watermark`), so a batch costs O(batch)
+/// instead of O(total log) and applied identities survive log rewrites.
+#[cfg(test)]
+mod watermark_incremental_regression {
+    use super::*;
+    use crate::log::OpType;
+    use tempfile::TempDir;
+
+    fn setup_repo() -> TempDir {
+        let tmp = TempDir::new().unwrap();
+        let repo = Repository::init(tmp.path()).unwrap();
+        drop(repo);
+        tmp
+    }
+
+    fn snap_event(sender: &str, seq: u64) -> SyncEvent {
+        SyncEvent {
+            seq,
+            op: "snapshot".to_string(),
+            path: None,
+            blob_id: None,
+            from_path: None,
+            ts: seq * 100,
+            message: None,
+            sender: Some(sender.to_string()),
+            verify: None,
+        }
+    }
+
+    fn batch(sender: &str, seqs: &[u64]) -> Vec<SyncEvent> {
+        seqs.iter().map(|seq| snap_event(sender, *seq)).collect()
+    }
+
+    async fn compact_all_log(tmp: &TempDir) {
+        let repo = Repository::open(tmp.path()).unwrap();
+        let log = repo.agent_log("default").unwrap();
+        let next = log.next_seq().await.unwrap();
+        log.compact_to(next.saturating_sub(1)).await.unwrap();
+        assert!(
+            log.read_all().await.unwrap().is_empty(),
+            "fixture: compaction must empty the log"
+        );
+    }
+
+    /// #105: identities removed from the log by compaction must stay known.
+    /// Pre-fix, the per-batch read_all() rebuilt the set from the log, so a
+    /// replayed batch whose identities had been compacted away re-applied
+    /// (Ok(N)); with the watermark it is skipped (Ok(0)).
+    #[tokio::test]
+    async fn watermark_survives_log_compaction() {
+        let tmp = setup_repo();
+        let engine = EventSyncEngine::new(tmp.path(), "default");
+
+        let peer_a = batch("peer-a", &[1, 2, 3]);
+        assert_eq!(engine.apply_pull_events(&peer_a).await.unwrap(), 3);
+
+        // Rewrite the log out from under the applied identities.
+        compact_all_log(&tmp).await;
+
+        assert_eq!(
+            engine.apply_pull_events(&peer_a).await.unwrap(),
+            0,
+            "#105: a replayed batch must stay skipped even after its log \
+             evidence was compacted away"
+        );
+
+        // The gate must not over-skip: fresh events still apply once, and a
+        // re-send of them is skipped again.
+        let peer_a_next = batch("peer-a", &[4]);
+        assert_eq!(engine.apply_pull_events(&peer_a_next).await.unwrap(), 1);
+        assert_eq!(engine.apply_pull_events(&peer_a_next).await.unwrap(), 0);
+    }
+
+    /// #105 upgrade path: identities recorded in the log BEFORE the
+    /// watermark sidecar existed must still suppress replays — the first
+    /// call seeds the watermark from a single full-log scan.
+    #[tokio::test]
+    async fn watermark_seeds_from_preexisting_log_identities() {
+        let tmp = setup_repo();
+        {
+            let repo = Repository::open(tmp.path()).unwrap();
+            let log = repo.agent_log("default").unwrap();
+            for seq in 7..=9 {
+                log.append(&LogEntry {
+                    seq: 0,
+                    op: OpType::Snapshot,
+                    path: None,
+                    blob_id: None,
+                    from_path: None,
+                    resolved_conflict_ours_id: None,
+                    resolved_conflict_theirs_id: None,
+                    snapshot_id: None,
+                    remote_seq: Some(seq),
+                    remote_sender: Some("peer-b".to_string()),
+                    verify: None,
+                    ts: seq * 100,
+                    message: None,
+                })
+                .await
+                .unwrap();
+            }
+        }
+
+        let engine = EventSyncEngine::new(tmp.path(), "default");
+        let replayed = batch("peer-b", &[8]);
+        assert_eq!(
+            engine.apply_pull_events(&replayed).await.unwrap(),
+            0,
+            "#105: pre-watermark identities must be seeded from the log and \
+             still suppress a replay"
+        );
+        let fresh = batch("peer-b", &[10]);
+        assert_eq!(engine.apply_pull_events(&fresh).await.unwrap(), 1);
+    }
+
+    /// #105 documented reset channel: deleting the sidecar resets the
+    /// watermark. After a reset the next batch reseeds from whatever
+    /// identities the log still holds; events whose evidence is gone
+    /// re-apply once (the safe direction — fs ops tolerate replay).
+    #[tokio::test]
+    async fn watermark_reset_re_applies_unprovable_events() {
+        let tmp = setup_repo();
+        // Capture the sidecar path up front — the repo open/close discipline
+        // in this file keeps at most one handle alive at a time (redb 4.5
+        // holds a whole-file writer lock, so an open racing a just-closed
+        // handle can hit DatabaseAlreadyOpen).
+        let sidecar = {
+            let repo = Repository::open(tmp.path()).unwrap();
+            sync_watermark_path(&repo.agent_log_path("default"))
+        };
+        let engine = EventSyncEngine::new(tmp.path(), "default");
+
+        let peer_c = batch("peer-c", &[1]);
+        assert_eq!(engine.apply_pull_events(&peer_c).await.unwrap(), 1);
+
+        // With the log compacted, the watermark alone guards the replay.
+        compact_all_log(&tmp).await;
+        assert_eq!(engine.apply_pull_events(&peer_c).await.unwrap(), 0);
+
+        // Reset: remove the sidecar; nothing proves the event applied
+        // anymore, so it re-applies.
+        std::fs::remove_file(&sidecar).unwrap();
+        assert_eq!(
+            engine.apply_pull_events(&peer_c).await.unwrap(),
+            1,
+            "#105: deleting the watermark sidecar is the documented reset; \
+             unprovable events re-apply"
         );
     }
 }
