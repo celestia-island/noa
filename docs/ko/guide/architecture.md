@@ -20,7 +20,7 @@ flowchart TD
 - **스냅샷**은 커밋에 해당합니다: `tree_hash` + `parents[]` + `author` +
   `timestamp` + `message`. 스냅샷 ID는 `noa_<sha256>` 형태입니다(콘텐츠
   주소 방식이므로 같은 트리 해시의 재임포트는 멱등입니다).
-- **ref** (`RedbRefStore`): `HEAD`, `mirror/{job}/{branch}`,
+- **ref** (RedbRefStore): `HEAD`, `mirror/{job}/{branch}`,
   `mirror/{job}/tags/{tag}`, `mirror/{job}/pr/{N}` 등 — 전부 스냅샷 ID를
   가리키는 redb의 ref 행입니다.
 

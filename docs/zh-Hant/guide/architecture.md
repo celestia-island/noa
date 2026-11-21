@@ -16,7 +16,7 @@ flowchart TD
   互不覆蓋。`mirror.<job>.<branch>` 這類系統命名空間同樣以工作區形式存在。
 - **快照**是提交的等價物：`tree_hash` + `parents[]` + `author` + `timestamp` + `message`。
   快照 ID 形如 `noa_<sha256>`（內容定址；相同樹雜湊的重複匯入具有冪等性）。
-- **引用**（`RedbRefStore`）：`HEAD`、`mirror/{job}/{branch}`、`mirror/{job}/tags/{tag}`、
+- **引用**（RedbRefStore）：`HEAD`、`mirror/{job}/{branch}`、`mirror/{job}/tags/{tag}`、
   `mirror/{job}/pr/{N}` 等全部是 redb 裡的引用條目，指向快照 ID。
 
 儲存引擎是單檔內嵌式 KV（redb）——部署即複製目錄，無需外部資料庫。

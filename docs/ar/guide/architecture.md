@@ -12,7 +12,7 @@ flowchart TD
 
 - **مساحة العمل** هي أساس العزل في noa: عدة وكلاء يحمل كل منهم مساحة عمله ورأسه (head) الخاص داخل نفس المستودع دون أن يكتب أحدهم فوق الآخر. مساحات أسماء النظام مثل `mirror.<job>.<branch>` موجودة أيضًا بصيغة مساحة عمل.
 - **اللقطة (Snapshot)** هي المقابل للـ commit: `tree_hash` + `parents[]` + `author` + `timestamp` + `message`. معرفات اللقطات تأتي بالشكل `noa_<sha256>` (معنونة بالمحتوى؛ الاستيراد المتكرر لنفس hash الشجرة عملية idempotent).
-- **المراجع (Refs)** (`RedbRefStore`): `HEAD` و `mirror/{job}/{branch}` و `mirror/{job}/tags/{tag}` و `mirror/{job}/pr/{N}` وهكذا، كلها صفوف مراجع في redb تشير إلى معرفات اللقطات.
+- **المراجع (Refs)** (RedbRefStore): `HEAD` و `mirror/{job}/{branch}` و `mirror/{job}/tags/{tag}` و `mirror/{job}/pr/{N}` وهكذا، كلها صفوف مراجع في redb تشير إلى معرفات اللقطات.
 
 محرك التخزين مخزن KV مضمّن بملف واحد (redb) — النشر يعني نسخ مجلد؛ لا حاجة لأي قاعدة بيانات خارجية.
 

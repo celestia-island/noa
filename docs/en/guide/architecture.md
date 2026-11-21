@@ -19,7 +19,7 @@ flowchart TD
 - **Snapshot** is the equivalent of a commit: `tree_hash` + `parents[]` + `author` + `timestamp` +
   `message`. Snapshot IDs look like `noa_<sha256>` (content-addressed; repeated imports of the
   same tree hash are idempotent).
-- **Refs** (`RedbRefStore`): `HEAD`, `mirror/{job}/{branch}`, `mirror/{job}/tags/{tag}`,
+- **Refs** (RedbRefStore): `HEAD`, `mirror/{job}/{branch}`, `mirror/{job}/tags/{tag}`,
   `mirror/{job}/pr/{N}` and so on are all ref rows in redb pointing at snapshot IDs.
 
 The storage engine is a single-file embedded KV store (redb) — deployment means copying a

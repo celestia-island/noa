@@ -12,7 +12,7 @@ flowchart TD
 
 - **El espacio de trabajo** es la primitiva central de aislamiento de noa: varios agentes mantienen, dentro del mismo repositorio, un espacio de trabajo y un head propios e independientes, sin pisarse entre sí. Los espacios de nombres del sistema como `mirror.<job>.<branch>` también existen en forma de espacio de trabajo.
 - **La instantánea** es el equivalente de un commit: `tree_hash` + `parents[]` + `author` + `timestamp` + `message`. El ID de instantánea tiene la forma `noa_<sha256>` (direccionamiento por contenido; importar repetidamente el mismo hash de árbol es idempotente).
-- **Las referencias** (`RedbRefStore`): `HEAD`, `mirror/{job}/{branch}`, `mirror/{job}/tags/{tag}`, `mirror/{job}/pr/{N}`, etc. son todas filas de referencias en redb que apuntan a IDs de instantáneas.
+- **Las referencias** (RedbRefStore): `HEAD`, `mirror/{job}/{branch}`, `mirror/{job}/tags/{tag}`, `mirror/{job}/pr/{N}`, etc. son todas filas de referencias en redb que apuntan a IDs de instantáneas.
 
 El motor de almacenamiento es un KV embebido de archivo único (redb) — desplegar equivale a copiar un directorio, sin base de datos externa.
 

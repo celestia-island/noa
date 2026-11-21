@@ -12,7 +12,7 @@ flowchart TD
 
 - **ワークスペース**は noa の中心的な隔離プリミティブです。複数のエージェントが同じリポジトリ内に互いを上書きすることなく、それぞれのワークスペースと head を持ちます。`mirror.<job>.<branch>` のようなシステム名前空間もワークスペースの形で存在します。
 - **スナップショット**はコミットに相当するものです: `tree_hash` + `parents[]` + `author` + `timestamp` + `message`。スナップショット ID は `noa_<sha256>` 形式です（内容アドレス指定。同じツリーハッシュの繰り返し取り込みは冪等です）。
-- **参照**（`RedbRefStore`）: `HEAD`、`mirror/{job}/{branch}`、`mirror/{job}/tags/{tag}`、`mirror/{job}/pr/{N}` など、すべての参照行が redb 内でスナップショット ID を指します。
+- **参照**（RedbRefStore）: `HEAD`、`mirror/{job}/{branch}`、`mirror/{job}/tags/{tag}`、`mirror/{job}/pr/{N}` など、すべての参照行が redb 内でスナップショット ID を指します。
 
 ストレージエンジンは単一ファイルの埋め込み KV ストア（redb）です。デプロイはディレクトリのコピーだけを意味し、外部データベースは不要です。
 

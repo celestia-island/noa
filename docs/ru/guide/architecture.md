@@ -20,7 +20,7 @@ flowchart TD
 - **Снимок (snapshot)** — эквивалент коммита: `tree_hash` + `parents[]` + `author` + `timestamp` +
   `message`. Идентификаторы снимков выглядят как `noa_<sha256>` (адресация по содержимому;
   повторный импорт того же tree-хэша идемпотентен).
-- **Ссылки (refs)** (`RedbRefStore`): `HEAD`, `mirror/{job}/{branch}`, `mirror/{job}/tags/{tag}`,
+- **Ссылки (refs)** (RedbRefStore): `HEAD`, `mirror/{job}/{branch}`, `mirror/{job}/tags/{tag}`,
   `mirror/{job}/pr/{N}` и т.д. — всё это строки ссылок в redb, указывающие на идентификаторы
   снимков.
 

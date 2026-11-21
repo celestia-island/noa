@@ -22,7 +22,7 @@ flowchart TD
   `parents[]` + `author` + `timestamp` + `message`. Les identifiants d'instantané
   ressemblent à `noa_<sha256>` (adressés par contenu ; les imports répétés d'un arbre
   inchangé sont idempotents).
-- **Les références (refs)** (`RedbRefStore`) : `HEAD`, `mirror/{job}/{branch}`,
+- **Les références (refs)** (RedbRefStore) : `HEAD`, `mirror/{job}/{branch}`,
   `mirror/{job}/tags/{tag}`, `mirror/{job}/pr/{N}` — toutes les lignes de refs dans
   redb pointent vers des identifiants d'instantané.
 
