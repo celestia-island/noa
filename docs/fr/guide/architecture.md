@@ -8,13 +8,10 @@ vérifications de fidélité du miroir reposent précisément là-dessus).
 
 ## Le modèle à trois couches
 
-```
-Workspace          — one isolated workspace per agent, invisible to each other
-   │ head points to
-Snapshot           — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)
-   │ tree_hash points to
-ObjectStore        — blob / tree / symlink / gitlink (blobs byte-compatible with git;
-                     trees/commits use noa's own SHA-256 addressing)
+```mermaid
+flowchart TD
+    W["Workspace — one isolated workspace per agent, invisible to each other"] -- "head points to" --> S["Snapshot — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)"]
+    S -- "tree_hash points to" --> O["ObjectStore — blob / tree / symlink / gitlink (blobs byte-compatible with git; trees/commits use noa's own SHA-256 addressing)"]
 ```
 
 - **Les espaces de travail** sont la primitive d'isolation centrale de noa : plusieurs
@@ -35,7 +32,7 @@ déploiement se résume à « copier le répertoire », sans base de données ex
 ## Composants serveur (noa-server)
 
 | Composant | Responsabilité |
-|---|---|
+| --- | --- |
 | API REST (`/api/v1/*`) | CRUD des dépôts / PR / runs / utilisateurs / tâches de miroir |
 | git-http (`/git/{repo}/*`) | HTTP intelligent : upload-pack (clone/fetch) + receive-pack (push, depuis W2a2) |
 | Moteur de miroir | vagues planifiées : tirer master / tags / têtes de PR depuis l'origine vers noa ; push de retour optionnel |
@@ -71,9 +68,9 @@ rôles :
 
 1. **cache de source de tirage** — les vagues récupèrent (fetch) depuis l'origine ;
    l'importeur lit les objets git ici ;
-2. **corps de service git-http** — `/git/{repo}` y exécute directement upload-pack /
+1. **corps de service git-http** — `/git/{repo}` y exécute directement upload-pack /
    receive-pack ;
-3. **source de push du retour** — la voie de retour repousse atomiquement ses refs
+1. **source de push du retour** — la voie de retour repousse atomiquement ses refs
    locales vers l'origine.
 
 Un push (receive-pack) met à jour les refs locales du scratch ; la vague suivante les

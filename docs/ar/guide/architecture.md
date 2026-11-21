@@ -4,13 +4,10 @@ noa نظام تحكّم بالإصدارات موزّع ومصمَّم في جو
 
 ## نموذج الطبقات الثلاث
 
-```
-Workspace          — one isolated workspace per agent, invisible to each other
-   │ head points to
-Snapshot           — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)
-   │ tree_hash points to
-ObjectStore        — blob / tree / symlink / gitlink (blobs byte-compatible with git;
-                     trees/commits use noa's own SHA-256 addressing)
+```mermaid
+flowchart TD
+    W["Workspace — one isolated workspace per agent, invisible to each other"] -- "head points to" --> S["Snapshot — content-addressed commit (SHA-256), DAG structure (multiple parents = merge)"]
+    S -- "tree_hash points to" --> O["ObjectStore — blob / tree / symlink / gitlink (blobs byte-compatible with git; trees/commits use noa's own SHA-256 addressing)"]
 ```
 
 - **مساحة العمل** هي أساس العزل في noa: عدة وكلاء يحمل كل منهم مساحة عمله ورأسه (head) الخاص داخل نفس المستودع دون أن يكتب أحدهم فوق الآخر. مساحات أسماء النظام مثل `mirror.<job>.<branch>` موجودة أيضًا بصيغة مساحة عمل.
@@ -22,7 +19,7 @@ ObjectStore        — blob / tree / symlink / gitlink (blobs byte-compatible wi
 ## مكونات الخادم (noa-server)
 
 | المكوّن | المسؤولية |
-|---|---|
+| --- | --- |
 | REST API (`/api/v1/*`) | عمليات CRUD للمستودعات / PR / runs / المستخدمين / وظائف المرآة |
 | git-http (`/git/{repo}/*`) | بروتوكول ذكي عبر HTTP: upload-pack (clone/fetch) + receive-pack (push، منذ W2a2) |
 | محرك المرآة | موجات مجدولة: جلب master / tags / رؤوس PR من المصدر واستيرادها إلى noa؛ ويمكنها الدفع العكسي |
@@ -41,15 +38,15 @@ ObjectStore        — blob / tree / symlink / gitlink (blobs byte-compatible wi
 
 التمثيل بصيغة git موجود في **مستودع git الحقيقي داخل النسخة المؤقتة للمرآة**. دفعات التدفق العكسي تستخدم كائنات git في النسخة المؤقتة مباشرة (صفر تحويل للمحتوى المستورد من git)؛ **المحتوى الأصلي في noa** (لقطات مساحات عمل خالصة لم تمر عبر النسخة المؤقتة أبدًا) ليس له شكل كائن git — إعادة تدفقه مباشرة تتطلب مُسلسل لقطة → كائنات git. هذا قيد معروف (في التنفيذ الحالي هذه المراجع لا تظهر في دفعات التدفق العكسي).
 
-
 **الحد الدقيق**: التوافق مُتطبَّق — الـ blobs متوافقة بايت ببايت (`git_blob_oid` يطابق git)؛ الأشجار مكافئة دلاليًا لكن معرفاتها هي عنونة SHA-256 الخاصة بـ noa (ليست تنسيق شجرة git)؛ الـ commits نموذج noa الخاص (`noa_<sha256>`). التمثيل بصيغة git موجود في مستودع الـ scratch الحقيقي. **المحتوى الأصلي في noa** (لقطات مساحات عمل خالصة) ليس له شكل كائن git — إعادة تدفقه مباشرة تتطلب مُسلسل لقطة → كائنات git (قيد معروف).
+
 ## دور مساحة المرآة المؤقتة
 
 `NOA_MIRROR_SCRATCH_DIR/{job}.git` نسخة bare لكل وظيفة مرآة، ولها دور ثلاثي:
 
 1. **ذاكرة تخزين مؤقت لمصدر الجلب** — الموجات تجلب من المصدر؛ والمستورد يقرأ كائنات git من هنا؛
-2. **جسم الخدمة لـ git-http** — `/git/{repo}` يشغّل upload-pack / receive-pack ضدها مباشرة؛
-3. **مصدر الدفع للتدفق العكسي** — قناة التدفق العكسي تدفع مراجعها المحلية عودةً إلى المصدر بشكل ذرّي.
+1. **جسم الخدمة لـ git-http** — `/git/{repo}` يشغّل upload-pack / receive-pack ضدها مباشرة؛
+1. **مصدر الدفع للتدفق العكسي** — قناة التدفق العكسي تدفع مراجعها المحلية عودةً إلى المصدر بشكل ذرّي.
 
 عملية الـ push (receive-pack) تحدّث المراجع المحلية للنسخة المؤقتة؛ ثم تستوردها الموجة التالية إلى نظام المراجع في noa، وتدفعها قناة التدفق العكسي عودةً إلى المصدر — المسارات الثلاثة تتشارك نسخة مؤقتة واحدة، وبذلك تكتمل الحلقة.
 
