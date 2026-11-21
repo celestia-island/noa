@@ -77,6 +77,16 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
         message: &str,
     ) -> Result<Snapshot> {
         let tree = if parent_ids.len() > 1 {
+            // #104: the merge base must be the common ancestor on the DAG,
+            // never the first parent's tree. Using parents[0] as the base
+            // tells the three-way merge that nothing changed before
+            // parents[0], so any difference in an extra parent's tree looks
+            // like a deliberate change against an untouched base and
+            // silently overrides the first parent's side. Anchor each
+            // pairwise base at parents[0] and route it through
+            // `find_merge_base` (which #102 made select the truly nearest
+            // ancestor); no common ancestor merges against the empty tree,
+            // matching the CLI paths in resolve_cmd.
             let first_parent = self.snapshot_store.get(&parent_ids[0]).await?;
             let first_tree = self
                 .object_store
@@ -84,13 +94,28 @@ impl<L: AgentLog, S: SnapshotStore, O: ObjectStore + Clone + 'static> SnapshotEn
                 .await?;
             let mut merged_tree = first_tree.clone();
             for extra_parent_id in &parent_ids[1..] {
+                let base_tree = match crate::snapshot::find_merge_base(
+                    &self.snapshot_store,
+                    &parent_ids[0],
+                    extra_parent_id,
+                )
+                .await?
+                {
+                    Some(base_id) => {
+                        let base_snap = self.snapshot_store.get(&base_id).await?;
+                        self.object_store
+                            .get_tree(&crate::object::TreeId(base_snap.tree_hash))
+                            .await?
+                    }
+                    None => crate::object::TreeEntries(vec![]),
+                };
                 let extra_parent = self.snapshot_store.get(extra_parent_id).await?;
                 let extra_tree = self
                     .object_store
                     .get_tree(&crate::object::TreeId(extra_parent.tree_hash))
                     .await?;
                 let merge_result = merge::merge_trees_recursive(
-                    first_tree.clone(),
+                    base_tree,
                     merged_tree,
                     extra_tree,
                     self.object_store.clone(),
@@ -1575,5 +1600,150 @@ mod tests {
         // Only the write is materialized; the verify entry is metadata-only.
         assert_eq!(tree.0.len(), 1);
         assert_eq!(tree.0[0].name, "main.rs");
+    }
+}
+
+/// Regression test for issue #104: `SnapshotEngine::build` with multiple
+/// parents used `parents[0]`'s tree as the three-way merge base, so any
+/// difference in an extra parent's tree silently overrode the first parent's
+/// side. The fix routes the merge base through `find_merge_base` (which
+/// #102 made select the truly nearest common ancestor).
+#[cfg(test)]
+mod multiparent_merge_base_regression {
+    use super::*;
+    use crate::log::FileAgentLog;
+    use crate::object::RedbObjectStore;
+    use crate::snapshot::RedbSnapshotStore;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    type Engine = SnapshotEngine<FileAgentLog, RedbSnapshotStore, RedbObjectStore>;
+
+    async fn make_engine() -> (TempDir, Engine) {
+        let tmp = TempDir::new().unwrap();
+        let db = Arc::new(
+            redb::Database::builder()
+                .create(tmp.path().join("multiparent-regression.redb"))
+                .unwrap(),
+        );
+        let log = FileAgentLog::create(&tmp.path().join("test.log")).unwrap();
+        let snapshot_store = RedbSnapshotStore::new(Arc::clone(&db)).unwrap();
+        let object_store = RedbObjectStore::new(db).unwrap();
+        let engine = SnapshotEngine::new(log, snapshot_store, object_store);
+        (tmp, engine)
+    }
+
+    async fn put_tree(obj_store: &RedbObjectStore, entries: Vec<(&str, &str)>) -> String {
+        obj_store
+            .put_tree(&TreeEntries(
+                entries
+                    .into_iter()
+                    .map(|(name, blob)| TreeEntry {
+                        name: name.to_string(),
+                        kind: EntryKind::Blob,
+                        id: blob.to_string(),
+                    })
+                    .collect(),
+            ))
+            .await
+            .unwrap()
+            .0
+    }
+
+    async fn put_snapshot(
+        snap_store: &RedbSnapshotStore,
+        id: &str,
+        tree_hash: &str,
+        parents: &[&str],
+    ) -> SnapshotId {
+        let snapshot = Snapshot {
+            id: SnapshotId(id.to_string()),
+            tree_hash: tree_hash.to_string(),
+            parents: parents
+                .iter()
+                .map(|p| SnapshotId((*p).to_string()))
+                .collect(),
+            workspace: "ws1".to_string(),
+            author: "test".to_string(),
+            timestamp: 0,
+            message: "fixture".to_string(),
+        };
+        snap_store.store(&snapshot).await.unwrap();
+        snapshot.id
+    }
+
+    /// #104: a multi-parent build whose DAG base differs from parents[0]'s
+    /// tree must take the changes of BOTH sides relative to the base.
+    ///
+    /// ```text
+    /// R {a=1} ── A {a=2} ── X {a=3}          (ours line)
+    ///              \──── M = merge[A, B]      (theirs line: {a=2, b=9})
+    /// ```
+    ///
+    /// Building with parents [X, M]: the DAG base of X and M is A, so X's
+    /// `a=3` change must survive and M's `b=9` addition must land. With the
+    /// pre-fix base (= X's own tree {a=3}), `a=2` on the theirs side looks
+    /// like a deliberate change against an untouched base and reverts X's
+    /// work to `a=2`.
+    #[tokio::test]
+    async fn multiparent_build_uses_dag_merge_base_not_first_parent_tree() {
+        let (_tmp, engine) = make_engine().await;
+
+        let tree_r = put_tree(&engine.object_store, vec![("a", "blob_a1")]).await;
+        let tree_a = put_tree(&engine.object_store, vec![("a", "blob_a2")]).await;
+        let tree_x = put_tree(&engine.object_store, vec![("a", "blob_a3")]).await;
+        let tree_m = put_tree(
+            &engine.object_store,
+            vec![("a", "blob_a2"), ("b", "blob_b9")],
+        )
+        .await;
+
+        put_snapshot(&engine.snapshot_store, "noa_r104", &tree_r, &[]).await;
+        put_snapshot(&engine.snapshot_store, "noa_a104", &tree_a, &["noa_r104"]).await;
+        put_snapshot(&engine.snapshot_store, "noa_x104", &tree_x, &["noa_a104"]).await;
+        put_snapshot(
+            &engine.snapshot_store,
+            "noa_m104",
+            &tree_m,
+            &["noa_a104", "noa_r104"],
+        )
+        .await;
+
+        let x = SnapshotId("noa_x104".to_string());
+        let m = SnapshotId("noa_m104".to_string());
+
+        // Sanity: the DAG base of the two build parents is A, not X's tree.
+        let base = crate::snapshot::find_merge_base(&engine.snapshot_store, &x, &m)
+            .await
+            .unwrap();
+        assert_eq!(
+            base,
+            Some(SnapshotId("noa_a104".to_string())),
+            "#104 fixture: the common ancestor of X and M must be A"
+        );
+
+        let snapshot = engine
+            .build("ws1", vec![x, m], 0, "test", "merge parents")
+            .await
+            .unwrap();
+        let tree = engine
+            .object_store
+            .get_tree(&TreeId(snapshot.tree_hash))
+            .await
+            .unwrap();
+
+        let find = |name: &str| tree.0.iter().find(|e| e.name == name).map(|e| e.id.clone());
+        assert_eq!(
+            find("a"),
+            Some("blob_a3".to_string()),
+            "#104: ours' a=3 change must survive the multi-parent build \
+             (pre-fix base parents[0] reverted it to a=2)"
+        );
+        assert_eq!(
+            find("b"),
+            Some("blob_b9".to_string()),
+            "#104: the extra parent's b=9 addition must land"
+        );
+        assert_eq!(tree.0.len(), 2, "#104: merged tree must hold exactly a+b");
     }
 }
