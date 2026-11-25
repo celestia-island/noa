@@ -87,7 +87,9 @@ jobs:
           # libc contract, so the runner OS and every user machine's glibc
           # version stop mattering — this supersedes the ubuntu-22.04 pin
           # that existed to keep the linked glibc below the fleet's 2.36.
-          # noa is pure Rust (no C-linked deps), so only musl-gcc is needed.
+          # The only C-linked dep is ring (jsonwebtoken/rustls); the hosted
+          # runner's host gcc builds ring's C/asm, and cargo's musl target
+          # links it self-contained — so musl-tools alone suffices.
           # aarch64 stays gnu until an aarch64 musl cross toolchain exists.
           - target: x86_64-unknown-linux-musl
             os: ubuntu-22.04
